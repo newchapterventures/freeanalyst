@@ -30,7 +30,10 @@ from .multiples import (
 )
 from .wacc import WaccInputs, WaccResult, compute_wacc, relever_beta, unlever_beta
 
+from . import comps
+
 __all__ = [
+    "comps",
     # core
     "Assumption", "Confidence", "Purpose", "Scenario", "Stage", "Stance",
     "Trace", "ValuationResult",
