@@ -112,6 +112,10 @@ python3 value.py examples/valuation-demo.json
 python3 -m unittest tests.test_valuation -v
 ```
 
+**需求基线见 [`docs/valuation-spec.md`](docs/valuation-spec.md)。**
+它记的不是"我们要做什么功能"，而是"**什么情况下这个估值才是可信的**"——
+功能可以增删，那些条件不能绕过。新增估值相关功能前，对照它的检查清单过一遍。
+
 ## 开源框架 + 你的私有资产
 
 这个项目刻意分成两半：
