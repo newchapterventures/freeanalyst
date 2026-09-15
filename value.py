@@ -78,7 +78,7 @@ def As(items, prefix: str) -> list[Assumption]:
     return [A(x, f"{prefix}[{i}]") for i, x in enumerate(items)]
 
 
-def build_scenario(raw: dict) -> Scenario:
+def build_scenario(raw: dict, unit: str = "") -> Scenario:
     return Scenario(
         purpose=Purpose(raw.get("purpose", "并购定价")),
         stance=Stance(raw.get("stance", "买方")),
@@ -86,6 +86,7 @@ def build_scenario(raw: dict) -> Scenario:
         valuation_date=raw.get("valuation_date", "未指定"),
         currency=raw.get("currency", "CNY"),
         equity_scope=raw.get("equity_scope", "100%"),
+        unit=unit or raw.get("unit") or UNIT,
     )
 
 
@@ -128,7 +129,12 @@ def main() -> int:
         from early_cli import run_early_stage
         return run_early_stage(cfg, show_trace=not args.no_trace)
 
-    sc = build_scenario(cfg.get("scenario", {}))
+    # 金额单位跟着配置走。默认为万元是给中文材料的历史默认值，
+    # 但美股报表是千美元 —— 写死会把千美元的数标成万元。
+    global UNIT
+    UNIT = cfg.get("unit") or "万元"
+
+    sc = build_scenario(cfg.get("scenario", {}), UNIT)
 
     out: list[str] = []
     out.append("=" * 74)
@@ -139,6 +145,22 @@ def main() -> int:
         out.append(f"说明：{cfg['note']}")
 
     results: list[ValuationResult] = []
+
+    # ---------------- 三张表解析（§4） ----------------
+    # **必须最先跑。** 推出来的事实类口径要填进 cfg["dcf"] / cfg["multiples"]，
+    # 而 DCF、乘数法等都在后面读这些值。
+    # 实测踩到：放在乘法之后，乘数法拿不到净债务直接报错。
+    if "statements" in cfg:
+        from financials.cli import StatementConfigError, apply_facts, run_statements
+        try:
+            st = run_statements(cfg, out, path.parent)
+            filled = apply_facts(cfg, st)
+            if filled:
+                out.append("\n  已自动填入（事实类，均可核对到行）：")
+                for line in filled:
+                    out.append(f"    · {line}")
+        except StatementConfigError as exc:
+            out.append(f"\n  ⚠ 三张表解析跳过：{exc}")
 
     # ---------------- WACC（可选，只有 DCF 需要） ----------------
     wacc_val: float | None = None
@@ -172,6 +194,7 @@ def main() -> int:
             multiple_low=A(m["multiple_low"], "倍数下沿"),
             multiple_mid=A(m["multiple_mid"], "倍数中枢"),
             multiple_high=A(m["multiple_high"], "倍数上沿"),
+            unit=UNIT,
             net_debt=A(m.get("net_debt"), "净债务"),
             minority_interest=A(m.get("minority_interest"), "少数股东权益"),
             non_operating_assets=A(m.get("non_operating_assets"), "非经营性资产"),
@@ -198,7 +221,7 @@ def main() -> int:
             one_time_losses=A(s.get("one_time_losses", 0), "一次性损失"),
         ))
         out.append(hr("SDE 构建（中小企业并购口径）"))
-        out.append(f"  SDE = {sde_obj.value:,.0f} 万元")
+        out.append(f"  SDE = {sde_obj.value:,.0f} {UNIT}")
         if not args.no_trace:
             out.append("\n  计算追溯：")
             out.append(sde_trace.render())
@@ -233,8 +256,8 @@ def main() -> int:
         if "exit_multiple" in d:
             r2 = run_dcf(di, wacc_val, use_exit_multiple=float(d["exit_multiple"]))
             out.append(hr(f"DCF 交叉验证 · 终值改用退出倍数 {d['exit_multiple']:.1f}x"))
-            out.append(f"  股权价值 {r2.mid:,.0f} 万元")
-            out.append(f"  与永续增长法差额 {r2.mid - r.mid:+,.0f} 万元"
+            out.append(f"  股权价值 {r2.mid:,.0f} {UNIT}")
+            out.append(f"  与永续增长法差额 {r2.mid - r.mid:+,.0f} {UNIT}"
                        f"（{(r2.mid - r.mid) / r.mid:+.1%}）")
 
         # 敏感性
@@ -252,7 +275,7 @@ def main() -> int:
         # 反向估值
         if "ask_price" in cfg:
             res = reverse_dcf_growth(di, wacc_val, float(cfg["ask_price"]))
-            out.append(hr(f"反向估值 · 从对方要价反推假设（{cfg['ask_price']:,.0f} 万元）"))
+            out.append(hr(f"反向估值 · 从对方要价反推假设（{cfg["ask_price"]:,.0f} {UNIT}）"))
             out.append(f"  {res.note}")
             if not args.no_trace:
                 out.append("\n  计算追溯：")

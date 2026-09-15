@@ -55,7 +55,8 @@ class Derived:
             tail = f"  ← {self.note}" if self.note else ""
             return f"{self.name}：**无法计算** —— 缺 {names}{tail}"
         body = " ".join(
-            f"{'+' if i else ''} {v:,.0f}({n})" if i else f"{v:,.0f}({n})"
+            (f"{v:,.0f}({n})" if i == 0 else
+             (f"− {abs(v):,.0f}({n})" if v < 0 else f"+ {v:,.0f}({n})"))
             for i, (n, v) in enumerate(self.parts)
         )
         tail = f"  ← {self.note}" if self.note else ""
@@ -75,6 +76,15 @@ class Derived:
         return Assumption(self.name, self.value, self.unit, source, conf)
 
 
+#: 非有息负债科目 —— 用来做「余量」判断
+_NON_DEBT_LIABILITIES: tuple[Field, ...] = (
+    Field.ACCOUNTS_PAYABLE, Field.DEFERRED_REVENUE,
+    Field.ACCRUED_LIABILITIES, Field.TAXES_PAYABLE,
+    Field.OTHER_CURRENT_LIABILITIES, Field.OTHER_NONCURRENT_LIABILITIES,
+    Field.MINORITY_INTEREST,
+)
+
+
 def net_debt(bal: dict[Field, float]) -> Derived:
     """净债务 = 有息负债 − 现金。
 
@@ -83,14 +93,23 @@ def net_debt(bal: dict[Field, float]) -> Derived:
     企业价值 EV 是**整个公司**的价值，要得到股权价值必须减掉净债务。
     减错的后果是股权价值同额偏差 —— 而 DCF 的输出看起来完全正常。
 
-    两条纪律：
-      · 现金和借款**一个都没找到** → 报缺，不要按 0 处理
-      · 只找到一部分（比如只有短期借款）→ 报缺，因为漏掉的那部分会
-        让净债务偏低、股权价值偏高 —— **往看起来更好的方向偏**
+    ## 三种情形要分开
+
+    **① 借款科目都在** → 直接算。
+
+    **② 找不到借款科目，但公司本来就没借款** → 算出 0，不该报缺。
+       用勾稽关系判定：负债合计减去已识别的非有息负债科目，
+       **余量若为 0，就没有地方放借款。**
+       实测（Fitbit FY2016）：负债合计 821,694，已识别科目
+       （应付账款 + 预收 + 其他流动 + 其他非流动）加起来正好 821,694。
+
+    **③ 只找到部分借款科目**（有短期、没长期）→ 报缺。
+       按 0 处理会让净债务偏低、股权价值偏高 —— **往看起来更好的方向偏。**
     """
     debt_parts: list[tuple[str, float]] = []
     cash_parts: list[tuple[str, float]] = []
     missing: list[Field] = []
+    note = ""
 
     for f in DEBT_FIELDS:
         v = bal.get(f)
@@ -107,17 +126,29 @@ def net_debt(bal: dict[Field, float]) -> Derived:
     if not debt_parts and not cash_parts:
         return Derived("净债务", None, missing=[*DEBT_FIELDS, *CASH_FIELDS])
 
-    # 一个都没找到的借款科目要报出来 —— 按 0 处理会让净债务偏低
     if missing:
-        return Derived(
-            "净债务", None, missing=missing,
-            note="只找到部分借款科目；漏掉的那部分会让净债务偏低、股权价值偏高",
-        )
+        # 尝试用「余量」判定是不是真的没有借款
+        total_liab = bal.get(Field.TOTAL_LIABILITIES)
+        known = sum(bal.get(f, 0.0) or 0.0 for f in _NON_DEBT_LIABILITIES)
+        if total_liab is not None and abs(total_liab - known) <= max(abs(total_liab) * 1e-6, 1.0):
+            debt_parts = []
+            missing = []
+            note = ("负债合计与已识别的非有息负债科目完全一致，"
+                    "反推有息负债为 0")
+        else:
+            return Derived(
+                "净债务", None, missing=missing,
+                note="只找到部分借款科目；漏掉的那部分会让净债务偏低、"
+                     "股权价值偏高（往看起来更好的方向偏）",
+            )
+
+    if not debt_parts and not cash_parts:
+        return Derived("净债务", None, missing=[*DEBT_FIELDS, *CASH_FIELDS])
 
     debt = sum(v for _, v in debt_parts)
     cash = sum(v for _, v in cash_parts)
     parts = [(n, v) for n, v in debt_parts] + [(n, -v) for n, v in cash_parts]
-    return Derived("净债务", debt - cash, parts=parts)
+    return Derived("净债务", debt - cash, parts=parts, note=note)
 
 
 def minority_interest(bal: dict[Field, float]) -> Derived:

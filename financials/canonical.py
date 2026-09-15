@@ -57,6 +57,8 @@ class Field(str, Enum):
     ACCOUNTS_PAYABLE = "应付账款"
     DEFERRED_REVENUE = "预收款项"
     SHORT_TERM_DEBT = "短期借款"
+    ACCRUED_LIABILITIES = "其他应付款"
+    TAXES_PAYABLE = "应交税费"
     OTHER_CURRENT_LIABILITIES = "其他流动负债"
     TOTAL_CURRENT_LIABILITIES = "流动负债合计"
     LONG_TERM_DEBT = "长期借款"
@@ -146,10 +148,15 @@ MAPPINGS: tuple[Mapping, ...] = (
             ("其他非流动资产", "长期股权投资", "递延所得税资产", "其他资产"),
             ("OtherAssetsNoncurrent", "DeferredTaxAssetsLiabilitiesNetNoncurrent",
              "DeferredTaxAssetsNetNoncurrent")),
+    Mapping(Field.ACCRUED_LIABILITIES, ("其他应付款", "应计费用", "预提费用"),
+            ("AccruedLiabilitiesCurrent", "AccruedLiabilities",
+             "EmployeeRelatedLiabilitiesCurrent")),
+    Mapping(Field.TAXES_PAYABLE, ("应交税费", "应付税费", "应交税金"),
+            ("TaxesPayableCurrent", "IncomeTaxesPayable",
+             "AccruedIncomeTaxesCurrent")),
     Mapping(Field.OTHER_CURRENT_LIABILITIES,
-            ("其他应付款", "应付职工薪酬", "应交税费", "其他流动负债"),
-            ("AccruedLiabilitiesCurrent", "OtherLiabilitiesCurrent",
-             "AccruedLiabilities", "TaxesPayableCurrent")),
+            ("其他流动负债", "一年内到期的非流动负债"),
+            ("OtherLiabilitiesCurrent",)),
     Mapping(Field.OTHER_NONCURRENT_LIABILITIES,
             ("其他非流动负债", "递延所得税负债", "长期应付款", "其他负债"),
             ("OtherLiabilitiesNoncurrent", "DeferredTaxLiabilitiesNoncurrent")),

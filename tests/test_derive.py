@@ -75,6 +75,56 @@ class TestNetDebt(unittest.TestCase):
         self.assertEqual(d.value, -500.0)
 
 
+class TestZeroDebtInference(unittest.TestCase):
+    """**「没有借款科目」和「漏了借款科目」是两回事。**
+
+    分不清会导致两种错误：给零负债公司报缺（多此一举），
+    或者给真漏了的公司填 0（往好看的方向偏）。
+    """
+
+    def test_inferred_zero_when_residual_is_zero(self):
+        """Fitbit FY2016 实测：负债合计 821,694，
+        已识别科目加起来正好也是 821,694 —— 没有余量放借款。"""
+        bal = {
+            Field.TOTAL_LIABILITIES: 821694.0,
+            Field.ACCOUNTS_PAYABLE: 313773.0,
+            Field.DEFERRED_REVENUE: 49904.0,
+            Field.ACCRUED_LIABILITIES: 390561.0,
+            Field.TAXES_PAYABLE: 7694.0,
+            Field.OTHER_NONCURRENT_LIABILITIES: 59762.0,
+            Field.CASH: 301320.0,
+            Field.SHORT_TERM_INVESTMENTS: 404693.0,
+        }
+        d = dv.net_debt(bal)
+        self.assertEqual(d.value, -706013.0, "零负债公司的净债务应等于负的现金")
+        self.assertIn("反推有息负债为 0", d.note)
+
+    def test_still_reports_missing_when_there_is_room(self):
+        """有余量就说明借款可能被漏了 —— 必须报缺。"""
+        bal = {
+            Field.TOTAL_LIABILITIES: 900000.0,      # 比已识别科目多 78,306
+            Field.ACCOUNTS_PAYABLE: 313773.0,
+            Field.DEFERRED_REVENUE: 49904.0,
+            Field.ACCRUED_LIABILITIES: 390561.0,
+            Field.TAXES_PAYABLE: 7694.0,
+            Field.OTHER_NONCURRENT_LIABILITIES: 59762.0,
+            Field.CASH: 301320.0,
+        }
+        d = dv.net_debt(bal)
+        self.assertIsNone(d.value, "有余量却算出了数")
+        self.assertIn("偏高", d.render())
+
+    def test_partial_debt_still_reports(self):
+        """有短期、没长期 —— 不管余量如何都该报，因为已经看到借款了。"""
+        bal = {
+            Field.TOTAL_LIABILITIES: 1000.0,
+            Field.SHORT_TERM_DEBT: 600.0,
+            Field.CASH: 300.0,
+        }
+        d = dv.net_debt(bal)
+        self.assertIsNone(d.value)
+
+
 class TestMinorityInterest(unittest.TestCase):
     def test_absent_defaults_to_zero(self):
         """这个科目本来就不是每家都有，按 0 处理**不会造成方向性偏差**。"""

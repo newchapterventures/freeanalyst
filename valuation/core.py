@@ -122,6 +122,10 @@ class Scenario:
     valuation_date: str
     currency: str
     equity_scope: str = "100%"
+    #: 金额单位。**必须跟着配置走，不能写死。**
+    #: 实测踩到：报表是千美元、引擎默认万元，结果把千美元的数标成了万元 ——
+    #: 数字对、标签错，是最容易骗过人的一类错。
+    unit: str = "万元"
 
     def describe(self) -> str:
         return (

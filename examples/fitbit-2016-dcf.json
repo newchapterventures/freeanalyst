@@ -1,0 +1,172 @@
+{
+  "target": "Fitbit, Inc.（示例：报表取自其 FY2016 10-K 真实申报文件）",
+  "note": "三张表是 SEC 公开数据（materials/fitbit-2016-10k/），勾稽三条全平。预测期的假设是**示例值**，不是投资建议 —— 目的是演示「报表自动进估值」这条链路。单位：千美元。",
+
+  "unit": "千美元",
+
+  "scenario": {
+    "purpose": "并购定价",
+    "stance": "买方",
+    "stage": "成熟企业",
+    "valuation_date": "2016-12-31",
+    "currency": "USD",
+    "equity_scope": "100%"
+  },
+
+  "statements": {
+    "label": "Fitbit FY2016 10-K",
+    "unit": "千美元",
+    "as_of": "2016-12-31",
+    "gaap": "US GAAP",
+    "scope": "合并",
+    "audited": "已审计",
+    "balance_sheet": "../materials/fitbit-2016-10k/R2.htm",
+    "income_statement": "../materials/fitbit-2016-10k/R4.htm",
+    "cash_flow": "../materials/fitbit-2016-10k/R8.htm"
+  },
+
+  "wacc": {
+    "risk_free": {
+      "value": 0.025,
+      "source": "2016 年末十年期美债（示例值）",
+      "confidence": "中"
+    },
+    "equity_risk_premium": {
+      "value": 0.055,
+      "source": "美国市场股权风险溢价（示例值）",
+      "confidence": "中"
+    },
+    "beta_unlevered": {
+      "value": 1.25,
+      "source": "消费电子同业去杠杆 beta（示例值）",
+      "confidence": "低"
+    },
+    "tax_rate": {
+      "value": 0.35,
+      "source": "2016 年美国联邦法定税率（税改前）",
+      "confidence": "高"
+    },
+    "cost_of_debt": {
+      "value": 0.05,
+      "source": "无有息负债，此为假设融资成本（示例值）",
+      "confidence": "低"
+    },
+    "debt": {
+      "value": 0,
+      "source": "有息负债为 0（由三张表反推：负债合计与已识别科目完全一致）",
+      "confidence": "高"
+    },
+    "equity": {
+      "value": 1600000,
+      "source": "2016 年末市值量级（示例值，未取当日实际收盘价）",
+      "confidence": "低"
+    },
+    "size_premium": {
+      "value": 0.02,
+      "source": "小市值规模溢价（示例值）",
+      "confidence": "低"
+    }
+  },
+
+  "dcf": {
+    "years": [2017, 2018, 2019, 2020, 2021],
+    "revenue": [
+      {"value": 2100000, "source": "示例：硬件换代周期下滑后企稳", "confidence": "低"},
+      {"value": 2250000, "source": "示例：可穿戴渗透率提升", "confidence": "低"},
+      {"value": 2400000, "source": "示例：健康订阅收入贡献", "confidence": "低"},
+      {"value": 2500000, "source": "示例", "confidence": "低"},
+      {"value": 2580000, "source": "示例", "confidence": "低"}
+    ],
+    "ebitda_margin": [
+      {"value": -0.02, "source": "示例：FY2016 实际 -3.4% 基础上小幅改善", "confidence": "低"},
+      {"value": 0.02, "source": "示例：研发费用收敛", "confidence": "低"},
+      {"value": 0.06, "source": "示例：规模效应", "confidence": "低"},
+      {"value": 0.08, "source": "示例", "confidence": "低"},
+      {"value": 0.09, "source": "示例：接近成熟消费电子水平", "confidence": "低"}
+    ],
+    "tax_rate": {
+      "value": 0.35,
+      "source": "2016 年美国联邦法定税率",
+      "confidence": "高"
+    },
+    "da_pct_revenue": {
+      "value": 0.0176,
+      "source": "三张表历史参考：FY2016 折旧摊销占收入比",
+      "confidence": "中"
+    },
+    "capex_pct_revenue": {
+      "value": 0.0362,
+      "source": "三张表历史参考：FY2016 资本开支占收入比",
+      "confidence": "中"
+    },
+    "nwc_pct_revenue": {
+      "value": 0.1818,
+      "source": "三张表历史参考：FY2016 净营运资本占收入比",
+      "confidence": "中"
+    },
+    "terminal_growth": {
+      "value": 0.025,
+      "source": "示例：长期通胀同量级",
+      "confidence": "低"
+    },
+    "exit_multiple": 8.0,
+    "sensitivity": {
+      "wacc": [0.07, 0.08, 0.09, 0.10],
+      "growth": [0.01, 0.02, 0.03, 0.04]
+    }
+  },
+
+  "multiples": {
+    "metric_name": "营业收入（FY2016 实际）",
+    "metric_value": {
+      "value": 2169461,
+      "source": "FY2016 营业收入（三张表）",
+      "confidence": "高"
+    },
+    "multiple_low": {
+      "value": 0.6,
+      "source": "消费电子硬件收入倍数下沿（示例值）",
+      "confidence": "低"
+    },
+    "multiple_mid": {
+      "value": 0.8,
+      "source": "消费电子硬件收入倍数中位（示例值）",
+      "confidence": "低"
+    },
+    "multiple_high": {
+      "value": 1.0,
+      "source": "消费电子硬件收入倍数上沿（示例值）",
+      "confidence": "低"
+    },
+    "non_operating_assets": {
+      "value": null,
+      "source": "材料未提供",
+      "confidence": "缺失"
+    }
+  },
+
+  "advisor": {
+    "peer_sets": {
+      "消费电子（美股）": {
+        "tickers": ["AAPL", "GRMN", "SONO"],
+        "metric": "revenue_cagr",
+        "years": 3,
+        "as_of": "2016-12-31"
+      }
+    },
+    "review": [
+      {
+        "name": "预测期收入增长率",
+        "value": 0.185,
+        "source": "示例：2016 → 2021 收入 CAGR",
+        "confidence": "低",
+        "peer_set": "消费电子（美股）"
+      }
+    ],
+    "terminal_growth": {
+      "g": {"value": 0.025, "source": "示例值"},
+      "long_term_nominal_gdp": {"value": 0.04, "source": "美国长期名义 GDP 增速（示例值）"},
+      "long_term_inflation": {"value": 0.02, "source": "美国长期通胀目标"}
+    }
+  }
+}

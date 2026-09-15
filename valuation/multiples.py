@@ -52,6 +52,8 @@ class MultiplesInputs:
     non_operating_assets: Assumption = field(
         default_factory=lambda: Assumption("非经营性资产", 0.0, "万元", "无", Confidence.HIGH))
     discount_for_lack_of_marketability: Assumption | None = None  # 少数股权折价（DLOM）
+    #: 金额单位。**必须跟着配置走** —— 写死「万元」会把千美元的数标成万元。
+    unit: str = "万元"
 
     def all_assumptions(self) -> list[Assumption]:
         out = [self.metric_value, self.multiple_low, self.multiple_mid,
@@ -78,13 +80,14 @@ def run_multiples(inputs: MultiplesInputs) -> ValuationResult:
         raise ValueError(f"乘数区间不合法：{m_lo} / {m_mid} / {m_hi} 应递增")
 
     trace = Trace()
-    trace.add(f"{inputs.metric_name} 基数", f"{metric:,.0f} 万元（来源：{inputs.metric_value.source}）")
+    _u = inputs.unit
+    trace.add(f"{inputs.metric_name} 基数", f"{metric:,.0f} {_u}（来源：{inputs.metric_value.source}）")
 
     ev_lo = metric * m_lo
     ev_mid = metric * m_mid
     ev_hi = metric * m_hi
     trace.add("企业价值区间",
-              f"{metric:,.0f} × [{m_lo:.2f}x, {m_hi:.2f}x] = {ev_lo:,.0f} – {ev_hi:,.0f} 万元")
+              f"{metric:,.0f} × [{m_lo:.2f}x, {m_hi:.2f}x] = {ev_lo:,.0f} – {ev_hi:,.0f} {_u}")
 
     nd = _v(inputs.net_debt)                      # 缺失即报错（核心输入）
     mi = _v(inputs.minority_interest, 0.0)        # 桥梁项，缺失按 0 处理但会被标为缺口
@@ -116,7 +119,7 @@ def run_multiples(inputs: MultiplesInputs) -> ValuationResult:
     return ValuationResult(
         method=f"{inputs.metric_name} 乘数法",
         low=eq_lo, mid=eq_mid, high=eq_hi,
-        unit="万元",
+        unit=inputs.unit,
         trace=trace,
         assumptions=inputs.all_assumptions(),
         notes=notes,

@@ -204,7 +204,7 @@ def run_dcf(
     if range_grid:
         notes.append(
             f"区间为敏感性网格极值，中枢为基准情景。集中度："
-            f"{low:,.0f} – {high:,.0f} 万元，跨度 {(high - low) / eq:.0%}。"
+            f"{low:,.0f} – {high:,.0f} {inputs.scenario.unit}，跨度 {(high - low) / eq:.0%}。"
         )
         if (high - low) / eq > 0.5:
             notes.append(
@@ -220,7 +220,7 @@ def run_dcf(
     return ValuationResult(
         method="DCF（FCFF）",
         low=low, mid=eq, high=high,
-        unit="万元",
+        unit=inputs.scenario.unit,
         trace=trace,
         assumptions=inputs.all_assumptions(),
         notes=notes,
@@ -302,7 +302,8 @@ def reverse_dcf_growth(
     这是谈判的切入点，也是识别"这个价格不可能兑现"的工具。
     """
     trace = Trace()
-    trace.add("目标股权价值", f"{target_equity_value:,.0f} 万元")
+    _u = inputs.scenario.unit
+    trace.add("目标股权价值", f"{target_equity_value:,.0f} {_u}")
 
     def equity_at(g: float) -> float:
         if g >= wacc:
@@ -327,7 +328,7 @@ def reverse_dcf_growth(
         trace.add("结论", f"在 g ∈ [{lo:.0%}, {hi:.0%}] 区间内无解")
         return ReverseDcfResult(
             target_equity_value, None, None, None, trace, False,
-            f"目标价格超出可行区间：该区间对应的股权价值是 {lo_v:,.0f} – {hi_v:,.0f} 万元。"
+            f"目标价格超出可行区间：该区间对应的股权价值是 {lo_v:,.0f} – {hi_v:,.0f} {inputs.scenario.unit}。"
             f"说明这个价格不是靠永续增长假设撑起来的，要看明确预测期或退出倍数。",
         )
 
@@ -343,7 +344,7 @@ def reverse_dcf_growth(
     g_implied = (a + b) / 2
 
     trace.add("隐含永续增长率", f"g = {g_implied:.4%}")
-    trace.add("校验", f"以 g={g_implied:.4%} 重算，股权价值 {equity_at(g_implied):,.0f} 万元")
+    trace.add("校验", f"以 g={g_implied:.4%} 重算，股权价值 {equity_at(g_implied):,.0f} {_u}")
 
     return ReverseDcfResult(
         target_equity_value, g_implied, None, None, trace, True,
