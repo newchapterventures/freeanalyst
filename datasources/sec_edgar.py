@@ -255,6 +255,11 @@ def annual_series(facts: dict, tag: str, unit: str = "USD",
 
     **重述是有意义的信号**，想看到全部就把 dedupe 关掉 ——
     两个版本都留着，可以看出公司改过什么。
+
+    ⚠️ 注意：这里保留的是**最晚**申报。判断「这份财报在某个日期可不可见」
+    不能用它 —— 每个新财年的 10-K 都会重述前两年的对照数，
+    于是历史财年的 `filed` 会被推到很晚。那种判断要用
+    `first_filed_by_fiscal_end()`。
     """
     series = extract_series(facts, tag, unit, taxonomy, duration="annual")
     if not dedupe:
@@ -265,6 +270,47 @@ def annual_series(facts: dict, tag: str, unit: str = "USD",
         if prev is None or o.filed > prev.filed:
             by_end[o.end] = o
     return sorted(by_end.values(), key=lambda o: o.end)
+
+
+def first_filed_by_fiscal_end(facts: dict, unit: str = "USD") -> dict[str, str]:
+    """每个财年期末**首次**被申报的日期。
+
+    ## 为什么必须用首次申报日，而不是 `annual_series` 里带的那个
+
+    实测踩到的坑（Oracle）：`annual_series` 按「同一期末保留最晚申报」去重，
+    而**每个新财年的 10-K 都会重述前两年的对照数**。结果 FY2024 的数值
+    挂在了 FY2026 的申报日上：
+
+        end=2023-05-31  filed=2025-06-18   ← 实际首次申报在 2023-06
+        end=2024-05-31  filed=2026-06-22   ← 实际首次申报在 2024-06
+
+    于是按「最晚申报日 ≤ 基准日」筛，**所有历史财年都被排除**。
+
+    判断「这份财报在当时能不能看到」，要看它**第一次公开**是什么时候。
+    """
+    out: dict[str, str] = {}
+    for tag in _REVENUE_TAGS:
+        for o in extract_series(facts, tag, unit, duration="annual"):
+            if not o.filed:
+                continue
+            prev = out.get(o.end)
+            if prev is None or o.filed < prev:
+                out[o.end] = o.filed
+    return out
+
+
+def annual_series_as_of(
+    facts: dict, tag: str, as_of: str, unit: str = "USD", taxonomy: str = "us-gaap",
+) -> list[Observation]:
+    """只保留 `as_of` 之前**已经披露**的年度值。
+
+    做回看或对照分析时必须用这个 —— 否则会把当时还不存在的数据算进去，
+    让结果好得不真实。"""
+    first_filed = first_filed_by_fiscal_end(facts, unit)
+    return [
+        o for o in annual_series(facts, tag, unit, taxonomy)
+        if first_filed.get(o.end, "9999") <= as_of
+    ]
 
 
 def latest_value(facts: dict, tag: str, unit: str = "USD",

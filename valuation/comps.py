@@ -151,30 +151,10 @@ def _shares_nearest(facts: dict, as_of: str) -> tuple[float | None, str, str | N
 def _first_filed_by_fiscal_end(facts: dict) -> dict[str, str]:
     """每个财年期末**首次**被申报的日期。
 
-    ## 为什么必须用首次申报日，而不是 `annual_series` 里带的那个
-
-    实测踩到的坑（Oracle）：`annual_series` 按"同一期末保留最晚申报"去重，
-    而**每个新财年的 10-K 都会重述前两年的对照数**。结果 FY2024 的数值
-    挂在了 FY2026 的申报日上：
-
-        end=2023-05-31  filed=2025-06-18   ← 实际首次申报在 2023-06
-        end=2024-05-31  filed=2026-06-22   ← 实际首次申报在 2024-06
-        end=2025-05-31  filed=2026-06-22
-
-    于是按"最晚申报日 ≤ 基准日"筛，**所有历史财年都被排除**，
-    只剩 FY2023 —— 从"用了未来数据"直接翻到"用了三年前的数据"。
-
-    判断"这份财报在当时能不能看到"，要看它**第一次公开**是什么时候。
+    实现已提到 `datasources/sec_edgar.py` 共用 —— 假设参谋（advisor）
+    也要做同样的判断，两处必须用同一套口径。
     """
-    out: dict[str, str] = {}
-    for tag in se._REVENUE_TAGS:
-        for o in se.extract_series(facts, tag, "USD", duration="annual"):
-            if not o.filed:
-                continue
-            prev = out.get(o.end)
-            if prev is None or o.filed < prev:
-                out[o.end] = o.filed
-    return out
+    return se.first_filed_by_fiscal_end(facts)
 
 
 def _latest_reported_fiscal_end(facts: dict, as_of: str) -> str | None:

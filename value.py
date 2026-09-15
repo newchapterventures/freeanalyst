@@ -271,6 +271,20 @@ def main() -> int:
             out.append("\n  计算追溯：")
             out.append(trace.render())
 
+    # ---------------- 假设参谋（§7） ----------------
+    if "advisor" in cfg:
+        from valuation.advisor_cli import run_advisor
+        try:
+            run_advisor(cfg, out)
+        except Exception as exc:  # noqa: BLE001
+            out.append("")
+            out.append("═" * 78)
+            out.append("假设参谋")
+            out.append("═" * 78)
+            out.append(f"  跳过（配置或取数有问题）：{type(exc).__name__}: {exc}")
+            out.append("  **不静默跳过** —— 参谋出问题时要让你看见，"
+                       "否则你会以为这一节本来就没有。")
+
     # ---------------- 数据缺口与低置信度（强制输出） ----------------
     all_a: list[Assumption] = []
     for r in results:
