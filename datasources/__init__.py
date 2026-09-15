@@ -25,6 +25,6 @@ EDGAR 有财报，没有市值。所以：
 要做市值倍数，必须再配一个价格源。**这一层留了位置，但没有假装它能用。**
 """
 
-from . import sec_edgar
+from . import prices, sec_edgar
 
-__all__ = ["sec_edgar"]
+__all__ = ["prices", "sec_edgar"]

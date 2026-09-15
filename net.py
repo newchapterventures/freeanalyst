@@ -54,6 +54,9 @@ DEFAULT_ALLOWED_HOSTS: frozenset[str] = frozenset({
     "data.sec.gov",
     "efts.sec.gov",
     "www.sec.gov",
+    # 东方财富日线（A 股 / 港股 / 美股）
+    # 只加历史日线端点。它的实时报价端点（push2.*）实测连打 6 次全失败，不用。
+    "push2his.eastmoney.com",
 })
 
 AUDIT_PATH = Path(
