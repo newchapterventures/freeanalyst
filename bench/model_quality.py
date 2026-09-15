@@ -59,15 +59,79 @@ from retrieval import BM25, Chunk  # noqa: E402
 SECTIONS = ["结论", "材料缺口", "风险提示"]
 
 # 个人义务被误挂到公司头上的表述族
+#
+# `回购` 必须在中间那一组里。实测漏过一个真错误：
+# 「若未完成 IPO，**公司将面临回购压力**」——公司和个人之间夹着的是「回购」，
+# 不是「财务/现金流」，所以旧模式匹配不到，整条错误被漏掉。
 _COMPANY_BURDEN = re.compile(
-    r"公司[^。；\n]{0,14}(现金流|财务|资金|偿债)[^。；\n]{0,10}(压力|影响|负担|冲击|重大|紧张)"
+    r"(公司|本公司|标的公司)[^。；\n]{0,16}(回购|现金流|财务|资金|偿债|债务|经营)"
+    r"[^。；\n]{0,12}(压力|影响|负担|冲击|紧张|重大|责任|义务)"
+)
+# 否定形式：「无财务压力」「不构成财务影响」是**正确答案**，不是错误
+_BURDEN_NEGATED = re.compile(
+    r"(无|没有|不存在|不构成|不产生|不会有|不会有|非|不形成)"
+    r"[^。；，\n]{0,8}(现金流|财务|资金|偿债|压力|影响|负担|冲击|紧张)"
 )
 # 编造确认函结论的表述族
+#
+# 曾经有个**假阳性**：模式里有个宽松的分支 `确认函[^。\n]{0,10}(确认|显示|表明|指出)`，
+# 它匹配到了「材料未提供客户方确认函的内容，**仅表明**董事长表示"回去找一下"」——
+# 这是一句**完全正确**的回答（说的是材料里只有董事长那句话），却被判为编造。
+#
+# 改法：只匹配「声称确认函得出了结论」和「把未核实的事说成已了结」两种，
+# 不再匹配中性的「表明/显示/指出」。
 _FABRICATED = re.compile(
-    r"(已闭环|已经闭环|不会再发生|不会再次发生|确认函[^。\n]{0,10}(确认|显示|表明|指出))"
+    r"(已闭环|已经闭环|不会再发生|不会再次发生|问题已解决|已得到澄清"
+    r"|确认函[^。\n]{0,15}(已确认|确认了|已证实|证实了|已明确|载明|的结论是|结论为))"
 )
 # 承认信息缺失的表述族
 _ADMIT_MISSING = re.compile(r"(未提供|没有提供|不存在|未包含|未提及|材料中未|材料里没有)")
+
+# 「该义务不落在公司身上」的表述族。
+# **这里必须宽** —— 漏掉一种说法就等于把正确答案判成错的。
+_NON_COMPANY_OBLIGATION = re.compile(
+    r"(不构成|不直接|不落在|不影响|非公司|个人义务|由其个人|属于个人|"
+    r"不承担|不背负|无需承担|由个人承担|个人承担|公司不|非由公司|不属于公司)"
+)
+
+
+# 「某个人是义务人」的表述 —— 用来区分「彻底搞混主体」和「表述混乱但点了人」
+_INDIVIDUAL_BEARER = re.compile(
+    r"(实控人|实际控制人|董事长|股东|创始人)[^。；\n]{0,8}个人"
+    r"|由个人承担|个人承担|个人的义务"
+)
+
+
+def find_company_burden(text: str) -> str | None:
+    """找出「把个人义务说成公司负担」的表述。否定形式不算。
+
+    ## 这里踩过两个坑，都是「报错文字不准」
+
+    **坑 1（假阴性）**：模型答「公司不承担，因此对公司无财务压力」——
+    完全正确的主体识别，却被判为「把个人义务说成公司负担」，
+    因为旧正则匹配到了 `公司…财务…压力`，而它不认否定词。
+
+    **坑 2（文字误导）**：模型答「公司面临实控人个人承担无限连带责任的回购义务」——
+    这句话**确实**把义务框在了公司头上（结论节写成这样是缺陷），
+    但句子里也点了「实控人个人」。骂它「把个人义务说成公司负担」不够准确。
+
+    **报错文字不准的代价是真实的**：它会让你以为问题比实际严重，
+    或者反过来，让你以为某个模型答对了。所以这里把两种情况分开说。
+    """
+    for m in _COMPANY_BURDEN.finditer(text):
+        seg = m.group(0)
+        if _BURDEN_NEGATED.search(seg):
+            continue
+        return seg
+    return None
+
+
+def describe_burden(span: str) -> str:
+    """把匹配到的片段翻译成准确的批评。"""
+    if _INDIVIDUAL_BEARER.search(span):
+        return (f"把个人义务框在了公司头上：「{span}」——"
+                f"句子里虽然点了义务人，但主语落在公司，读者会以为公司在承担")
+    return f"把个人义务说成公司负担：「{span}」"
 
 
 def split_sections(answer: str) -> dict[str, str]:
@@ -94,21 +158,35 @@ def split_sections(answer: str) -> dict[str, str]:
 # ---------------------------------------------------------------- 各用例判分
 
 def check_subject(answer: str, hits: list[tuple[Chunk, float]]) -> list[str]:
-    """主体识别：回购义务人是实控人个人，不是公司。"""
+    """主体识别：回购义务人是实控人个人，不是公司。
+
+    ## 为什么要同时看「结论」和「风险提示」
+
+    实测踩到的：一个模型在结论节写对了（「回购义务人为实控人个人」），
+    却在风险提示节写「若未完成 IPO，**公司将面临回购压力**」。
+
+    语料里原文是「回购义务人为实控人个人，承担无限连带责任」，
+    **没有任何"公司承担回购"的说法**。所以那句话就是主体搞混。
+
+    只在结论节里找，会漏掉这个错误 —— 而这个错误正是本用例存在的理由。
+    """
     reasons: list[str] = []
-    concl = split_sections(answer)["结论"]
+    secs = split_sections(answer)
+    concl = secs["结论"]
 
     if not concl:
         return ["缺少「结论」分节，无法判分"]
 
-    burden = _COMPANY_BURDEN.search(concl)
+    scope = f"{concl}\n{secs['风险提示']}"
+
+    burden = find_company_burden(scope)
     if burden:
-        reasons.append(f"把个人义务说成公司负担：「{burden.group(0)}」")
+        reasons.append(describe_burden(burden))
 
     if not re.search(r"(实控人|董事长|实际控制人)[^。\n]{0,10}个人", concl):
         reasons.append("结论节未指明义务主体是实控人个人")
 
-    if not re.search(r"(不构成|不直接|不落在|不影响|非公司|个人义务|由其个人|属于个人)", concl):
+    if not _NON_COMPANY_OBLIGATION.search(concl):
         reasons.append("结论节未说明该义务不落在公司身上")
 
     return reasons
@@ -227,12 +305,77 @@ def run_case(model: str, engine: BM25, case: dict) -> dict:
             "reasons": reasons, "answer": answer}
 
 
+def rescore(path: Path) -> int:
+    """用当前的判分逻辑，重新判一遍**已保存的答案**。
+
+    ## 为什么需要这个
+
+    评测器本身会出错。实测中 `check_subject` 把
+    「公司不承担，因此对公司无财务压力」判成了「把个人义务说成公司负担」——
+    一个完全正确的答案被判错。
+
+    发现判分逻辑有问题时，**不该重跑一遍模型**：那既慢（本地 30B 一次要 100 多秒），
+    又会因为采样随机性引入新的变量。答案没变，变的只是尺子。
+
+    检索是确定性的，所以可以重建 hits，然后原样重判。
+    """
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    chunks = load_index()
+    engine = BM25(chunks)
+    case_by_id = {c["id"]: c for c in CASES}
+
+    print("=" * 74)
+    print(f"重新判分：{path.name}")
+    print("=" * 74)
+
+    out: dict[str, dict] = {}
+    for model, data in saved.items():
+        results = []
+        print(f"\n模型：{model}")
+        for old in data["results"]:
+            case = case_by_id.get(old["id"])
+            if case is None:
+                continue
+            hits = engine.search(case["question"], top_k=6)
+            reasons = case["check"](old["answer"], hits)
+            allowed = {c.chunk_id for c, _ in hits}
+            dangling = set(re.findall(r"\[(S\d+)\]", old["answer"])) - allowed
+            if dangling:
+                reasons.append(f"悬空引用 {sorted(dangling)}")
+            new_pass = not reasons
+            flag = ""
+            if new_pass != old["passed"]:
+                flag = "  ← 判分变化" + ("（原来误判为失败）" if new_pass else "（原来误判为通过）")
+            print(f"  [{'通过' if new_pass else '失败'}] {case['name']}{flag}")
+            for r in reasons:
+                print(f"        ↳ {r}")
+            results.append({"id": old["id"], "name": case["name"],
+                            "passed": new_pass, "reasons": reasons,
+                            "answer": old["answer"]})
+
+        n = sum(1 for r in results if r["passed"])
+        verdict = "★ 够格进生产" if n == len(results) else f"未达门槛（{n}/{len(results)}）"
+        print(f"\n  小计：{n}/{len(results)} —— {verdict}   （原判分 {data['passed']}/{data['total']}）")
+        out[model] = {"passed": n, "total": len(results),
+                      "verdict": verdict, "results": results,
+                      "previous_passed": data["passed"]}
+
+    new_path = path.with_name(path.stem + "-rescored.json")
+    new_path.write_text(json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"\n重新判分结果已写入 {new_path}")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="本地模型尽调质量评测")
     parser.add_argument("--models", default="qwen2.5-coder:7b", help="逗号分隔的模型名")
     parser.add_argument("--json", default="", help="把完整结果写到这个文件")
     parser.add_argument("--show-answers", action="store_true", help="打印模型原文")
+    parser.add_argument("--rescore", default="", help="用当前判分逻辑重判已保存的结果文件")
     args = parser.parse_args()
+
+    if args.rescore:
+        return rescore(Path(args.rescore))
 
     chunks = load_index()
     if not chunks:

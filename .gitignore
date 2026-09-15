@@ -6,8 +6,14 @@ cache/
 out/
 audits/*.jsonl
 
-# 评测跑分产物（本机生成，不进仓库）
-bench/results-*.json
+# 评测跑分产物
+#
+# **模型质量评测的原始结果要进仓库** —— 它是对外主张的证据
+# （README 里写了「8.9GB 的 gemma3 打败 18GB 的 qwen3」，
+# 别人应该能翻到原始答案自己核）。
+# 但那些是临时对比、看一眼就删的，不进。
+bench/results-baseline.json
+bench/results-*-rescored.json
 
 # 常见的机密材料类型（防止误提交）
 *.pdf
