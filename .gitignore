@@ -1,0 +1,19 @@
+# 私有资产——永不进 git
+root/
+index/
+private/
+audits/*.jsonl
+
+# 常见的机密材料类型（防止误提交）
+*.pdf
+*.docx
+*.xlsx
+*.pptx
+*.csv
+
+# 系统与缓存
+__pycache__/
+.DS_Store
+*.pyc
+.env
+.venv/
