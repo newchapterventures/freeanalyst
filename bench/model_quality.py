@@ -150,6 +150,10 @@ _NON_COMPANY_OBLIGATION = re.compile(
 )
 
 
+#: 小句边界 —— 否定词只看同一小句内的，不跨逗号/分号/句号
+_CLAUSE_BREAK = "。；，、！？\n"
+
+
 def find_company_burden(text: str) -> str | None:
     """找出最直白的「把个人义务说成公司负担」表述。
 
@@ -157,12 +161,25 @@ def find_company_burden(text: str) -> str | None:
     （见 `check_subject`）—— 那个是封闭集合，可判定；这个是开放集合，
     只能抓最直白的形态，用来给出准确的失败原因。
 
-    已知的漏网情形：含 `未` 的句子（如「公司未完成IPO将面临回购压力」）
-    会因为 `未` 被当成否定而放过。**但要求式检查会兜住它。**
+    ## 否定词可能在片段**之前**（实测踩过一次）
+
+    原实现只在匹配片段**内部**找否定词：
+
+        片段（旧）  公司层面的财务压力            ← 没有否定词 → 判成"把义务说成公司负担"
+        原句        不直接构成公司层面的财务压力  ← 否定词在这里，片段之外
+
+    于是**完全正确的答案被判成错**。
+
+    改成往前看，但**限定在同一小句内** —— 跨逗号会误伤：
+    「若未完成IPO，公司将面临回购压力」里的「未」不在同一小句，
+    不该算作对后半句的否定。
     """
     for m in _COMPANY_BURDEN.finditer(text):
         seg = m.group(0)
-        if _NEGATION.search(_NOT_NEGATION.sub("只", seg)):
+        start = max((text.rfind(ch, 0, m.start()) for ch in _CLAUSE_BREAK),
+                    default=-1) + 1
+        window = text[start:m.end()]
+        if _NEGATION.search(_NOT_NEGATION.sub("只", window)):
             continue
         return seg
     return None

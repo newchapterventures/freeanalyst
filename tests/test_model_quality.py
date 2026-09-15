@@ -177,6 +177,40 @@ class TestSubjectCheck(unittest.TestCase):
         self.assertTrue(mq.check_subject("## 材料缺口\n未提供\n", []))
 
 
+class TestNegationPlacement(unittest.TestCase):
+    """否定词的位置 —— 修过两次同一个 bug。
+
+    第一次只处理了「片段内部」的否定，第二次才发现否定词可能在片段**之前**。
+    两次都是**把正确答案判成错**（假阴性），而假阴性比没有评测更危险：
+    它会让人淘汰掉对的模型。
+    """
+
+    def test_negation_before_the_match_counts(self):
+        """实测：模型答
+
+            回购义务由实控人个人承担，不直接构成公司层面的财务压力
+
+        这是**完全正确**的。但旧实现只在匹配片段「公司层面的财务压力」
+        内部找否定词，而「不直接构成」在片段**之前** —— 正确答案被判成错。
+        """
+        self.assertIsNone(mq.find_company_burden("不直接构成公司层面的财务压力"))
+        self.assertIsNone(mq.find_company_burden("对公司不构成财务压力"))
+
+    def test_negation_in_another_clause_does_not_count(self):
+        """但**不能跨小句**。
+
+        「若未完成IPO，公司将面临回购压力」里的「未」属于前一个小句，
+        不该算作对后半句的否定 —— 这句话明确说了公司要承担。
+        """
+        self.assertIsNotNone(
+            mq.find_company_burden("若未完成IPO，公司将面临回购压力"),
+            "跨小句的「未」被当成否定，漏掉了一个真错误")
+
+    def test_still_catches_plain_misattribution(self):
+        self.assertIsNotNone(mq.find_company_burden("公司层面的财务压力较大"))
+        self.assertIsNotNone(mq.find_company_burden("公司将面临回购压力"))
+
+
 class TestSectionSplitting(unittest.TestCase):
     def test_splits_three_sections(self):
         answer = "## 结论\nA\n\n## 材料缺口\nB\n\n## 风险提示\nC\n"
