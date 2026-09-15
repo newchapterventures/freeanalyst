@@ -48,6 +48,7 @@ class Field(str, Enum):
     INVENTORY = "存货"
     OTHER_CURRENT_ASSETS = "其他流动资产"
     TOTAL_CURRENT_ASSETS = "流动资产合计"
+    TOTAL_NONCURRENT_ASSETS = "非流动资产合计"
     PPE = "固定资产"
     GOODWILL = "商誉"
     INTANGIBLES = "无形资产"
@@ -58,15 +59,26 @@ class Field(str, Enum):
     DEFERRED_REVENUE = "预收款项"
     SHORT_TERM_DEBT = "短期借款"
     ACCRUED_LIABILITIES = "其他应付款"
+    EMPLOYEE_PAYABLE = "应付职工薪酬"
     TAXES_PAYABLE = "应交税费"
     OTHER_CURRENT_LIABILITIES = "其他流动负债"
     TOTAL_CURRENT_LIABILITIES = "流动负债合计"
+    TOTAL_NONCURRENT_LIABILITIES = "非流动负债合计"
     LONG_TERM_DEBT = "长期借款"
     OTHER_NONCURRENT_LIABILITIES = "其他非流动负债"
     TOTAL_LIABILITIES = "负债合计"
     MINORITY_INTEREST = "少数股东权益"
+    EQUITY_PARENT = "归属于母公司所有者权益"
     EQUITY = "所有者权益合计"
     TOTAL_EQUITY_AND_LIABILITIES = "负债和所有者权益总计"
+    # ---- 权益明细（勾稽用不到，但要能认出，否则会被当成「未映射」噪音）----
+    CAPITAL_STOCK = "实收资本"
+    CAPITAL_RESERVE = "资本公积"
+    TREASURY_STOCK = "库存股"
+    OCI = "其他综合收益"
+    SURPLUS_RESERVE = "盈余公积"
+    GENERAL_RISK_RESERVE = "一般风险准备"
+    RETAINED_EARNINGS = "未分配利润"
 
     # ---- 利润表：期间值 ----
     REVENUE = "营业收入"
@@ -126,13 +138,19 @@ MAPPINGS: tuple[Mapping, ...] = (
             ("Assets",)),
     Mapping(Field.TOTAL_CURRENT_ASSETS, ("流动资产合计",),
             ("AssetsCurrent",)),
-    Mapping(Field.CASH, ("货币资金", "现金及现金等价物", "现金及银行存款"),
+    Mapping(Field.CASH, ("货币资金", "现金及现金等价物", "现金及银行存款",
+                         # H 股 / IFRS 写法
+                         "现金及银行结余", "银行结余及现金",
+                         "Cash and bank balances", "Cash and cash equivalents"),
             ("CashAndCashEquivalentsAtCarryingValue",)),
     Mapping(Field.SHORT_TERM_INVESTMENTS,
             ("交易性金融资产", "短期投资", "以公允价值计量且其变动计入当期损益的金融资产"),
             ("AvailableForSaleSecuritiesDebtSecuritiesCurrent",
              "MarketableSecuritiesCurrent", "ShortTermInvestments")),
-    Mapping(Field.ACCOUNTS_RECEIVABLE, ("应收账款", "应收款项", "应收账款净额"),
+    Mapping(Field.ACCOUNTS_RECEIVABLE, ("应收账款", "应收款项", "应收账款净额",
+                                        # H 股 / IFRS 写法
+                                        "贸易应收款项", "应收账款及票据",
+                                        "Trade receivables", "Trade and other receivables"),
             ("AccountsReceivableNetCurrent", "ReceivablesNetCurrent")),
     Mapping(Field.INVENTORY, ("存货", "存货净额"), ("InventoryNet", "InventoryFinishedGoods")),
     Mapping(Field.PPE, ("固定资产", "固定资产净额", "物业厂房及设备"),
@@ -144,30 +162,53 @@ MAPPINGS: tuple[Mapping, ...] = (
             ("预付款项", "预付账款", "其他流动资产", "一年内到期的非流动资产"),
             ("PrepaidExpenseAndOtherAssetsCurrent", "OtherAssetsCurrent",
              "PrepaidExpenseCurrent")),
+    # 金融类资产（财务公司业务；贵州茅台这类公司会有）
+    Mapping(Field.OTHER_CURRENT_ASSETS,
+            ("拆出资金", "买入返售金融资产", "发放贷款和垫款", "结算备付金",
+             "衍生金融资产", "应收款项融资", "其他应收款"),
+            ()),
     Mapping(Field.OTHER_NONCURRENT_ASSETS,
-            ("其他非流动资产", "长期股权投资", "递延所得税资产", "其他资产"),
+            ("其他非流动资产", "长期股权投资", "递延所得税资产", "其他资产",
+             "在建工程", "使用权资产", "长期待摊费用", "投资性房地产",
+             "开发支出", "生产性生物资产", "油气资产",
+             "债权投资", "其他债权投资", "其他非流动金融资产", "长期应收款"),
             ("OtherAssetsNoncurrent", "DeferredTaxAssetsLiabilitiesNetNoncurrent",
              "DeferredTaxAssetsNetNoncurrent")),
-    Mapping(Field.ACCRUED_LIABILITIES, ("其他应付款", "应计费用", "预提费用"),
+    Mapping(Field.TOTAL_NONCURRENT_ASSETS, ("非流动资产合计",), ()),
+    Mapping(Field.ACCRUED_LIABILITIES, ("其他应付款", "应计费用", "预提费用",
+                                        # H 股 / IFRS 写法
+                                        "应计及其他应付款项", "其他应付款及应计费用",
+                                        "Accruals and other payables"),
             ("AccruedLiabilitiesCurrent", "AccruedLiabilities",
              "EmployeeRelatedLiabilitiesCurrent")),
+    # 应付职工薪酬是新准则里的独立科目（旧准则并进「其他应付款」）。
+    Mapping(Field.EMPLOYEE_PAYABLE,
+            ("应付职工薪酬", "应付工资", "应付福利费"),
+            ("EmployeeRelatedLiabilitiesCurrent", "AccruedPayroll")),
     Mapping(Field.TAXES_PAYABLE, ("应交税费", "应付税费", "应交税金"),
             ("TaxesPayableCurrent", "IncomeTaxesPayable",
              "AccruedIncomeTaxesCurrent")),
     Mapping(Field.OTHER_CURRENT_LIABILITIES,
-            ("其他流动负债", "一年内到期的非流动负债"),
+            ("其他流动负债", "一年内到期的非流动负债",
+             "吸收存款及同业存放", "卖出回购金融资产款", "代理买卖证券款",
+             "应付手续费及佣金", "持有待售负债", "衍生金融负债", "应付票据"),
             ("OtherLiabilitiesCurrent",)),
     Mapping(Field.OTHER_NONCURRENT_LIABILITIES,
-            ("其他非流动负债", "递延所得税负债", "长期应付款", "其他负债"),
+            ("其他非流动负债", "递延所得税负债", "长期应付款", "其他负债",
+             "租赁负债", "长期应付职工薪酬", "预计负债", "递延收益",
+             "保险合同准备金", "应付债券"),
             ("OtherLiabilitiesNoncurrent", "DeferredTaxLiabilitiesNoncurrent")),
+    Mapping(Field.TOTAL_NONCURRENT_LIABILITIES, ("非流动负债合计",), ()),
 
     Mapping(Field.TOTAL_LIABILITIES, ("负债合计", "负债总计", "总负债"),
             ("Liabilities",)),
     Mapping(Field.TOTAL_CURRENT_LIABILITIES, ("流动负债合计",),
             ("LiabilitiesCurrent",)),
-    Mapping(Field.ACCOUNTS_PAYABLE, ("应付账款", "应付款项"),
+    Mapping(Field.ACCOUNTS_PAYABLE, ("应付账款", "应付款项",
+                                     # H 股 / IFRS 写法
+                                     "贸易应付款项", "Trade payables"),
             ("AccountsPayableCurrent",)),
-    Mapping(Field.DEFERRED_REVENUE, ("预收款项", "预收账款", "递延收入"),
+    Mapping(Field.DEFERRED_REVENUE, ("预收款项", "预收账款", "递延收入", "合同负债"),
             ("DeferredRevenueCurrent", "ContractWithCustomerLiabilityCurrent")),
     Mapping(Field.SHORT_TERM_DEBT, ("短期借款", "短期负债"),
             ("ShortTermBorrowings", "ShortTermDebt", "LongTermDebtCurrent")),
@@ -175,6 +216,20 @@ MAPPINGS: tuple[Mapping, ...] = (
             ("LongTermDebtNoncurrent", "LongTermDebt")),
     Mapping(Field.MINORITY_INTEREST, ("少数股东权益",),
             ("MinorityInterest", "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest")),
+    # 权益明细。**不能漏** —— 漏了会以「未映射」的形式出现在报告里，
+    # 让人分不清是真没认出还是本来就不需要。
+    Mapping(Field.EQUITY_PARENT, ("归属于母公司所有者权益", "归属于母公司股东权益",
+                                  "归属于母公司股东的权益", "母公司所有者权益"),
+            ()),
+    Mapping(Field.CAPITAL_STOCK, ("实收资本", "股本"), ("CommonStockValue",)),
+    Mapping(Field.CAPITAL_RESERVE, ("资本公积",), ("AdditionalPaidInCapital",)),
+    Mapping(Field.TREASURY_STOCK, ("库存股",), ("TreasuryStockValue",)),
+    Mapping(Field.OCI, ("其他综合收益", "其他权益工具"),
+            ("AccumulatedOtherComprehensiveIncomeLossNetOfTax",)),
+    Mapping(Field.SURPLUS_RESERVE, ("盈余公积",), ()),
+    Mapping(Field.GENERAL_RISK_RESERVE, ("一般风险准备",), ()),
+    Mapping(Field.RETAINED_EARNINGS, ("未分配利润", "留存收益", "未分配利润（未弥补亏损）"),
+            ("RetainedEarningsAccumulatedDeficit",)),
     Mapping(Field.EQUITY, ("所有者权益合计", "股东权益合计", "所有者权益", "净资产"),
             ("StockholdersEquity",)),
     Mapping(Field.TOTAL_EQUITY_AND_LIABILITIES,
@@ -268,10 +323,39 @@ _DISAMBIGUATING = (
 
 
 def _norm(s: str) -> str:
-    """比对用的归一化：去空白、去全半角括号、去标点。"""
+    """比对用的归一化。
+
+    ## 括号里的内容要去掉（实测踩到）
+
+    A 股年报里权益行写的是**「所有者权益(或股东权益)合计」** ——
+    括号里是别名。原来的归一化只去标点、留下内容，于是
+    `所有者权益或股东权益合计` 匹配不上表里的 `所有者权益合计`，
+    整个勾稽**判不了**。
+
+    同类的还有「负债和所有者权益(或股东权益)总计」。
+
+    去掉括号内容对匹配普遍有利：「固定资产(净额)」→「固定资产」也更能对上。
+
+    另外剥掉「减:」「其中:」这类前缀 —— 它们是排版用的，不是科目名的一部分。
+    """
     s = s.strip().lower()
     s = re.sub(r"[\s\u3000]+", "", s)
-    s = re.sub(r"[（()）【】\[\]：:，,、。.\-—_*]", "", s)
+    # 括号及其内容：全角半角都要处理
+    # **但如果整行都在括号里**（如「（货币资金）」），剥完就空了 —— 退回原文。
+    stripped = re.sub(r"[（(][^（()）]*[)）]", "", s)
+    if stripped.strip():
+        s = stripped
+    else:
+        s = re.sub(r"[（()）]", "", s)
+    # 排版前缀
+    # 「一、」「二、」这类序号是 A 股报表的标准排版 —— 不剥掉的话
+    # 「一、营业总收入」「四、汇率变动对现金的影响」全都匹配不上。
+    s = re.sub(r"^[一二三四五六七八九十]+[、.]", "", s)
+    s = re.sub(r"^(其中|减|加|其中：|减：|加：)[:：]?", "", s)
+    s = re.sub(r"[（()）【】\[\]：:，,、。.\-—_*“”\"']", "", s)
+    # 「损失以“-”号填列」这类填表说明是格式要求，不是科目名的一部分
+    s = re.sub(r"损失以.*?号填列", "", s)
+    s = re.sub(r"亏损以.*?号填列", "", s)
     return s
 
 
@@ -283,6 +367,79 @@ for _m in MAPPINGS:
         _BY_TAG.setdefault(_norm(_t), _m.field)
     for _n in _m.names:
         _BY_NAME.setdefault(_norm(_n), _m.field)
+
+
+#: 繁简转换器。有 zhconv 就用它（完整表），没有就退到内置的小表。
+try:
+    from zhconv import convert as _zh_convert
+
+    def _to_simplified(s: str) -> str:
+        return _zh_convert(s, "zh-cn")
+
+    _HAS_ZHCONV = True
+
+except ImportError:  # pragma: no cover - 取决于环境
+    _TRAD_TO_SIMP = str.maketrans({
+        "為": "为", "產": "产", "負": "负", "債": "债", "資": "资", "現": "现",
+        "務": "务", "業": "业", "應": "应", "計": "计", "總": "总", "額": "额",
+        "動": "动", "費": "费", "稅": "税", "項": "项", "營": "营", "潤": "润",
+        "損": "损", "權": "权", "東": "东", "聯": "联", "廠": "厂", "設": "设",
+        "備": "备", "無": "无", "遞": "递", "預": "预", "貨": "货", "幣": "币",
+        "銀": "银", "結": "结", "餘": "余", "帳": "账", "賬": "账", "匯": "汇",
+        "兌": "兑", "報": "报", "註": "注", "準": "准", "則": "则", "與": "与",
+        "轉": "转", "換": "换", "淨": "净", "長": "长", "間": "间", "屬": "属",
+        "發": "发", "投": "投", "購": "购", "處": "处", "終": "终", "減": "减",
+        "值": "值", "攤": "摊", "銷": "销", "虧": "亏", "彌": "弥", "補": "补",
+        "儲": "储", "餘": "余", "貸": "贷", "壞": "坏", "誤": "误", "審": "审",
+        "閱": "阅", "會": "会", "師": "师", "報": "报", "告": "告", "書": "书",
+    })
+
+    def _to_simplified(s: str) -> str:
+        return s.translate(_TRAD_TO_SIMP)
+
+    _HAS_ZHCONV = False
+
+
+def _split_bilingual(label: str) -> list[str]:
+    """把中英双语连写的标签拆成几段。
+
+    ## 为什么（实测踩到）
+
+    H 股年报的科目名是**中英双语连写**：
+
+        Property, plant and equipment 物業、廠房及設備
+        Cash and bank balances 現金及銀行結餘
+        Total assets less current liabilities 總資產減流動負債
+
+    整串拿去匹配，简体中文表里一条都对不上 —— 于是整张表「映射上 0 行」。
+    拆开分别试才行。
+    """
+    parts = [p.strip() for p in re.split(
+        r"(?<=[\u4e00-\u9fff])\s+(?=[A-Za-z(])|(?<=[A-Za-z)])\s+(?=[\u4e00-\u9fff])",
+        label) if p.strip()]
+    return parts if len(parts) > 1 else []
+
+
+def _label_candidates(label: str) -> list[str]:
+    """把一行标签拆成若干「候选写法」，依次去匹配科目表。
+
+    顺序 = 从最具体到最泛：原文 → 简体 → 双语拆开（各自再转简体）。
+    """
+    out: list[str] = []
+
+    def add(s: str) -> None:
+        n = _norm(s)
+        if n and n not in out:
+            out.append(n)
+
+    add(label)
+    simp = _to_simplified(label)
+    if simp != label:
+        add(simp)
+    for part in _split_bilingual(label):
+        add(part)
+        add(_to_simplified(part))
+    return out
 
 
 @dataclass
@@ -306,9 +463,15 @@ def identify(label: str, xbrl_tag: str | None = None) -> tuple[Field | None, str
     这种情况下**行名比标签准**，所以先看行名。
     """
     lab = _norm(label)
-    if any(k in lab for k in ("现金", "cash")):
+    cands = _label_candidates(label)
+    if not cands:
+        cands = [lab]
+
+    # 货币资金 vs 期初/期末现金的消歧要在**所有候选写法**上都试，
+    # 否则繁体「現金及銀行結餘」进不来。
+    if any(any(k in c for k in ("现金", "cash")) for c in cands):
         for keys, f in _DISAMBIGUATING:
-            if any(k in lab for k in keys):
+            if any(any(k in c for k in keys) for c in cands):
                 return f, "label-disambiguated"
 
     if xbrl_tag:
@@ -320,8 +483,12 @@ def identify(label: str, xbrl_tag: str | None = None) -> tuple[Field | None, str
             return hit, "tag"
 
     if label.strip():
-        hit = _BY_NAME.get(lab)
-        if hit is not None:
-            return hit, "name"
+        # **逐个候选写法试**：原文 → 简体 → 双语拆开。
+        # H 股年报里 `Property, plant and equipment 物業、廠房及設備`
+        # 只有拆开再转简体才匹配得上。
+        for c in cands:
+            hit = _BY_NAME.get(c)
+            if hit is not None:
+                return hit, "name"
 
     return None, "none"

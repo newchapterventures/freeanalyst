@@ -200,7 +200,7 @@ def _normalize_cells(cells: list[str]) -> list[str]:
     return out
 
 
-def _to_number(cell: str) -> float | None:
+def _to_number(cell: str | None) -> float | None:
     """把单元格文本转成数字。
 
     要处理：千分位逗号、货币符号、括号表示负数、破折号表示零或缺失。
@@ -218,12 +218,24 @@ def _to_number(cell: str) -> float | None:
     **这个 bug 会把亏损静默变成盈利。** 一家亏 1.03 亿的公司显示成赚 1.03 亿，
     而且没有任何报错。是靠跟官方 XBRL 对账才发现的。
     """
+    if cell is None:
+        # PDF 抽出来的表格里空单元格常是 None 而不是 ""。
+        # 让调用方每次自己判断会到处漏。
+        return None
     s = cell.strip()
     if not s:
         return None
 
     # 破折号 / em dash 表示零或"无"
     if s in {"—", "–", "-", "–", "—", "N/A", "n/a"}:
+        return None
+
+    # **日期不是金额。** A 股年报跨页拼接时表头会重复出现，
+    # 「2025年12月31日」会被剥成 20251231 —— 变成一个看着像金额的假数。
+    if re.search(r"[年月日]", s) or re.search(r"\d{4}-\d{2}-\d{2}", s):
+        return None
+    # 纯单位行
+    if s in {"万元", "元", "千元", "人民币元", "美元", "千美元"}:
         return None
 
     # **先剥货币符号和空白** —— 括号判断必须在之后做

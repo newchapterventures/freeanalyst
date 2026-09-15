@@ -92,9 +92,20 @@ class Statements:
         return begin, end
 
     def _indirect(self) -> art.Articulation:
-        """间接法：净利润行与经营现金流行之间的行全部加总。"""
+        """间接法：净利润行与经营现金流行之间的行全部加总。
+
+        **先判方法适用性。** A 股现金流量表是直接法编的，没有那段调节 ——
+        硬跑会报「定位不到锚点」，看着像映射漏了，其实不适用。
+        """
         assert self.cash_flow is not None and self.income is not None
         rows = self.cash_flow.rows
+        pairs = [(r.label, r.value) for r in rows]
+        if art.is_direct_method(pairs):
+            return art.Articulation(
+                "净利润 → 经营现金流（间接法）", None, applicable=False,
+                note="该现金流量表用**直接法**编（A 股常见），"
+                     "没有这段调节 —— 间接法调节在附注里。",
+            )
         start = end_i = None
         for i, r in enumerate(rows):
             if r.field == Field.NET_INCOME and start is None:

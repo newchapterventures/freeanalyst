@@ -103,7 +103,8 @@ def run_statements(cfg: dict, out: list[str], base: Path) -> stm.Statements:
     for c in checks:
         out.append("  " + c.render("").replace("\n", "\n  "))
     failed = [c for c in checks if c.ok is False]
-    unknown = [c for c in checks if c.ok is None]
+    unknown = [c for c in checks if c.ok is None and c.applicable]
+    skipped = [c for c in checks if not c.applicable]
     if failed:
         out.append("\n  ⚠ **有勾稽不平 —— 上面的推算结果不要用。**")
         out.append("     差额能帮你定位是哪一行归属错了："
@@ -111,6 +112,8 @@ def run_statements(cfg: dict, out: list[str], base: Path) -> stm.Statements:
     elif unknown:
         out.append(f"\n  ⚠ 有 {len(unknown)} 条判不了（缺科目），"
                    "那些推算结果按缺口处理")
+    elif skipped:
+        out.append(f"\n  ✓ 能判的都平了。（{len(skipped)} 条不适用这项报表格式）")
     else:
         out.append("\n  ✓ 三条全平。下面的推算结果可以用于估值。")
 

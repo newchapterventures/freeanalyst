@@ -64,8 +64,54 @@ def _import_pdfplumber():
 @dataclass
 class PdfPage:
     number: int                 # 从 1 开始
-    text: str                   # 已归一化
+    text: str                   # 已归一化，**换行已折叠成空格**（给检索用）
     tables: list[list[list[str | None]]] = field(default_factory=list)
+    #: 保留**原始换行**的正文（只过归一化，不折叠换行）。
+    #:
+    #: ## 为什么两份都要留（实测踩到）
+    #:
+    #: `text` 把 PDF 的换行折叠成空格 —— 对正文检索是对的
+    #: （PDF 的换行多半是排版换行，不是语义换行）。
+    #:
+    #: 但这**正好摧毁了无框线排版表的行结构**：宝宝树年报里
+    #: `Property, plant and equipment 物業、廠房及設備 11 26,189 60,057`
+    #: 被折成一整页一行，按行解析无从下手。
+    #:
+    #: 所以两个都留：检索用 `text`，排版表解析用 `raw_text`。
+    raw_text: str = ""
+    #: 这一页的文字是 **OCR 出来的**，不是原生文字层。
+    #:
+    #: 下游要区别对待 —— OCR 出来的数字有认错的可能（实测抓到过
+    #: `334,719.50` 被认成 `334.719.50`），该人工复核。
+    #: 和原生文字一视同仁是不诚实的。
+    ocr: bool = False
+
+    def usable_tables(self) -> list[list[list[str]]]:
+        """能用的表格。**表格太窄时退回按行解析。**
+
+        ## 什么时候会退回（实测踩到）
+
+        `pdfplumber` 默认按**线条**找表格。宝宝树 2020 年报（H 股）的
+        财务报表没有框线，于是它只抽出数字列：
+
+            行2: ['26,189']        ← 标签完全丢了
+
+        而同一页正文里信息齐全。H 股 / IFRS 年报普遍用无框线排版表，
+        所以这个兜底不是特例处理。
+
+        判据：**最宽的一行少于 2 列** —— 一个连标签都没抓到的"表格"
+        不可能是有用的表格。
+        """
+        from .layout import parse_layout_lines
+
+        if self.tables:
+            widest = max((len(t[0]) for t in self.tables if t and t[0]), default=0)
+            if widest >= 2:
+                return self.tables
+        layout = parse_layout_lines(self.raw_text or self.text)
+        if layout:
+            return [layout]
+        return self.tables
 
     def tables_markdown(self) -> str:
         """把这一页的表格渲染成 markdown。
@@ -93,6 +139,11 @@ class PdfDocument:
     compat_chars: list[str] = field(default_factory=list)
     unmapped_chars: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    #: 走了 OCR 的页码。**报告里要说出来** —— OCR 出来的数字该人工复核。
+    ocr_pages: list[int] = field(default_factory=list)
+    #: 其中有多少个金额是**按判据修出来的**（不是原样读对的）。
+    #: 静默修复和静默凑数一样不可接受，所以要单独报出来。
+    ocr_repaired: int = 0
 
     @property
     def page_count(self) -> int:
@@ -155,11 +206,52 @@ def _clean(text: str) -> str:
     return t.strip()
 
 
-def extract_pdf(path: str | Path, extract_tables: bool = True) -> PdfDocument:
+def _clean_lines(text: str) -> str:
+    """只做最小清理，**保留换行结构**。
+
+    给无框线排版表的按行解析用。`_clean` 会把单换行折成空格
+    （对正文检索是对的），但那样排版表就没有行了。
+    """
+    if not text:
+        return ""
+    t = text.replace("\r\n", "\n").replace("\r", "\n")
+    t = _CJK_SPACE.sub("", t)
+    return t.strip()
+
+
+def _contiguous_runs(nums: list[int]) -> list[tuple[int, int]]:
+    """把页码列表并成连续区间。
+
+    OCR 一次进程跑一段最划算（每页约 1 秒，但每次启动 swift 也要约 1 秒）。
+    一份混合型 PDF 里扫描页往往连着，并成区间能少启动几次。
+    """
+    if not nums:
+        return []
+    runs: list[tuple[int, int]] = []
+    start = prev = nums[0]
+    for n in nums[1:]:
+        if n == prev + 1:
+            prev = n
+            continue
+        runs.append((start, prev))
+        start = prev = n
+    runs.append((start, prev))
+    return runs
+
+
+def extract_pdf(path: str | Path, extract_tables: bool = True,
+                ocr_fallback: bool = True) -> PdfDocument:
     """抽一份 PDF 的文字和表格。
 
-    **不做 OCR。** 扫描件抽出来是空的 —— 那种情况会明确报出来，
-    而不是给你一份空文本让你以为材料里没内容。
+    ## 文字层为空时回落到 OCR
+
+    扫描件（图片型 PDF）的文字层是空的。这时：
+
+    - 这台机器能跑 OCR（macOS + swift）→ **自动用 Vision 框架识别**，
+      并把页码记进 `ocr_pages`，让下游知道这些数字该人工复核
+    - 跑不了 → **明确报出来**，而不是给你一份空文本让你以为材料里没内容
+
+    OCR 结果会缓存（见 `ingest/ocr.py`），同一份材料第二次读不重跑。
     """
     pdfplumber = _import_pdfplumber()
     path = Path(path)
@@ -185,14 +277,29 @@ def extract_pdf(path: str | Path, extract_tables: bool = True) -> PdfDocument:
                 except Exception as e:  # noqa: BLE001
                     warnings.append(f"第 {i} 页表格抽取失败（{type(e).__name__}）：{e}")
             pages.append(PdfPage(number=i, text=normalize_text(_clean(raw)),
+                                 raw_text=_clean_lines(raw),
                                  tables=tables))
+
+    ocr_used, ocr_fixed = _fill_blank_pages_with_ocr(path, pages, warnings) if ocr_fallback else ([], 0)
 
     total_chars = sum(len(p.text) for p in pages)
     if total_chars == 0:
+        detail = "" if ocr_fallback else "（本次调用关掉了 OCR 回落）"
         warnings.append(
-            "**整份文件没有抽到任何文字。** 大概率是扫描件（图片型 PDF）。\n"
-            "  本工具不做 OCR —— 需要先跑 OCR 再入库。"
-            "别把这份空文本当成「材料里没有内容」。"
+            "**整份文件没有抽到任何文字。** 大概率是扫描件（图片型 PDF）。"
+            f"{detail}\n"
+            "  别把这份空文本当成「材料里没有内容」。"
+        )
+    elif len(ocr_used) == len(pages):
+        warnings.append(
+            f"**全文 {len(pages)} 页都走了 OCR**（这原本是扫描件）。\n"
+            "  OCR 会认错字和标点，**数字请人工复核**：报告里可疑的金额会带 `？` 前缀。"
+        )
+    elif ocr_used:
+        warnings.append(
+            f"其中 {len(ocr_used)} 页（{ocr_used[:8]}"
+            f"{'…' if len(ocr_used) > 8 else ''}）是扫描页，走了 OCR —— "
+            "这些页的数字请人工复核。"
         )
     elif total_chars < 40 * len(pages):
         warnings.append(
@@ -204,5 +311,49 @@ def extract_pdf(path: str | Path, extract_tables: bool = True) -> PdfDocument:
         path=path, pages=pages,
         compat_chars=compat_issues(all_raw),
         unmapped_chars=unfixable_issues(all_raw),
-        warnings=warnings,
+        warnings=warnings, ocr_pages=ocr_used, ocr_repaired=ocr_fixed,
     )
+
+
+def _fill_blank_pages_with_ocr(path: Path, pages: list[PdfPage],
+                               warnings: list[str]) -> tuple[list[int], int]:
+    """把「文字层为空」的页用 OCR 补上。
+
+    返回 `(补过的页码, 其中修出来的金额个数)`。
+    """
+    blank = [p.number for p in pages if not p.text.strip()]
+    if not blank:
+        return [], 0
+
+    try:
+        from . import ocr
+    except ImportError:  # pragma: no cover
+        warnings.append("OCR 模块加载失败，跳过。")
+        return [], 0
+
+    if not ocr.available():
+        warnings.append(
+            f"有 {len(blank)} 页文字层为空（扫描页），但**这台机器跑不了 OCR**："
+            f"{ocr.why_unavailable()}"
+        )
+        return [], 0
+
+    filled: list[int] = []
+    repaired = 0
+    for start, end in _contiguous_runs(blank):
+        try:
+            got = ocr.ocr_pages(path, start, end)
+        except Exception as e:  # noqa: BLE001
+            warnings.append(f"OCR 第 {start}–{end} 页失败：{type(e).__name__}：{e}")
+            continue
+        for n, rows in got.items():
+            if not (1 <= n <= len(pages)) or not rows:
+                continue
+            page = pages[n - 1]
+            repaired += ocr.count_repairs(rows)
+            page.text = ocr.rows_to_text(rows)
+            page.raw_text = page.text
+            page.tables = [[list(r) for r in ocr.rows_to_table(rows)]]
+            page.ocr = True
+            filled.append(n)
+    return filled, repaired
