@@ -16,11 +16,15 @@ bench/results-baseline.json
 bench/results-*-rescored.json
 
 # 常见的机密材料类型（防止误提交）
+#
+# **例外**：corpus/test-*.pdf 是合成的测试材料（由同名 .html 用浏览器渲染），
+# 不含任何真实交易信息，测试要用，必须进仓库。
 *.pdf
 *.docx
 *.xlsx
 *.pptx
 *.csv
+!corpus/test-*.pdf
 
 # 系统与缓存
 __pycache__/

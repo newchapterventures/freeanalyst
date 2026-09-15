@@ -90,36 +90,83 @@ def load_index() -> list[Chunk]:
     return chunks
 
 
+def _load_material(path: Path) -> tuple[str, list[str]]:
+    """读一份材料 → (文本, 提示信息)。
+
+    `.txt` / `.md` 走标准库；`.pdf` 走 `ingest.pdf`（需要可选的 pdfplumber）。
+
+    **两种格式都要过归一化。** 只归一化 PDF 是不够的 ——
+    索引侧和查询侧口径不一致就会静默失配，那比不归一化还隐蔽。
+    """
+    from ingest.normalize import normalize_text
+
+    ext = path.suffix.lower()
+    notes: list[str] = []
+
+    if ext == ".pdf":
+        from ingest import pdf as ip
+        doc = ip.extract_pdf(path)
+        notes.append(doc.summary())
+        return doc.to_text(), notes
+
+    text = normalize_text(load_text(path))
+    return text, notes
+
+
 def cmd_ingest(args: argparse.Namespace) -> int:
     corpus = Path(args.path).expanduser().resolve()
     if not corpus.exists():
         print(f"找不到路径：{corpus}", file=sys.stderr)
         return 1
 
-    patterns = ("*.txt", "*.md")
+    patterns = ("*.txt", "*.md", "*.pdf")
     files: list[Path] = []
     for pattern in patterns:
         files.extend(sorted(corpus.rglob(pattern)))
+    files = [f for f in files if not f.name.startswith(".")]
     if not files:
-        print(f"{corpus} 下没有 .txt / .md 材料", file=sys.stderr)
+        print(f"{corpus} 下没有 .txt / .md / .pdf 材料", file=sys.stderr)
         return 1
 
     # 重新编号，保证 S编号全局唯一且可追溯
     all_chunks: list[Chunk] = []
     counter = 0
+    failed: list[tuple[Path, str]] = []
+
     for path in files:
-        text = load_text(path)
         rel = str(path.relative_to(corpus))
+        try:
+            text, notes = _load_material(path)
+        except Exception as exc:  # noqa: BLE001
+            # **取不到的材料必须报出来** —— 静默跳过会让索引少几份，
+            # 而后面所有问答都会以"材料里没写"来解释这个缺失。
+            failed.append((path, f"{type(exc).__name__}: {exc}"))
+            continue
+        for n in notes:
+            print(f"  {n}")
+        n_before = len(all_chunks)
         for chunk in chunk_document(rel, text):
             counter += 1
             chunk.chunk_id = f"S{counter}"
             all_chunks.append(chunk)
+        if len(all_chunks) == n_before:
+            failed.append((path, "抽出来的文本为空 —— 可能是扫描件（本工具不做 OCR）"))
 
     save_index(all_chunks)
-    print(f"已入库 {len(files)} 份材料 → {len(all_chunks)} 个片段")
+    n_pdf = sum(1 for f in files if f.suffix.lower() == ".pdf")
+    print(f"\n已入库 {len(files) - len(failed)}/{len(files)} 份材料 "
+          f"（其中 PDF {n_pdf} 份）→ {len(all_chunks)} 个片段")
     print(f"索引位置：{index_path()}")
+
+    if failed:
+        print(f"\n⚠ {len(failed)} 份没能入库：")
+        for p, why in failed:
+            print(f"  ✗ {p.relative_to(corpus)}：{why}")
+        print("  **不静默跳过** —— 少了材料会让后面的问答以「材料里没写」"
+              "来解释这个缺失，而实际上是没读进来。")
+
     print("（全部处理在本机完成，未发生任何出网调用）")
-    return 0
+    return 0 if not failed else 2
 
 
 # ---------------------------------------------------------------- 问答

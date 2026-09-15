@@ -19,6 +19,11 @@ from pathlib import Path
 
 CJK = r"\u4e00-\u9fff\u3400-\u4dbf"
 
+#: 页码标记。两种形式都要认：
+#:   【第 3 页】            正文里的页分隔（ingest/pdf.py 写入）
+#:   【第 3 页 · 表 2】     表格标题（分块后落点可能在表格中间，表头也得带页码）
+PAGE_MARK = re.compile(r"【第 (\d+)(?:[–\-](\d+))? 页")
+
 
 def tokenize(text: str) -> list[str]:
     """中英混排分词：ASCII 词 + 中文字 + 中文二元组。"""
@@ -41,12 +46,53 @@ class Chunk:
     text: str
     tokens: list[str] = field(default_factory=list, repr=False)
 
+    def page_range(self) -> tuple[int, int] | None:
+        """片段覆盖的页码（如果文本里有页码标记）。
+
+        页码标记有两种形式，都要认：
+          `【第 3 页】`          正文页分隔
+          `【第 3 页 · 表 2】`   表格标题
+
+        实测踩过：正则原来要求 `】` 紧跟在 `页` 后面，
+        于是表格标题里的页码全认不出来，7 个片段只有 2 个能报到页码。
+        """
+        pages: list[int] = []
+        for m in PAGE_MARK.finditer(self.text):
+            pages.append(int(m.group(1)))
+            if m.group(2):
+                pages.append(int(m.group(2)))
+        return (min(pages), max(pages)) if pages else None
+
     def cite_label(self) -> str:
-        return f"{self.source}#p{self.para_start}"
+        """引用的定位标签。
+
+        ## 这里改过一次，原因是实测模型把段落号当成了页码
+
+        原来返回 `{source}#p{段号}`。模型看到 `sample-cim.txt#p5`，
+        在回答里写成了「页码 p5」—— 把**段落号误读成了页码**。
+
+        现在分两种情况：
+          - 文本里有 `【第 N 页】`（PDF 抽取时写入）→ 直接报页码
+          - 没有 → 报「第 N 段」，**不用容易误读的 `#pN` 形式**
+
+        实测改动后模型引用的是「test-financials.pdf 第 1 页」，准确。
+        """
+        pages = self.page_range()
+        if pages is None:
+            loc = f"第 {self.para_start} 段"
+        elif pages[0] == pages[1]:
+            loc = f"第 {pages[0]} 页"
+        else:
+            loc = f"第 {pages[0]}–{pages[1]} 页"
+        return f"{self.source} {loc}"
 
 
 def load_text(path: Path) -> str:
-    """读取纯文本类材料。PDF/Word 支持见 README 的 roadmap。"""
+    """读取纯文本类材料（.txt / .md）。
+
+    PDF 走 `ingest/pdf.py`，Word/Excel 还没做。分派逻辑在
+    `freeanalyst.py::_load_material`。
+    """
     return path.read_text(encoding="utf-8", errors="replace")
 
 
