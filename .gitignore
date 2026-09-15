@@ -4,6 +4,9 @@ index/
 private/
 audits/*.jsonl
 
+# 评测跑分产物（本机生成，不进仓库）
+bench/results-*.json
+
 # 常见的机密材料类型（防止误提交）
 *.pdf
 *.docx
