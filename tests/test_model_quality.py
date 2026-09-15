@@ -51,9 +51,40 @@ class TestCompanyBurdenNegation(unittest.TestCase):
             "对公司没有财务影响",
             "不存在财务冲击",
             "公司不承担，故无资金压力",
+            # 实测漏过的形态：「否定动词」而不是「否定名词」
+            "公司本身不直接承担回购的财务压力",
+            "公司不承担该回购义务",
+            "公司无需承担回购责任",
         ]:
             with self.subTest(text=text):
                 self.assertIsNone(mq.find_company_burden(text))
+
+    def test_not_only_is_not_a_negation(self):
+        """**「不仅」是递进，不是否定。**
+
+        直觉的修法（往否定表里加裸的「不」）会把这条放过 ——
+        但「公司不仅面临回购压力」明确说了公司在承担，是**错**的。
+        修一个假阴性时引入一个假阳性，等于原地打转。
+        """
+        for text in [
+            "公司不仅面临回购压力，还面临资金压力",
+            "公司不但承担回购义务，还要承担连带责任",
+        ]:
+            with self.subTest(text=text):
+                self.assertIsNotNone(
+                    mq.find_company_burden(text),
+                    f"{text!r} 是错的说法（义务在个人），不能因为含「不」就放过",
+                )
+
+    def test_unlimited_is_not_a_negation(self):
+        """**「无限」是 unlimited，不是否定。**
+
+        实测踩到的：片段跨过逗号咬到「无限连带责任」，
+        `_NEGATION` 匹配到那个「无」，于是把
+        「公司将面临回购压力，实控人需承担无限连带责任」整条错误放过了。
+        """
+        text = "若未完成 IPO，公司将面临回购压力，实控人需承担无限连带责任"
+        self.assertIsNotNone(mq.find_company_burden(text))
 
     def test_various_positive_forms(self):
         for text in [
@@ -113,6 +144,22 @@ class TestSubjectCheck(unittest.TestCase):
             "回购义务由实控人个人承担，公司不承担，因此对公司无财务压力。[S2][S3]\n\n"
             "## 材料缺口\n未提供回购义务的具体金额与支付时间点。\n\n"
             "## 风险提示\n未发现\n"
+        )
+        self.assertEqual(mq.check_subject(answer, []), [])
+
+    def test_14b_answer_also_passes(self):
+        """qwen3:14b 给的答案 —— 曾经被误判为失败。
+
+        「回购义务的承担主体为实控人个人，而非公司，
+          因此公司本身不直接承担回购的财务压力」
+        这是**教科书式**的正确回答，一个假阴性差点把它判掉。
+        """
+        answer = (
+            "## 结论\n"
+            "1. 回购义务的承担主体为实控人个人，而非公司，"
+            "因此公司本身不直接承担回购的财务压力 [S3][S2]。\n\n"
+            "## 材料缺口\n1. 材料未提供公司是否提供担保的说明。\n\n"
+            "## 风险提示\n未发现。\n"
         )
         self.assertEqual(mq.check_subject(answer, []), [])
 

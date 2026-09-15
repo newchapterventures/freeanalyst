@@ -435,7 +435,7 @@ Assumption(
 | **v0.2d** | 可比公司抓取（SEC EDGAR 免费 / AKShare） | 🟡 美国已通（EDGAR + 东财行情，倍数可自动算） |
 | **v0.2e** | 年报抓数（XBRL 优先，非上市走 LLM 解析） | 🟡 上市公司 XBRL 已通；非上市走 LLM 解析未开始 |
 | **v0.2f** | 早期项目方法（§5.2：Berkus / Scorecard / VC 法 / First Chicago） | ✅ 已完成 |
-| **v0.2g** | 本地模型质量实测（`bench/model_quality.py`） | ✅ 已完成 —— **结论：无本地模型达 4/4**，最好的是 gemma3:12b-it-qat 3/4 |
+| **v0.2g** | 本地模型质量实测（`bench/model_quality.py`） | ✅ 已完成 —— **`qwen3:14b` 达 4/4，三轮复现**。18GB 的 30b-a3b 反而不行（返回空输出） |
 | **v0.3** | 假设参谋（§7） | ⬜ 未开始 |
 
 ---
