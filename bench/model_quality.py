@@ -577,6 +577,9 @@ def main() -> int:
     parser.add_argument("--json", default="", help="把完整结果写到这个文件")
     parser.add_argument("--show-answers", action="store_true", help="打印模型原文")
     parser.add_argument("--rescore", default="", help="用当前判分逻辑重判已保存的结果文件")
+    parser.add_argument("--repeat", type=int, default=1,
+                        help="每个模型跑几轮。temperature 0.1 仍有措辞抖动，"
+                             "单轮结果不足以说明稳定；连着跑几轮看判定是否一致。")
     args = parser.parse_args()
 
     if args.rescore:
@@ -593,24 +596,57 @@ def main() -> int:
 
     for model in models:
         print("=" * 74)
-        print(f"模型：{model}")
+        print(f"模型：{model}" + (f"（跑 {args.repeat} 轮）" if args.repeat > 1 else ""))
         print("=" * 74)
-        results = []
-        for case in CASES:
-            r = run_case(model, engine, case)
-            results.append(r)
-            print(f"  [{'通过' if r['passed'] else '失败'}] {case['name']}")
-            for reason in r["reasons"]:
-                print(f"        ↳ {reason}")
-            if args.show_answers or not r["passed"]:
-                body = r["answer"].strip().replace("\n", "\n        ")
-                print(f"        ┌ 模型原文\n        {body[:900]}\n")
 
-        n_pass = sum(1 for r in results if r["passed"])
-        verdict = "★ 够格进生产" if n_pass == len(CASES) else f"未达门槛（{n_pass}/{len(CASES)}）"
+        rounds: list[list[dict]] = []
+        for _ in range(max(1, args.repeat)):
+            round_results = []
+            for case in CASES:
+                r = run_case(model, engine, case)
+                round_results.append(r)
+                if args.repeat == 1:
+                    print(f"  [{'通过' if r['passed'] else '失败'}] {case['name']}")
+                    for reason in r["reasons"]:
+                        print(f"        ↳ {reason}")
+                    if args.show_answers or not r["passed"]:
+                        body = r["answer"].strip().replace("\n", "\n        ")
+                        print(f"        ┌ 模型原文\n        {body[:900]}\n")
+            rounds.append(round_results)
+
+        # 每一轮的得分
+        scores = [sum(1 for r in rr if r["passed"]) for rr in rounds]
+        n_pass, results = scores[-1], rounds[-1]
+
+        # 逐用例的通过率 —— 判定稳不稳定看这个，不看单轮总分
+        per_case_rate = []
+        for i, case in enumerate(CASES):
+            hits = sum(1 for rr in rounds if rr[i]["passed"])
+            per_case_rate.append((case["name"], hits, len(rounds)))
+
+        if args.repeat > 1:
+            print(f"  每轮得分：{' / '.join(str(s) for s in scores)}"
+                  f"   （满分 {len(CASES)}）")
+            print()
+            print("  逐用例通过率：")
+            for name, hits, total in per_case_rate:
+                # 不稳定 = 有的轮过、有的轮没过。
+                # 0/N 是**稳定失败**，N/N 是**稳定通过**，两种都算稳定。
+                flag = "" if hits in (0, total) else "   ← 不稳定"
+                print(f"    {name:12} {hits}/{total}{flag}")
+            if len(set(scores)) > 1:
+                print()
+                print("  ⚠ **各轮得分不一致。** 结论要用最差那轮，"
+                      "不能用最好那轮 —— 生产里没有『重跑一次』这个选项。")
+
+        verdict = ("★ 够格进生产"
+                   if min(scores) == len(CASES)
+                   else f"未达门槛（最差 {min(scores)}/{len(CASES)}）")
         print(f"\n  小计：{n_pass}/{len(CASES)} —— {verdict}\n")
         report[model] = {"passed": n_pass, "total": len(CASES),
-                         "verdict": verdict, "results": results}
+                         "verdict": verdict, "results": results,
+                         "rounds": scores,
+                         "per_case": {n: f"{h}/{t}" for n, h, t in per_case_rate}}
 
     print("=" * 74)
     print("汇总")
