@@ -93,9 +93,10 @@ def load_index() -> list[Chunk]:
 def _load_material(path: Path) -> tuple[str, list[str]]:
     """读一份材料 → (文本, 提示信息)。
 
-    `.txt` / `.md` 走标准库；`.pdf` 走 `ingest.pdf`（需要可选的 pdfplumber）。
+    `.txt` / `.md` 走标准库；`.htm` / `.html` 走标准库；`.pdf` 走 `ingest/pdf.py`
+    （需要可选的 pdfplumber）。
 
-    **两种格式都要过归一化。** 只归一化 PDF 是不够的 ——
+    **三种格式都要过归一化。** 只归一化 PDF 是不够的 ——
     索引侧和查询侧口径不一致就会静默失配，那比不归一化还隐蔽。
     """
     from ingest.normalize import normalize_text
@@ -109,8 +110,13 @@ def _load_material(path: Path) -> tuple[str, list[str]]:
         notes.append(doc.summary())
         return doc.to_text(), notes
 
-    text = normalize_text(load_text(path))
-    return text, notes
+    if ext in (".htm", ".html"):
+        from ingest import html as ih
+        doc = ih.extract_html(path)
+        notes.append(f"{path.name}：{len(doc.tables)} 个表格")
+        return doc.to_text(), notes
+
+    return normalize_text(load_text(path)), notes
 
 
 def cmd_ingest(args: argparse.Namespace) -> int:
@@ -119,13 +125,13 @@ def cmd_ingest(args: argparse.Namespace) -> int:
         print(f"找不到路径：{corpus}", file=sys.stderr)
         return 1
 
-    patterns = ("*.txt", "*.md", "*.pdf")
+    patterns = ("*.txt", "*.md", "*.pdf", "*.htm", "*.html")
     files: list[Path] = []
     for pattern in patterns:
         files.extend(sorted(corpus.rglob(pattern)))
     files = [f for f in files if not f.name.startswith(".")]
     if not files:
-        print(f"{corpus} 下没有 .txt / .md / .pdf 材料", file=sys.stderr)
+        print(f"{corpus} 下没有 .txt / .md / .pdf / .htm / .html 材料", file=sys.stderr)
         return 1
 
     # 重新编号，保证 S编号全局唯一且可追溯

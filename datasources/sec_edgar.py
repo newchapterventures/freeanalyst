@@ -272,6 +272,119 @@ def annual_series(facts: dict, tag: str, unit: str = "USD",
     return sorted(by_end.values(), key=lambda o: o.end)
 
 
+def instant_series(facts: dict, tag: str, unit: str = "USD",
+                   taxonomy: str = "us-gaap", dedupe: bool = True) -> list[Observation]:
+    """**时点**序列 —— 资产负债表科目用这个。
+
+    ## 为什么必须有这个函数（实测踩到的）
+
+    资产负债表科目（总资产、货币资金、应收账款…）在 XBRL 里是**时点值**，
+    只有 `end` 没有 `start`。
+
+    而 `annual_series` 按**时长**筛选（330–400 天），时点科目没有 duration，
+    于是一条都取不到 —— **27 个科目全部返回空，但不报错**。
+
+    实测场景：拿 HTML 解析出的资产负债表跟官方 XBRL 对账，
+    27 项全是「官方数据里没有」。差点以为是 HTML 解析错了，
+    其实是取数函数用错了。
+
+    区分规则很简单：
+        有 start、有 end  → 区间科目（利润表、现金流量表）→ annual_series
+        只有 end          → 时点科目（资产负债表）      → instant_series
+    """
+    series = [o for o in extract_series(facts, tag, unit, taxonomy, duration=None)
+              if o.start is None]
+    if not dedupe:
+        return series
+    by_end: dict[str, Observation] = {}
+    for o in series:
+        prev = by_end.get(o.end)
+        # 时点值同样有重述：保留最晚申报的那条（和 annual_series 一致）
+        if prev is None or o.filed > prev.filed:
+            by_end[o.end] = o
+    return sorted(by_end.values(), key=lambda o: o.end)
+
+
+def instant_on(
+    facts: dict,
+    tag: str,
+    as_of: str,
+    unit: str = "USD",
+    taxonomy: str = "us-gaap",
+    filed_by: str | None = None,
+) -> float | None:
+    """某个科目在某个时点（期末）的值。找不到返回 None —— **不猜**。
+
+    ## `filed_by`：核对一份具体申报文件时必须用
+
+    `companyfacts` 返回的是**某个日期的最新视图**，不是**当时那一版**。
+
+    实测（Fitbit FY2016 10-K）：
+
+        期末 2016-12-31  Total assets
+          该年报原文（2017-03-01 申报）      1,820,226
+          companyfacts                      1,821,926
+                       申报日 2018-03-01  ← FY2017 年报重述过
+
+    两者差 1,700（千美元）。拿 companyfacts 直接去核对年报，
+    会看到一堆"不符"，**而且差异长得很像自己的解析错误**。
+
+    给定 `filed_by`（该申报文件的申报日）后，只采用当时已公开的数据，
+    得到的就是**那份文件自己写的数字**。
+    """
+    best: Observation | None = None
+    # **必须用未去重的序列。**
+    # `instant_series` 默认按期末去重、只留最晚申报 ——
+    # 于是年报自己那条（早申报的）会被后续年报的重述挤掉，
+    # 再加 `filed_by` 过滤就什么都剩不下，代码会落到"退而求其次"分支，
+    # 静静返回上一个季度的数（实测拿到 2016-10-01 的资产负债表）。
+    for o in instant_series(facts, tag, unit, taxonomy, dedupe=False):
+        if o.end != as_of:
+            continue
+        if filed_by is not None and o.filed > filed_by:
+            continue
+        if best is None or o.filed > best.filed:
+            best = o
+    if best is not None:
+        return best.value
+
+    if filed_by is not None:
+        # 限定披露日时**不做跨期回退** —— 回退会静默给出另一个日期的数，
+        # 而那个数看着完全正常。宁可返回 None。
+        return None
+
+    # 该期末没有精确匹配（比如财年日期不齐），退回「不晚于 as_of 的最近一期」
+    for o in reversed(instant_series(facts, tag, unit, taxonomy)):
+        if o.end <= as_of:
+            return o.value
+    return None
+
+
+def annual_on(
+    facts: dict,
+    tag: str,
+    end: str,
+    unit: str = "USD",
+    taxonomy: str = "us-gaap",
+    filed_by: str | None = None,
+) -> float | None:
+    """区间科目在某个财年的值（利润表、现金流量表用）。
+
+    和 `instant_on` 一样支持 `filed_by` —— 道理相同：
+    后续年报会重述前两年的对照数，核对具体文件时必须限定披露日。
+    """
+    best: Observation | None = None
+    # 同 instant_on：按披露日筛就必须看未去重的原始序列
+    for o in annual_series(facts, tag, unit, taxonomy, dedupe=False):
+        if o.end != end:
+            continue
+        if filed_by is not None and o.filed > filed_by:
+            continue
+        if best is None or o.filed > best.filed:
+            best = o
+    return best.value if best is not None else None
+
+
 def first_filed_by_fiscal_end(facts: dict, unit: str = "USD") -> dict[str, str]:
     """每个财年期末**首次**被申报的日期。
 

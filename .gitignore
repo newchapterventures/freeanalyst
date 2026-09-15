@@ -26,6 +26,18 @@ bench/results-*-rescored.json
 *.csv
 !corpus/test-*.pdf
 
+# 真实的尽调材料不进仓库
+#
+# **例外**：materials/fitbit-2016-10k/R2.htm / R4.htm / R8.htm
+# 是 SEC EDGAR 的公开申报文件（Fitbit FY2016 10-K 的三张表），
+# 用作 HTML 抽取的测试材料。约 270KB，不含任何机密信息。
+# 其余下载文件（主文档 2.6MB、其余 R 文件）不进。
+materials/**
+!materials/fitbit-2016-10k/
+!materials/fitbit-2016-10k/R2.htm
+!materials/fitbit-2016-10k/R4.htm
+!materials/fitbit-2016-10k/R8.htm
+
 # 系统与缓存
 __pycache__/
 .DS_Store
