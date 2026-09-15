@@ -3,6 +3,7 @@ root/
 index/
 private/
 cache/
+out/
 audits/*.jsonl
 
 # 评测跑分产物（本机生成，不进仓库）
