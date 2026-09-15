@@ -143,6 +143,14 @@ class ValuationResult:
     assumptions: list[Assumption] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
 
+    #: 这个结果是不是一个"估值"。
+    #:
+    #: 反向估值（从对方报价反推需要什么假设）输出的**不是估值**，
+    #: 而是"要满足目标回报，退出时得值多少钱"。把它和正向估值放在
+    #: 一起算差额，会得出一个毫无意义的数字 —— 两个量的单位虽然都是钱，
+    #: 但问的不是同一个问题。
+    is_valuation: bool = True
+
     @property
     def range_text(self) -> str:
         return f"{self.low:,.0f} – {self.high:,.0f} {self.unit}（中枢 {self.mid:,.0f}）"

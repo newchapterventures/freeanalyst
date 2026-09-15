@@ -121,6 +121,13 @@ def main() -> int:
         return 1
 
     cfg = json.loads(path.read_text(encoding="utf-8"))
+
+    # 早期项目走另一套流程 —— 输入形态完全不同（评分和情景，不是三张表）。
+    # 自动分流，不用记两个命令。
+    if "early_stage" in cfg:
+        from early_cli import run_early_stage
+        return run_early_stage(cfg, show_trace=not args.no_trace)
+
     sc = build_scenario(cfg.get("scenario", {}))
 
     out: list[str] = []

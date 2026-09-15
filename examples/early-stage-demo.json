@@ -1,0 +1,138 @@
+{
+  "target": "某 AI 医疗影像辅助诊断公司（合成示例，非真实标的）",
+  "note": "pre-revenue，已完成算法验证和 3 家医院试点，正在谈 A 轮。所有数字均为演示用的合成值。",
+
+  "scenario": {
+    "stage": "早期项目",
+    "purpose": "融资定价",
+    "stance": "买方",
+    "valuation_date": "2026-09-15",
+    "currency": "CNY",
+    "equity_scope": "100%"
+  },
+
+  "early_stage": {
+    "unit": "万元",
+
+    "berkus": {
+      "per_factor_cap": {
+        "value": 300,
+        "source": "本项目校准值：参考 2024–2025 年国内医疗 AI 种子轮定价，按单因素上限 300 万元设定。**不是 Berkus 原版的 50 万美元** —— 原版是 1990 年代美国西海岸互联网创业的锚，直接搬过来是错的。",
+        "confidence": "低"
+      },
+      "factors": {
+        "基本价值（点子/商业计划成立）": {
+          "low": 0.7, "mid": 0.8, "high": 0.9,
+          "source": "商业计划书 + 与创始团队两轮访谈", "confidence": "中"
+        },
+        "技术风险（做出原型）": {
+          "low": 0.7, "mid": 0.8, "high": 0.9,
+          "source": "已有 CE 认证型号的算法，3 家三甲医院试点数据", "confidence": "中"
+        },
+        "执行风险（团队到位）": {
+          "low": 0.5, "mid": 0.6, "high": 0.7,
+          "source": "CTO 到位，但市场负责人仍在招，销售团队为 0", "confidence": "中"
+        },
+        "市场风险（战略关系/客户意向）": {
+          "low": 0.4, "mid": 0.5, "high": 0.7,
+          "source": "3 家医院有试点意向书，但均未签署采购合同", "confidence": "低"
+        },
+        "生产风险（产品上市并产生销售）": {
+          "low": 0.1, "mid": 0.2, "high": 0.3,
+          "source": "尚未取得二类医疗器械注册证，NMPA 审批周期未定", "confidence": "低"
+        }
+      }
+    },
+
+    "scorecard": {
+      "base": {
+        "low": 8000, "mid": 10000, "high": 12000,
+        "source": "国内医疗 AI A 轮前平均 pre-money，2025 年样本（**务必换成你自己的口径和年份** —— 融资市场冷热差一年，同一个项目定价能差一半）",
+        "confidence": "低"
+      },
+      "factors": {
+        "管理团队实力": {
+          "low": 1.1, "mid": 1.2, "high": 1.3,
+          "source": "创始人为三甲医院放射科主任 + 连续创业者，CTO 有 CV 大厂背景；市场端缺口明显", "confidence": "中"
+        },
+        "机会规模": {
+          "low": 1.1, "mid": 1.2, "high": 1.4,
+          "source": "国内影像科医生缺口与分级诊疗政策推动", "confidence": "低"
+        },
+        "产品/技术": {
+          "low": 1.0, "mid": 1.1, "high": 1.2,
+          "source": "算法指标优于公开基线，但未做多中心前瞻性验证", "confidence": "中"
+        },
+        "竞争环境": {
+          "low": 0.6, "mid": 0.7, "high": 0.8,
+          "source": "同类拿到二类证的已有 7 家，头部两家已进院", "confidence": "中"
+        },
+        "营销渠道/合作关系": {
+          "low": 0.6, "mid": 0.7, "high": 0.9,
+          "source": "有医院试点关系，但缺经销渠道", "confidence": "低"
+        },
+        "后续融资需求": {
+          "low": 0.8, "mid": 0.9, "high": 1.0,
+          "source": "注册证 + 多中心验证预计还需 3000–5000 万，至少还要一轮", "confidence": "中"
+        },
+        "其他": {
+          "low": 1.0, "mid": 1.0, "high": 1.0,
+          "source": "无重大未决诉讼或股权瑕疵", "confidence": "中"
+        }
+      }
+    },
+
+    "vc_method": {
+      "exit_value": {
+        "value": 120000,
+        "source": "按 2031 年科创板医疗器械类可比公司的合理市值区间下沿估算（**这是假设，不是事实**）",
+        "confidence": "低"
+      },
+      "investment": {
+        "value": 2000,
+        "source": "本轮 TS 拟定投资额", "confidence": "高"
+      },
+      "years_to_exit": {
+        "value": 5,
+        "source": "基金存续期约束", "confidence": "高"
+      },
+      "target_multiple": {
+        "value": 10.0,
+        "source": "基金策略：早期项目目标 10x 毛回报", "confidence": "高"
+      },
+      "future_dilution": {
+        "value": 0.30,
+        "source": "同类项目历史轮次统计（A 轮后通常还有 1–2 轮）", "confidence": "中"
+      },
+      "reverse": true,
+      "ask_price": {
+        "value": 15000,
+        "source": "创始人报价的投前估值", "confidence": "高"
+      }
+    },
+
+    "first_chicago": {
+      "note": "pre-revenue 的价值分布是一头沉的：大概率归零，小概率翻很多倍。",
+      "outcomes": [
+        {
+          "label": "成功（拿到注册证并规模化进院）",
+          "probability": 0.15,
+          "value": 150000,
+          "basis": "对应 VC 法退出假设的量级"
+        },
+        {
+          "label": "存活（拿到证但增长慢，被并购）",
+          "probability": 0.45,
+          "value": 20000,
+          "basis": "器械类并购通常按 3–5x 收入，对应约 1 亿收入"
+        },
+        {
+          "label": "失败（注册失败或资金链断裂）",
+          "probability": 0.40,
+          "value": 0,
+          "basis": "无残值，专利与团队价值无法变现"
+        }
+      ]
+    }
+  }
+}
