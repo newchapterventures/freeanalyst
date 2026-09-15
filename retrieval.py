@@ -156,7 +156,21 @@ class BM25:
             for term, freq in df.items()
         }
 
-    def search(self, query: str, top_k: int = 6) -> list[tuple[Chunk, float]]:
+    def search(self, query: str, top_k: int = 6, expand: bool = True) -> list[tuple[Chunk, float]]:
+        """检索。
+
+        `expand=True` 时会用 `glossary` 做**跨语言查询扩展**：
+        中文问题附上英文术语（命中英文材料），英文问题附上中文术语（命中中文材料）。
+
+        为什么放在检索层而不是调用方：BM25 是**词面匹配**，
+        中文问「营业收入」在英文 10-K 里一个词都命中不到，
+        **检索会返回一堆无关片段，而模型只会诚实地说"材料未提供"** ——
+        看起来像材料里真的没有，实际是没检索到。
+        这件事必须自动做，不能靠调用方记得。
+        """
+        if expand:
+            from glossary import expand_query
+            query = expand_query(query)
         q_tokens = tokenize(query)
         scored: list[tuple[Chunk, float]] = []
         for idx, chunk in enumerate(self.chunks):

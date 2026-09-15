@@ -52,11 +52,35 @@ from freeanalyst import (  # noqa: E402
     SYSTEM_PROMPT,
     build_context,
     call_local_model,
-    load_index,
 )
-from retrieval import BM25, Chunk  # noqa: E402
+from retrieval import BM25, Chunk, chunk_document  # noqa: E402
 
 SECTIONS = ["结论", "材料缺口", "风险提示"]
+
+
+def corpus_chunks() -> list[Chunk]:
+    """从 `corpus/` **现建**索引，不用 `index/chunks.json`。
+
+    ## 为什么不能用环境里的索引（实测踩到）
+
+    跑基准测试前刚把 Fitbit 10-K 入库，`load_index()` 读到的是那份 10-K，
+    而用例问的是样例 CIM 里的事。
+
+    **测试照样跑完，只是测的完全是另一份材料** —— 结果毫无意义，却不报错。
+
+    评测必须自带材料，不能依赖环境状态。跑之前先 `ingest` 到哪儿、
+    上次留了什么，都不该影响判分。
+    """
+    chunks: list[Chunk] = []
+    n = 0
+    corpus = ROOT / "corpus"
+    for path in sorted(corpus.glob("*.txt")) + sorted(corpus.glob("*.md")):
+        text = path.read_text(encoding="utf-8", errors="replace")
+        for c in chunk_document(path.name, text):
+            n += 1
+            c.chunk_id = f"S{n}"
+            chunks.append(c)
+    return chunks
 
 # ---------------------------------------------------------------------------
 # 主体识别用的几个模式
@@ -274,7 +298,143 @@ def check_no_hallucination(answer: str, hits: list[tuple[Chunk, float]]) -> list
     return reasons
 
 
+#: 金额 + 单位 → 折算成「元」的乘数
+_UNIT_MULT = {
+    # 中文
+    "亿元": 1e8, "亿": 1e8,
+    "万元": 1e4, "万": 1e4,
+    "千美元": 1e3, "万美元": 1e4, "百万美元": 1e6, "十亿美元": 1e9,
+    "美元": 1.0, "人民币": 1.0, "元": 1.0,
+    # 英文 —— **跨语言回答时模型几乎一定用这些词**
+    # （实测：中文材料 + 英文提问 → 模型写 "18,300 million RMB"）
+    "billion": 1e9, "bn": 1e9, "b": 1e9,
+    "million": 1e6, "mn": 1e6, "m": 1e6,
+    "thousand": 1e3, "k": 1e3,
+    "usd": 1.0, "rmb": 1.0, "cny": 1.0,
+}
+
+_UNIT_ALT = "|".join(sorted((re.escape(u) for u in _UNIT_MULT), key=len, reverse=True))
+
+_AMOUNT = re.compile(rf"([\d,]+(?:\.\d+)?)\s*({_UNIT_ALT})", re.I)
+
+#: 表格的表头会声明整表单位，行里只有裸数字。
+#:     中文： （单位：万元）  /  单位：千美元
+#:     英文： $ in Thousands  /  (In thousands)  /  (USD in millions)
+_UNIT_DECL_CN = re.compile(r"单位[:：]\s*(人民币)?\s*(亿元|万元|千美元|万美元|百万美元|美元|元)")
+_UNIT_DECL_EN = re.compile(
+    r"(?:in|In)\s+(thousands|millions|billions)", re.I
+)
+_EN_UNIT_MULT = {"thousands": 1e3, "millions": 1e6, "billions": 1e9}
+
+
+def declared_unit(text: str) -> float | None:
+    """从文本里找「整表单位声明」，返回乘数。
+
+    **不找这个的话，材料侧的金额一个都抽不到** ——
+    财务报表的数字都在表里，单位写在表头（`$ in Thousands`），
+    行里只有裸数字。实测时因为没有这一步，材料侧抽出来是空的，
+    整个检查等于没做。
+    """
+    m = _UNIT_DECL_CN.search(text)
+    if m:
+        return _UNIT_MULT.get(m.group(2))
+    m = _UNIT_DECL_EN.search(text)
+    if m:
+        return _EN_UNIT_MULT.get(m.group(1).lower())
+    return None
+
+
+def _amounts(text: str, apply_declared: bool = False) -> list[tuple[float, str]]:
+    """抽出文本里所有金额 → [(折算成元的绝对值, 原文片段)]。
+
+    `apply_declared=True` 时，文本里**没有单位的裸数字**也按整表单位折算。
+    材料侧要用这个（表格行是裸数字）；答案侧不要用
+    （答案里的裸数字多是年份、页码，不是金额）。
+    """
+    out: list[tuple[float, str]] = []
+    for m in _AMOUNT.finditer(text):
+        raw_num, unit = m.group(1), m.group(2)
+        mult = _UNIT_MULT.get(unit.lower()) if unit.lower() in _UNIT_MULT else _UNIT_MULT.get(unit)
+        if mult is None:
+            continue
+        try:
+            v = float(raw_num.replace(",", ""))
+        except ValueError:
+            continue
+        out.append((abs(v) * mult, m.group(0).strip()))
+
+    if apply_declared:
+        decl = declared_unit(text)
+        if decl:
+            for m in re.finditer(r"([\d,]+(?:\.\d+)?)(?!\s*(?:%|年|页))", text):
+                raw = m.group(1)
+                # 年份、页码这类不是金额
+                try:
+                    v = float(raw.replace(",", ""))
+                except ValueError:
+                    continue
+                if 1900 <= v <= 2100 and "," not in raw:
+                    continue
+                out.append((abs(v) * decl, raw))
+    return out
+
+
+def check_units(answer: str, hits: list[tuple[Chunk, float]]) -> list[str]:
+    """单位纪律：答案里的每个金额，都必须能对上材料里的金额。
+
+    ## 两个真实失败（都是这个用例存在的理由）
+
+    **Fitbit FY2016 10-K（千美元）**
+        材料   Operating income (loss)  $ (112,465)      = 1.125 亿
+        模型   营业利润 -112,465千美元（即亏损 11.25 亿美元）   ← 差 10 倍
+
+    **宁波精塑 CIM（万元）**
+        材料   2025 年营业收入 18,300 万元                 = 1.83 亿
+        模型   Revenue 18,300 million RMB                  ← 差 100 倍
+
+    两次都是**数量级错误**，而且原文数字就在旁边、看着是对的。
+
+    ## 判法
+
+    不禁止换算（跨语言回答时，把「万元」讲清楚是必要的），
+    但**换算必须落在材料里的某个金额上**：
+    答案里出现 1.83 亿 → 材料里有 18,300 万元 ✓
+    答案里出现 216.95 亿 → 材料里没有任何金额等于它 ✗
+
+    同数量的浮点误差（0.5%）内视为相等。
+    """
+    reasons: list[str] = []
+    src_text = "\n".join(c.text for c, _ in hits)
+    # 材料侧要应用「整表单位声明」—— 表格行里只有裸数字
+    src = [a for a, _ in _amounts(src_text, apply_declared=True)]
+    ans = _amounts(answer)
+
+    if not ans:
+        return reasons
+
+    if not src:
+        return reasons
+
+    for value, raw in ans:
+        if any(abs(value - s) <= max(s * 0.005, 1.0) for s in src):
+            continue
+        hint = declared_unit(src_text)
+        unit_hint = f"（材料里的单位声明是 {hint:g} 倍）" if hint else "（注意「万」≠ million）"
+        reasons.append(
+            f"金额「{raw}」在材料里找不到对应 —— 换算改变了数量级{unit_hint}"
+        )
+    return reasons
+
+
 CASES = [
+    {
+        "id": "units",
+        "name": "单位纪律",
+        "why": "自行换算会引入 10 倍量级的错误，而且前面那个数还是对的，最容易被放过",
+        "question": "标的公司 2025 年的营业收入和报表 EBITDA 分别是多少？",
+        "check": check_units,
+        "note": "正确答法：原样引用「18,300 万元」「3,150 万元」，不要换算成亿",
+    },
     {
         "id": "subject",
         "name": "主体识别",
@@ -348,7 +508,7 @@ def rescore(path: Path) -> int:
     检索是确定性的，所以可以重建 hits，然后原样重判。
     """
     saved = json.loads(path.read_text(encoding="utf-8"))
-    chunks = load_index()
+    chunks = corpus_chunks()
     engine = BM25(chunks)
     case_by_id = {c["id"]: c for c in CASES}
 
@@ -405,7 +565,7 @@ def main() -> int:
     if args.rescore:
         return rescore(Path(args.rescore))
 
-    chunks = load_index()
+    chunks = corpus_chunks()
     if not chunks:
         print("索引为空。先运行：python3 freeanalyst.py ingest corpus", file=sys.stderr)
         return 1
