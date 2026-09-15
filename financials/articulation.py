@@ -48,9 +48,16 @@ class Articulation:
     diff: float | None = None
     missing: list[Field] = field(default_factory=list)
     note: str = ""
+    #: 这条校验适不适用。A 股现金流量表是直接法编的，
+    #: 「净利润 → 经营现金流」那段根本不在这张表里 ——
+    #: 报「不适用」和报「数据不足」对用户的意义完全不同：
+    #: 前者不是问题，后者要去补数据。
+    applicable: bool = True
 
     @property
     def status(self) -> str:
+        if not self.applicable:
+            return "不适用"
         if self.ok is None:
             return "数据不足"
         return "平" if self.ok else f"不平（差 {self.diff:+,.0f}）"
@@ -81,7 +88,22 @@ def _close(a: float, b: float, tol_ratio: float = 1e-6, min_tol: float = 1.0) ->
 
 
 def check_balance(bal: dict[Field, float]) -> Articulation:
-    """资产 = 负债 + 所有者权益。"""
+    """资产 = 负债 + 所有者权益。
+
+    ## 少数股东权益要不要另加，**两种口径都试**（实测踩到）
+
+    「所有者权益合计」在不同准则下含义不同：
+
+        CAS（A 股）    含少数股东权益 → 负债 + 权益 = 资产
+        US GAAP        常为母公司的   → 负债 + 权益 + 少数股东权益 = 资产
+
+    实测：贵州茅台先按「+少数股东权益」算，差 -9,321,442,877 ——
+    **正好等于少数股东权益本身**，说明它已经被含在权益里了。
+    而 Fitbit 那边少数股东权益为 0，两种算法都对。
+
+    所以不能写死一种。**先试简单的，不成立再试加少数股东权益的** ——
+    两条都试过还平不了，才报不平。
+    """
     assets = _get(bal, Field.TOTAL_ASSETS)
     liab = _get(bal, Field.TOTAL_LIABILITIES)
     equity = _get(bal, Field.EQUITY)
@@ -94,10 +116,20 @@ def check_balance(bal: dict[Field, float]) -> Articulation:
         return Articulation("资产 = 负债 + 所有者权益", None, missing=missing)
 
     assert assets is not None and liab is not None and equity is not None
+
+    # 先试「权益已含少数股东权益」
+    if _close(assets, liab + equity):
+        return Articulation(
+            "资产 = 负债 + 所有者权益", True,
+            lhs=assets, rhs=liab + equity, diff=0.0,
+            note="权益口径：已含少数股东权益（CAS 常见）",
+        )
+
     rhs = liab + equity + minority
     return Articulation(
         "资产 = 负债 + 所有者权益", _close(assets, rhs),
         lhs=assets, rhs=rhs, diff=assets - rhs,
+        note="权益口径：不含少数股东权益（需另加）" if minority else "",
     )
 
 
@@ -139,6 +171,37 @@ def check_cash_rollforward(
 #: 汇总行 —— 间接法调节段里如果出现这些小计，加总会重复计算
 _TOTALISH = ("合计", "小计", "总计", "total", "subtotal", "net cash",
              "adjustments to reconcile", "调整项目")
+
+
+#: 直接法的标志行 —— 有这些行说明是直接法编的现金流量表
+_DIRECT_METHOD_MARKERS = (
+    "销售商品、提供劳务收到的现金",
+    "经营活动现金流入小计",
+    "购买商品、接受劳务支付的现金",
+    "收到的税费返还",
+    "cash received from customers",
+    "cash paid to suppliers",
+)
+
+
+def is_direct_method(rows: list[tuple[str, float | None]]) -> bool:
+    """判断现金流量表是直接法还是间接法。
+
+    ## 这是 A 股和美股的一个根本差异（实测踩到）
+
+    美股现金流量表用**间接法**：从净利润出发，加回折旧摊销、
+    调整营运资本变动，最后得到经营现金流 —— 于是「净利润 → 经营现金流」
+    这条勾稽**可以逐行验**。
+
+    A 股用**直接法**：直接列「销售商品收到的现金」「购买商品支付的现金」，
+    中间没有那段调节（间接法调节在**附注**里）。
+
+    对 A 股报表硬跑间接法检查，会报「定位不到锚点」——
+    看着像映射漏了，其实是**这个方法不适用**。
+    两者必须区分：一个是待修的问题，一个不是问题。
+    """
+    labels = [(l or "") for l, _ in rows]
+    return any(m in l for l in labels for m in _DIRECT_METHOD_MARKERS)
 
 
 def _is_totalish(label: str) -> bool:
