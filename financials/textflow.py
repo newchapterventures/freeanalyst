@@ -85,13 +85,19 @@ def strip_names(run: str, index: dict[int, set[str]]) -> list[str]:
     return out
 
 
-def parse_textflow(text: str, known_names) -> list[list[str]]:
+def known_names() -> list[str]:
+    """所有已知科目名 —— 文字流解析靠它把粘在一起的科目名剥开。"""
+    from . import canonical as cn
+    return [n for m in cn.MAPPINGS for n in m.names]
+
+
+def parse_textflow(text: str, names: list[str]) -> list[list[str]]:
     """把连续文字流切成 `[标签, 注, 本期值, 上期值]`。
 
     和 `ingest/layout.py` / `ingest/ocr.py` 的输出结构对齐，
     这样上层取值逻辑不用区分材料形态。
     """
-    index = _build_index(known_names)
+    index = _build_index(names)
     out: list[list[str]] = []
 
     for m in _PIECE.finditer(text or ""):

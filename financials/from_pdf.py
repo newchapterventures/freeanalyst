@@ -262,9 +262,8 @@ def load_pdf_statements(path: str | Path, unit: str = "元") -> stm.Statements:
     # 任何位置启发式都会被带偏。
     from . import assemble
 
-    scores = assemble.page_scores(doc)
-    picked = {k: assemble.pick_pages(scores, k)
-              for k in ("balance", "income", "cash_flow")}
+    picked, notes = assemble.pick_all(doc)
+    S.warnings.extend(notes)
     S.warnings.append(
         "页范围按**内容**判定（" +
         "；".join(f"{k} {v[0]}–{v[-1]}页" for k, v in picked.items() if v) + "）")
