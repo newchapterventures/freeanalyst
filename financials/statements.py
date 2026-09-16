@@ -68,7 +68,18 @@ class Statements:
     def checks(self) -> list[art.Articulation]:
         out: list[art.Articulation] = []
         if self.balance:
-            out.append(art.check_balance(self.balance.fields))
+            bal = self.balance.fields
+            if art.is_net_asset_presentation(bal):
+                # **IFRS 净资产列报式**：没有「资产总计」「负债合计」行。
+                # 报「不适用」而不是「数据不足」—— 不是漏了数据，是格式不同。
+                out.append(art.Articulation(
+                    "资产 = 负债 + 所有者权益", None, applicable=False,
+                    note="该表用 **IFRS 净资产列报式**（H 股常见）：没有"
+                         "「资产总计」「负债合计」行，本项不适用。见下一条等价校验。",
+                ))
+                out.append(art.check_net_assets(bal))
+            else:
+                out.append(art.check_balance(bal))
         if self.cash_flow:
             cf = self.cash_flow
             end = self._cash_begin_end()

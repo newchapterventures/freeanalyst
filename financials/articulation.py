@@ -173,6 +173,71 @@ _TOTALISH = ("合计", "小计", "总计", "total", "subtotal", "net cash",
              "adjustments to reconcile", "调整项目")
 
 
+def is_net_asset_presentation(bal: dict[Field, float]) -> bool:
+    """是不是 IFRS 的「净资产列报式」（H 股常见）。
+
+    ## 这种格式长什么样（实测：宝宝树 2020 年报）
+
+        非流动资产 … 小计
+        流动资产   … 小计
+        流动负债   … 小计
+        流动资产净额            = 流动资产 − 流动负债      1,887,814
+        总资产减流动负债         = 非流动资产 + 流动资产净额  2,317,397
+        非流动负债 … 小计
+        资产净额               = 总资产减流动负债 − 非流动负债 2,314,754
+        权益总额                                           2,314,754
+
+    **没有「资产总计」也没有「负债合计」行** —— 所以
+    `资产 = 负债 + 所有者权益` 这条检查根本用不了。
+
+    这不是「数据缺了」，是**格式不同**。两者必须分开报：
+    前者要去补数据，后者不用管。
+    """
+    return (Field.NET_ASSETS in bal and Field.EQUITY in bal
+            and Field.TOTAL_ASSETS not in bal)
+
+
+def check_net_assets(bal: dict[Field, float]) -> Articulation:
+    """IFRS 净资产列报式的主校验：**资产净额 = 权益总额**。
+
+    这是 `资产 = 负债 + 权益` 在净资产列报式下的等价形式。
+
+    顺带能反推并验证（有部件才算）：
+        总资产   = 总资产减流动负债 + 流动负债
+        负债合计 = 流动负债 + 非流动负债
+    """
+    na = _get(bal, Field.NET_ASSETS)
+    eq = _get(bal, Field.EQUITY)
+    if na is None or eq is None:
+        return _missing("资产净额 = 权益总额", [Field.NET_ASSETS, Field.EQUITY],
+                        "IFRS 净资产列报式", bal)
+
+    # **`ok` 只由这条校验自己的主张决定**（资产净额 = 权益总额）。
+    # 旁路复算只进 note —— 用它决定 ok 会让「母公司权益被错当成权益总额」
+    # 这种情况显示为「平」（因为复算那一侧仍然对）。实测踩到过。
+    ok = _close(na, eq)
+    note = ""
+
+    alc = _get(bal, Field.ASSETS_LESS_CURRENT_LIABILITIES)
+    tncl = _get(bal, Field.TOTAL_NONCURRENT_LIABILITIES)
+    if alc is not None and tncl is not None:
+        rhs = alc - tncl
+        note = (f"\n    旁证：「总资产减流动负债 {alc:,.0f} − 非流动负债 {tncl:,.0f}」"
+                f"= {rhs:,.0f}，与本行{'一致' if _close(na, rhs) else '**不一致**'}。")
+
+    return Articulation("资产净额 = 权益总额（净资产列报式）",
+                        ok, lhs=na, rhs=eq, diff=na - eq,
+                        note="这种格式没有「资产总计」「负债合计」行，"
+                             "本项是 `资产 = 负债 + 权益` 的等价校验。" + note)
+
+
+def _missing(title: str, fields: list[Field], kind: str,
+             bal: dict[Field, float]) -> Articulation:
+    got = [f for f in fields if f in bal]
+    return Articulation(title, None, missing=[f for f in fields if f not in bal],
+                        note=f"{kind}：缺 {len(fields) - len(got)} 个关键行，判不了。")
+
+
 #: 直接法的标志行 —— 有这些行说明是直接法编的现金流量表
 _DIRECT_METHOD_MARKERS = (
     "销售商品、提供劳务收到的现金",

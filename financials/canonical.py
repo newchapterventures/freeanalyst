@@ -70,6 +70,26 @@ class Field(str, Enum):
     MINORITY_INTEREST = "少数股东权益"
     EQUITY_PARENT = "归属于母公司所有者权益"
     EQUITY = "所有者权益合计"
+    # ---- IFRS 的「净资产列报式」（H 股常见）----
+    #:
+    #: 这种格式**根本没有「资产总计」和「负债合计」行**，而是列：
+    #:
+    #:     非流动资产 … 小计
+    #:     流动资产   … 小计
+    #:     流动负债   … 小计
+    #:     流动资产净额            = 流动资产 − 流动负债
+    #:     总资产减流动负债         = 非流动资产 + 流动资产净额
+    #:     非流动负债 … 小计
+    #:     资产净额               = 总资产减流动负债 − 非流动负债
+    #:     权益总额               = 资产净额
+    #:
+    #: 所以 `资产 = 负债 + 权益` 那条检查**用不了**（缺两个总计数），
+    #: 但 `资产净额 = 权益总额` 是等价的校验，必须单独做。
+    #: `资产净额` 和 `权益总额` 要分开映射，否则两者会互相覆盖，
+    #: 校验也就没了。
+    NET_CURRENT_ASSETS = "流动资产净额"
+    ASSETS_LESS_CURRENT_LIABILITIES = "总资产减流动负债"
+    NET_ASSETS = "资产净额"
     TOTAL_EQUITY_AND_LIABILITIES = "负债和所有者权益总计"
     # ---- 权益明细（勾稽用不到，但要能认出，否则会被当成「未映射」噪音）----
     CAPITAL_STOCK = "实收资本"
@@ -214,12 +234,22 @@ MAPPINGS: tuple[Mapping, ...] = (
             ("ShortTermBorrowings", "ShortTermDebt", "LongTermDebtCurrent")),
     Mapping(Field.LONG_TERM_DEBT, ("长期借款", "长期负债"),
             ("LongTermDebtNoncurrent", "LongTermDebt")),
-    Mapping(Field.MINORITY_INTEREST, ("少数股东权益",),
+    Mapping(Field.MINORITY_INTEREST, ("少数股东权益", "非控制性权益",
+                                      "Non-controlling interests"),
             ("MinorityInterest", "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest")),
     # 权益明细。**不能漏** —— 漏了会以「未映射」的形式出现在报告里，
     # 让人分不清是真没认出还是本来就不需要。
     Mapping(Field.EQUITY_PARENT, ("归属于母公司所有者权益", "归属于母公司股东权益",
-                                  "归属于母公司股东的权益", "母公司所有者权益"),
+                                  "归属于母公司股东的权益", "母公司所有者权益",
+                                  # H 股 / IFRS 写法。**这些更具体的片段必须存在**，
+                                  # 否则 `Total equity attributable to equity
+                                  # shareholders of the Company` 这条会退到
+                                  # 「权益总额」这个宽泛候选上，和真正的权益总额
+                                  # 撞车 —— 实测差了一个少数股东权益（2,890）。
+                                  "本公司权益股东应占", "本公司权益股东应占权益总额",
+                                  "归属于母公司权益股东",
+                                  "Total equity attributable to equity shareholders"
+                                  " of the Company"),
             ()),
     Mapping(Field.CAPITAL_STOCK, ("实收资本", "股本"), ("CommonStockValue",)),
     Mapping(Field.CAPITAL_RESERVE, ("资本公积",), ("AdditionalPaidInCapital",)),
@@ -230,8 +260,18 @@ MAPPINGS: tuple[Mapping, ...] = (
     Mapping(Field.GENERAL_RISK_RESERVE, ("一般风险准备",), ()),
     Mapping(Field.RETAINED_EARNINGS, ("未分配利润", "留存收益", "未分配利润（未弥补亏损）"),
             ("RetainedEarningsAccumulatedDeficit",)),
-    Mapping(Field.EQUITY, ("所有者权益合计", "股东权益合计", "所有者权益", "净资产"),
+    Mapping(Field.EQUITY, ("所有者权益合计", "股东权益合计", "所有者权益", "净资产",
+                           # H 股 / IFRS 写法
+                           "权益总额", "权益合计", "Total equity"),
             ("StockholdersEquity",)),
+    # IFRS 净资产列报式的三行。**必须和 EQUITY 分开映射** ——
+    # 合在一起的话 `资产净额 = 权益总额` 这条校验就没了。
+    Mapping(Field.NET_ASSETS, ("资产净额", "Net assets"), ()),
+    Mapping(Field.NET_CURRENT_ASSETS,
+            ("流动资产净额", "净流动资产", "Net current assets"), ()),
+    Mapping(Field.ASSETS_LESS_CURRENT_LIABILITIES,
+            ("总资产减流动负债", "资产总额减流动负债",
+             "Total assets less current liabilities"), ()),
     Mapping(Field.TOTAL_EQUITY_AND_LIABILITIES,
             ("负债和所有者权益总计", "负债及所有者权益总计", "负债与所有者权益总计"),
             ("LiabilitiesAndStockholdersEquity",)),
