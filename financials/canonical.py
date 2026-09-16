@@ -115,6 +115,30 @@ class Field(str, Enum):
     INCOME_TAX = "所得税费用"
     NET_INCOME = "净利润"
 
+    # ---- 1993 年「行业会计制度」的科目（小企业/WPS 老模板实测）----
+    #:
+    #: 中小企业的报表常是老会计制度格式，科目名和现行准则**不是一套词**：
+    #:
+    #:     旧：产品销售收入 / 产品销售成本 / 产品销售税金及附加
+    #:     新：营业收入   / 营业成本   / 税金及附加
+    #:
+    #: 实测江苏新锐环境监测 2024 年报表：损益表 17 个科目只认出 6 个（35%）。
+    #: 这些名字要显式认识，否则整张表都是「未映射」噪音，
+    #: 而且**勾稽需要的行取不到**。
+    NOTES_RECEIVABLE = "应收票据"
+    NOTES_PAYABLE = "应付票据"
+    PPE_GROSS = "固定资产原价"
+    ACCUM_DEPRECIATION = "累计折旧"
+    PREPAID_EXPENSES = "待摊费用"
+    DIVIDENDS_PAYABLE = "应付利润"
+    SELLING_EXPENSE = "销售费用"
+    ADMIN_EXPENSE = "管理费用"
+    TAX_SURCHARGE = "税金及附加"
+    INVESTMENT_INCOME = "投资收益"
+    OTHER_INCOME = "其他业务利润"
+    NONOPERATING_INCOME = "营业外收入"
+    NONOPERATING_EXPENSE = "营业外支出"
+
     # ---- 现金流量表：期间值 ----
     CFO = "经营活动产生的现金流量净额"
     CFI = "投资活动产生的现金流量净额"
@@ -173,13 +197,18 @@ MAPPINGS: tuple[Mapping, ...] = (
                                         "Trade receivables", "Trade and other receivables"),
             ("AccountsReceivableNetCurrent", "ReceivablesNetCurrent")),
     Mapping(Field.INVENTORY, ("存货", "存货净额"), ("InventoryNet", "InventoryFinishedGoods")),
-    Mapping(Field.PPE, ("固定资产", "固定资产净额", "物业厂房及设备"),
+    Mapping(Field.PPE, ("固定资产", "固定资产净额", "物业厂房及设备",
+                        # 旧制度：净值 / 合计两种写法
+                        "固定资产净值", "固定资产合计",
+                        "物業、廠房及設備", "物業廠房及設備"),
             ("PropertyPlantAndEquipmentNet",)),
     Mapping(Field.GOODWILL, ("商誉",), ("Goodwill",)),
     Mapping(Field.INTANGIBLES, ("无形资产", "无形资产净额"),
             ("IntangibleAssetsNetExcludingGoodwill", "FiniteLivedIntangibleAssetsNet")),
     Mapping(Field.OTHER_CURRENT_ASSETS,
-            ("预付款项", "预付账款", "其他流动资产", "一年内到期的非流动资产"),
+            ("预付款项", "预付账款", "其他流动资产", "一年内到期的非流动资产",
+             # 旧制度
+             "应收股利", "应收利息", "一年内到期的长期债券投资"),
             ("PrepaidExpenseAndOtherAssetsCurrent", "OtherAssetsCurrent",
              "PrepaidExpenseCurrent")),
     # 金融类资产（财务公司业务；贵州茅台这类公司会有）
@@ -191,6 +220,10 @@ MAPPINGS: tuple[Mapping, ...] = (
             ("其他非流动资产", "长期股权投资", "递延所得税资产", "其他资产",
              "在建工程", "使用权资产", "长期待摊费用", "投资性房地产",
              "开发支出", "生产性生物资产", "油气资产",
+             # 旧制度：这些科目现行准则已废止，但小企业老模板上还在用
+             "长期投资", "递延资产", "递延及无形资产合计", "其他长期资产",
+             "递延税款借项", "待处理流动资产净损失", "待处理固定资产净损失",
+             "固定资产清理", "无形及递延资产合计",
              "债权投资", "其他债权投资", "其他非流动金融资产", "长期应收款"),
             ("OtherAssetsNoncurrent", "DeferredTaxAssetsLiabilitiesNetNoncurrent",
              "DeferredTaxAssetsNetNoncurrent")),
@@ -205,20 +238,29 @@ MAPPINGS: tuple[Mapping, ...] = (
     Mapping(Field.EMPLOYEE_PAYABLE,
             ("应付职工薪酬", "应付工资", "应付福利费"),
             ("EmployeeRelatedLiabilitiesCurrent", "AccruedPayroll")),
-    Mapping(Field.TAXES_PAYABLE, ("应交税费", "应付税费", "应交税金"),
+    Mapping(Field.TAXES_PAYABLE, ("应交税费", "应付税费", "应交税金",
+                                  # 旧制度
+                                  "未交税金"),
             ("TaxesPayableCurrent", "IncomeTaxesPayable",
              "AccruedIncomeTaxesCurrent")),
     Mapping(Field.OTHER_CURRENT_LIABILITIES,
             ("其他流动负债", "一年内到期的非流动负债",
+             # 旧制度
+             "一年内到期的长期负债", "其他未交款",
              "吸收存款及同业存放", "卖出回购金融资产款", "代理买卖证券款",
              "应付手续费及佣金", "持有待售负债", "衍生金融负债", "应付票据"),
             ("OtherLiabilitiesCurrent",)),
     Mapping(Field.OTHER_NONCURRENT_LIABILITIES,
             ("其他非流动负债", "递延所得税负债", "长期应付款", "其他负债",
+             # 旧制度
+             "其他长期负债", "递延税款贷项",
              "租赁负债", "长期应付职工薪酬", "预计负债", "递延收益",
              "保险合同准备金", "应付债券"),
             ("OtherLiabilitiesNoncurrent", "DeferredTaxLiabilitiesNoncurrent")),
-    Mapping(Field.TOTAL_NONCURRENT_LIABILITIES, ("非流动负债合计",), ()),
+    Mapping(Field.TOTAL_NONCURRENT_LIABILITIES,
+            ("非流动负债合计",
+             # 旧制度叫「长期负债合计」
+             "长期负债合计"), ()),
 
     Mapping(Field.TOTAL_LIABILITIES, ("负债合计", "负债总计", "总负债"),
             ("Liabilities",)),
@@ -277,13 +319,21 @@ MAPPINGS: tuple[Mapping, ...] = (
             ("LiabilitiesAndStockholdersEquity",)),
 
     # ================= 利润表 =================
-    Mapping(Field.REVENUE, ("营业收入", "营业总收入", "主营业务收入", "销售收入"),
+    Mapping(Field.REVENUE, ("营业收入", "营业总收入", "主营业务收入", "销售收入",
+                            # 旧制度
+                            "产品销售收入", "商品销售收入", "营业收入合计"),
             ("RevenueFromContractWithCustomerExcludingAssessedTax",
              "Revenues", "RevenueFromContractWithCustomerIncludingAssessedTax",
              "SalesRevenueNet", "SalesRevenueGoodsNet")),
-    Mapping(Field.COST_OF_REVENUE, ("营业成本", "主营业务成本", "销售成本"),
+    Mapping(Field.COST_OF_REVENUE, ("营业成本", "主营业务成本", "销售成本",
+                                    # 旧制度
+                                    "产品销售成本", "商品销售成本"),
             ("CostOfRevenue", "CostOfGoodsAndServicesSold", "CostOfGoodsSold")),
-    Mapping(Field.GROSS_PROFIT, ("毛利", "毛利润"), ("GrossProfit",)),
+    Mapping(Field.GROSS_PROFIT, ("毛利", "毛利润",
+                                 # 旧制度的「产品销售利润」= 收入 − 成本 − 税金及附加，
+                                 # 比毛利的定义多减一项，但用途相同（中间的汇总行）
+                                 "产品销售利润", "主营业务利润"),
+            ("GrossProfit",)),
     Mapping(Field.OPERATING_EXPENSES, ("营业费用合计", "营业总成本", "营业费用"),
             ("OperatingExpenses", "CostsAndExpenses")),
     Mapping(Field.RND, ("研发费用", "研发支出"),
@@ -306,6 +356,42 @@ MAPPINGS: tuple[Mapping, ...] = (
             ("IncomeTaxExpenseBenefit",)),
     Mapping(Field.NET_INCOME, ("净利润", "净利润（亏损）", "归属于母公司股东的净利润"),
             ("NetIncomeLoss", "ProfitLoss")),
+
+    # ================= 旧「行业会计制度」的科目 =================
+    # 中小企业的报表常是这个格式。名字对不上就是整张表「未映射」，
+    # 而且勾稽需要的行取不到（实测新锐环境监测损益表只认出 6/17）。
+    Mapping(Field.NOTES_RECEIVABLE, ("应收票据", "应收票据净额"),
+            ("NotesReceivableNetCurrent", "ReceivablesNetCurrent")),
+    Mapping(Field.NOTES_PAYABLE, ("应付票据",),
+            ("NotesPayableCurrent", "AccountsPayableAndAccruedLiabilitiesCurrent")),
+    # **累计折旧是算 EBITDA 的关键**：它的年度增加额约等于当期折旧。
+    # 小企业的表上没有现金流量表，这是唯一能拿到 D&A 的地方。
+    Mapping(Field.ACCUM_DEPRECIATION, ("累计折旧", "减：累计折旧"),
+            ("AccumulatedDepreciationDepletionAndAmortizationPropertyPlantAndEquipment",)),
+    Mapping(Field.PPE_GROSS, ("固定资产原价", "固定资产原值"),
+            ("PropertyPlantAndEquipmentGross",)),
+    Mapping(Field.PREPAID_EXPENSES, ("待摊费用", "长期待摊费用"),
+            ("PrepaidExpenseCurrent", "DeferredCostsCurrent")),
+    Mapping(Field.DIVIDENDS_PAYABLE, ("应付利润", "应付股利", "未付利润"),
+            ("DividendsPayableCurrent", "DividendsPayable")),
+    Mapping(Field.SELLING_EXPENSE, ("销售费用", "营业费用",
+                                    # 旧制度
+                                    "产品销售费用", "商品销售费用"),
+            ("SellingAndMarketingExpense", "SellingExpense")),
+    Mapping(Field.ADMIN_EXPENSE, ("管理费用", "管理费用合计"),
+            ("GeneralAndAdministrativeExpense", "AdministrativeExpense")),
+    Mapping(Field.TAX_SURCHARGE, ("税金及附加", "营业税金及附加",
+                                  # 旧制度
+                                  "产品销售税金及附加", "商品销售税金及附加"),
+            ("TaxesExcludingIncomeAndExciseTaxes",)),
+    Mapping(Field.OTHER_INCOME, ("其他业务利润", "其他业务收入", "补贴收入"),
+            ("OtherNonoperatingIncomeExpense", "OtherOperatingIncomeExpenseNet")),
+    Mapping(Field.INVESTMENT_INCOME, ("投资收益", "投资损失"),
+            ("InvestmentIncomeInterest", "EquityMethodInvestmentRealizedGainLossOnDisposal")),
+    Mapping(Field.NONOPERATING_INCOME, ("营业外收入",),
+            ("NonoperatingIncomeExpense", "OtherNonoperatingIncome")),
+    Mapping(Field.NONOPERATING_EXPENSE, ("营业外支出",),
+            ("OtherNonoperatingExpense", "NonoperatingExpense")),
 
     # ================= 现金流量表 =================
     Mapping(Field.CFO, ("经营活动产生的现金流量净额", "经营活动现金流量净额",

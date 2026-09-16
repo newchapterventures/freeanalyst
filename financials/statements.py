@@ -49,6 +49,19 @@ class StatementSet:
     rows: list[StatementRow] = field(default_factory=list)
     fields: dict[Field, float] = field(default_factory=dict)
     n_tables: int = 0
+    #: 这张表的数值列**原名叫什么**，按重要性排序（第 0 个是主数值列）。
+    #:
+    #: ## 为什么必须记下来（实测踩到）
+    #:
+    #: 不同表的「另一列」含义完全不同：
+    #:
+    #:     资产负债表   年初数 / 期末数      ← 年初在前！
+    #:     损益表       本月数 / 本年累计
+    #:
+    #: 照搬「取第一个数值列」会把**去年的数当成今年的**，而且不报错。
+    #: 所以列的角色从表头读、主数值列永远放在 `rows[i][2]`，
+    #: 同时把原文列名留在这里，让报告能说清「这个数取自哪一列」。
+    columns: list[str] = field(default_factory=list)
 
 
 @dataclass
