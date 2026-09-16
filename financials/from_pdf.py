@@ -45,6 +45,19 @@ _TOC_MARKERS = ("目录", "目    录", "第—", "第-", "…")
 #: 标题前面出现这些词 → 这是主体/母公司表，不是我们找的合并表
 _QUALIFIERS = ("母公司", "公司", "本部", "单体")
 
+#: 表格开头的标志 —— 紧跟在表名后面的固定文字。
+#:
+#: ## 为什么用它定起始页（实测踩到）
+#:
+#: 原来的做法是「在含表名的页里挑数值最多的那页」。在**年报**上这会选错：
+#: 蓝色光标 2025 年报的财报附注（160 页以后）表格又多又密，
+#: 于是合并资产负债表被定位到第 163 页，而它其实在第 70 页。
+#:
+#: 「编制单位」这个标志只出现在表的开头，不会出现在附注里。
+_START_MARKERS = ("编制单位", "会企01表", "会合01表", "会企02表", "会合02表",
+                  "会企03表", "会合03表", "会企04表", "会合04表",
+                  "单位:元", "单位：元", "单位:人民币元", "单位：人民币元")
+
 
 def _hit_title(text: str, titles: tuple[str, ...],
                allow_qualified: bool = False) -> bool:
@@ -163,10 +176,16 @@ def statement_range(doc: ip.PdfDocument, kind: str) -> tuple[int, int] | None:
             continue
         if _is_toc(pg.text):
             continue
+        # **优先取「表名 + 编制单位」的那一页。**
+        # 只看数值多少会选到财报附注（附注表格又密又多），
+        # 实测蓝色光标 2025 年报把合并资产负债表定位到了第 163 页，
+        # 而它其实在第 70 页。
         score = sum(_numeric_rows(t) for t in pg.usable_tables())
+        if any(m in pg.text for m in _START_MARKERS):
+            score += 100_000
         if score > best_score:
             best, best_score = pg.number, score
-    if best is None or best_score <= 0:
+    if best is None:
         return None
 
     end = best
@@ -183,24 +202,48 @@ def statement_range(doc: ip.PdfDocument, kind: str) -> tuple[int, int] | None:
     return best, end
 
 
+def _known_names() -> list[str]:
+    """所有已知科目名 —— 文字流解析靠它把粘在一起的科目名剥开。"""
+    return [n for m in cn.MAPPINGS for n in m.names]
+
+
 def _fill(st: stm.StatementSet, doc: ip.PdfDocument, lo: int, hi: int) -> None:
+    from . import textflow
+
+    names = _known_names()
     for pg in doc.pages:
         if not (lo <= pg.number <= hi):
             continue
+
+        rows_out: list[list[str]] = []
         for t in pg.usable_tables():
-            for row in t:
-                lab = (row[0] or "").replace("\n", " ").strip()
-                if not lab:
-                    continue
-                f, _ = cn.identify(lab)
-                raw = str(row[2] or "").strip()
-                # **OCR 标出来的可疑金额一律不用。**
-                # `？7, 756,942, 510.86` 若交给 `_to_number` 会被剥成
-                # 775694251086 —— 差得离谱且不报错。
-                v = None if raw.startswith("？") else _to_number(raw)
-                st.rows.append(stm.StatementRow(label=lab, value=v, field=f, via="pdf"))
-                if f and f not in st.fields and v is not None:
-                    st.fields[f] = v
+            rows_out.extend(t)
+
+        # **表格抽出来的行「值列全空」时，回落到文字流解析。**
+        # 现代 A 股年报的三张表没有表格结构，科目名和金额糊成一条文字流：
+        #     货币资金 2,826,966,781.73 2,779,185,080.64 结算备付金拆出资金
+        # pdfplumber 会返回行，但值列是空的（实测蓝色光标 2025 年报第 70 页：
+        # 35 行，0 行带值）。不回落的话整张表看起来「存在但其实没有数」。
+        if not any(len(r) > 2 and str(r[2] or "").strip() for r in rows_out):
+            flow = textflow.parse_textflow(pg.text, names)
+            if flow:
+                rows_out = flow
+
+        for row in rows_out:
+            if len(row) < 4:
+                continue
+            lab = (row[0] or "").replace("\n", " ").strip()
+            if not lab:
+                continue
+            f, _ = cn.identify(lab)
+            raw = str(row[2] or "").strip()
+            # **OCR 标出来的可疑金额一律不用。**
+            # `？7, 756,942, 510.86` 若交给 `_to_number` 会被剥成
+            # 775694251086 —— 差得离谱且不报错。
+            v = None if raw.startswith("？") else _to_number(raw)
+            st.rows.append(stm.StatementRow(label=lab, value=v, field=f, via="pdf"))
+            if f and f not in st.fields and v is not None:
+                st.fields[f] = v
 
 
 def load_pdf_statements(path: str | Path, unit: str = "元") -> stm.Statements:
