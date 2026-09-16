@@ -21,7 +21,7 @@ H 股（IFRS）常用的是**净资产列报式**，**根本没有上面那两�
 是**格式不同**。必须报「不适用」而不是让用户以为漏了材料，
 同时用等价的 `资产净额 = 权益总额` 顶上。
 
-取材自宝宝树集团 2020 年报（H 股）真实的财务状况表。
+取材自某 H 股公司 2020 年报（H 股）真实的财务状况表。
 """
 
 from __future__ import annotations
@@ -39,7 +39,7 @@ from financials.canonical import Field              # noqa: E402
 
 
 def _baotree_balance() -> dict[Field, float]:
-    """宝宝树 2020 财务状况表的关键行（千元，实测值）。"""
+    """某 H 股公司 2020 财务状况表的关键行（千元，实测值）。"""
     return {
         Field.NET_CURRENT_ASSETS: 1_887_814,
         Field.ASSETS_LESS_CURRENT_LIABILITIES: 2_317_397,
@@ -52,7 +52,7 @@ def _baotree_balance() -> dict[Field, float]:
 
 
 def _a_share_balance() -> dict[Field, float]:
-    """A 股格式的关键行（贵州茅台 2025，元）。"""
+    """A 股格式的关键行（某白酒公司 2025，元）。"""
     return {
         Field.TOTAL_ASSETS: 303_834_844_021.44,
         Field.TOTAL_LIABILITIES: 49_875_590_112.37,

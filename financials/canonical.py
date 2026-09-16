@@ -122,7 +122,7 @@ class Field(str, Enum):
     #:     旧：产品销售收入 / 产品销售成本 / 产品销售税金及附加
     #:     新：营业收入   / 营业成本   / 税金及附加
     #:
-    #: 实测江苏新锐环境监测 2024 年报表：损益表 17 个科目只认出 6 个（35%）。
+    #: 实测某小企业 2024 年报表：损益表 17 个科目只认出 6 个（35%）。
     #: 这些名字要显式认识，否则整张表都是「未映射」噪音，
     #: 而且**勾稽需要的行取不到**。
     NOTES_RECEIVABLE = "应收票据"
@@ -211,7 +211,7 @@ MAPPINGS: tuple[Mapping, ...] = (
              "应收股利", "应收利息", "一年内到期的长期债券投资"),
             ("PrepaidExpenseAndOtherAssetsCurrent", "OtherAssetsCurrent",
              "PrepaidExpenseCurrent")),
-    # 金融类资产（财务公司业务；贵州茅台这类公司会有）
+    # 金融类资产（财务公司业务；某白酒公司这类公司会有）
     Mapping(Field.OTHER_CURRENT_ASSETS,
             ("拆出资金", "买入返售金融资产", "发放贷款和垫款", "结算备付金",
              "衍生金融资产", "应收款项融资", "其他应收款"),
@@ -359,7 +359,7 @@ MAPPINGS: tuple[Mapping, ...] = (
 
     # ================= 旧「行业会计制度」的科目 =================
     # 中小企业的报表常是这个格式。名字对不上就是整张表「未映射」，
-    # 而且勾稽需要的行取不到（实测新锐环境监测损益表只认出 6/17）。
+    # 而且勾稽需要的行取不到（实测某小企业损益表只认出 6/17）。
     Mapping(Field.NOTES_RECEIVABLE, ("应收票据", "应收票据净额"),
             ("NotesReceivableNetCurrent", "ReceivablesNetCurrent")),
     Mapping(Field.NOTES_PAYABLE, ("应付票据",),
@@ -398,7 +398,7 @@ MAPPINGS: tuple[Mapping, ...] = (
                         "经营活动产生的现金流量",
                         # H 股 / IFRS 写法：`所用` 而不是 `产生的`。
                         # 净流出时英文写 "net cash used in operating activities"。
-                        # **实测就是这一处差异让宝宝树的现金勾稽判不了。**
+                        # **实测就是这一处差异让某 H 股公司的现金勾稽判不了。**
                         "经营活动所用现金净额", "经营活动所用的现金净额",
                         "经营活动现金流出净额",
                         "Net cash used in operating activities",
@@ -464,7 +464,7 @@ MAPPINGS: tuple[Mapping, ...] = (
     # 只在 `datasources/sec_edgar.py` 那条路上用得上。
     #
     # 但**美国公司的 Excel / PDF 报表用的是人读的英文** ——
-    # 实测 MBA Mentored Study 那两份（Cicero，一家多分部的美国工程公司）：
+    # 实测 MBA 某材料 那两份（某美国公司，一家多分部的美国工程公司）：
     # 30 个科目名一个都没匹配上，而且**整个结果为空、不报错**。
     #
     # 英文名按 `_norm` 之后的**精确**匹配（`Assets` 不会吃掉 `Total Assets`），
@@ -570,7 +570,7 @@ MAPPINGS: tuple[Mapping, ...] = (
 
 #: **前缀匹配** —— 真实材料里的标签会被**截断**或带尾巴。
 #:
-#: 实测 Cicero 那份资产负债表：
+#: 实测 某美国公司 那份资产负债表：
 #:
 #:     Accum. Depreciation - Furnitur        ← 截断了
 #:     Accum. Depreciation - Equipmen

@@ -9,8 +9,8 @@
 
 于是实测到两处明显报错的口径：
 
-    苏州井利电子 2024 审计报告    非上市的**单体**审计报告 → 被报成「合并」
-    Cicero（美国）报表            美国公司 → 被报成「CAS 中国会计准则」
+    某非上市公司 2024 审计报告    非上市的**单体**审计报告 → 被报成「合并」
+    某美国公司（美国）报表            美国公司 → 被报成「CAS 中国会计准则」
 
 **口径报错比数字报错更危险。** 数字错了勾稽会不平，有信号；口径错了
 无声无息，看报告的人会按错的口径去理解手上的数。
@@ -33,7 +33,7 @@ _US_MARKERS = (
     "accumulateddeficit", "retainagereceivable", "workinprogress",
     "commonstock", "additionalpaidincapital", "allowancefordoubtfulaccounts",
     "balancesheet", "pettycash", "clientfeesreceivables", "autoloans",
-    # 利润表 —— 第一版只放资产负债表那些，导致 Cicero 的利润表判成「未判定」
+    # 利润表 —— 第一版只放资产负债表那些，导致 某美国公司 的利润表判成「未判定」
     "incomestatement", "costofsales", "grossprofit", "operatingincome",
     "netincome", "netloss", "incometaxexpense", "sellinggeneralandadministrative",
     "selling,generalandadministrative", "incomebeforetaxes",
@@ -60,7 +60,7 @@ _CAS_SMALL = ("小企业会计准则", "会小企", "小企01表", "小企02表"
 #: 1993 年「行业会计制度」的报表格式（2006 年已废止，但老企业的表还在用）。
 #:
 #: ⚠️ **这里只放不会误伤的标志。** 第一版放了 `待摊费用` / `预提费用`，
-#: 结果**茅台**被判成 1993 年格式 —— 因为现代资产负债表的
+#: 结果**某白酒公司**被判成 1993 年格式 —— 因为现代资产负债表的
 #: 「**长期**待摊费用」里就含「待摊费用」，是子串假匹配。
 #:
 #: `会工01表` / `会工02表` 是那套制度**特有**的表号，只在那个年代的

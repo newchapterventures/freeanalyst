@@ -1,7 +1,7 @@
 """`ingest/layout.py` 的测试 —— 无框线排版表的按行解析。
 
 **这里的每一条都是被真实年报逼出来的**，不是想出来的：
-宝宝树 2020 年报（H 股）的财务报表没有框线，`pdfplumber` 的默认策略
+某 H 股公司 2020 年报（H 股）的财务报表没有框线，`pdfplumber` 的默认策略
 只抽到数字列，标签全丢。
 """
 
@@ -121,7 +121,7 @@ class TestWrappedLabels(unittest.TestCase):
 class TestUnlabeledRows(unittest.TestCase):
     """**标签根本不在文字层里的行，不能被静默丢掉。**
 
-    实测：宝宝树年报「Total current assets」那行只有数字，
+    实测：某 H 股公司年报「Total current assets」那行只有数字，
     标签被画成了图形。丢掉的话，用户会以为这张表本来就没这一行。
     """
 

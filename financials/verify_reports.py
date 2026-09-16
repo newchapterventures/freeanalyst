@@ -1,10 +1,33 @@
-"""三份真实年报的输入层验证报告。
+"""输入层验收报告 —— 拿**真实材料**跑，逐份看勾稽平不平。
 
 跑法：`python3 -m financials.verify_reports`
+
+## ⚠️ 材料路径是私有的，不进仓库
+
+这份脚本在公开仓库里，但**它跑的是私密材料**。所以路径不写死在这里，
+而是从 `root/verify-cases.json` 读（`root/` 已 gitignore）。
+
+`root/verify-cases.json` 长这样：
+
+    [
+      {"title": "某 A 股年报（原生文字层）",
+       "path": "/path/to/report.pdf",
+       "unit": "元",
+       "titles": {"balance": "合并资产负债表", "income": "合并利润表",
+                  "cash_flow": "合并现金流量表"},
+       "span": {"balance": 3, "income": 3, "cash_flow": 3},
+       "gaap": "CAS", "period": "2025-12-31"},
+      ...
+    ]
+
+**为什么走文件而不是写死** —— 之前写死过，结果把标的公司名和用户的本地绝对
+路径一起提交到了公开仓库。保密边界是「文件保密、工具不保密」，
+标的公司名本身也是机密（把「某人在看 X 公司」公开出去等于公开 deal 名单）。
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import sys
 
@@ -17,25 +40,28 @@ from ingest.html import _to_number
 from financials import canonical as cn
 from financials import statements as stm
 
-CASES = [
-    ("贵州茅台 2025 年度报告（A 股 · 简体中文 · 原生文字层）",
-     "/Users/fuweijia/Docs/AI/1b9fae59825c41bf9a776892a00565f7.pdf",
-     {"balance": ("合并资产负债表", 3), "income": ("合并利润表", 3),
-      "cash_flow": ("合并现金流量表", 3), "unit": "元", "gaap": "CAS"},
-     "2025-12-31"),
-    ("宝宝树集团 2020 年报（H 股 · 繁体中文 + 英文 · 原生文字层）",
-     "/Users/fuweijia/Docs/Fosun Thinkpad/宝宝树/宝宝树年报2020.pdf",
-     {"balance": ("Consolidated Statement of Financial Position", 1),
-      "income": ("Consolidated Statement of Profit or Loss", 1),
-      "cash_flow": ("Consolidated Statement of Cash Flows", 1),
-      "unit": "千元", "gaap": "IFRS"},
-     "2020-12-31"),
-    ("苏州井利电子 2024 年审计报告（非上市 · **扫描件，走 OCR**）",
-     "/Users/fuweijia/Docs/Search Fund/项目/苏州井利电子2024年审计报告.pdf",
-     {"balance": ("资产负债表", 1), "income": ("利润表", 1),
-      "cash_flow": ("现金流量表", 1), "unit": "元", "gaap": "CAS"},
-     "2024-12-31"),
-]
+#: 私有配置的位置（`root/` 在 .gitignore 里）
+CONFIG = Path(__file__).resolve().parent.parent / "root" / "verify-cases.json"
+
+
+def load_cases() -> list[tuple]:
+    """从私有配置读材料清单。没有配置就明说，不要假装跑过了。"""
+    if not CONFIG.exists():
+        print(f"  ⚠ 找不到私有材料清单：{CONFIG}")
+        print("     这是**故意**的 —— 材料路径不进公开仓库。")
+        print("     照文件顶部注释里的格式建一个即可。")
+        return []
+    raw = json.loads(CONFIG.read_text(encoding="utf-8"))
+    out = []
+    for c in raw:
+        cfg = {"unit": c.get("unit", ""), "gaap": c.get("gaap", "")}
+        for kind, title in (c.get("titles") or {}).items():
+            cfg[kind] = (title, (c.get("span") or {}).get(kind, 3))
+        out.append((c["title"], c["path"], cfg, c.get("period", "")))
+    return out
+
+
+CASES = load_cases()
 
 
 def build(doc, title, span):

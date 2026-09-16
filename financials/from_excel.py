@@ -39,7 +39,7 @@ from . import statements as stm
 #:
 #: **中英双语。** 只写中文的时候，美国公司的英文报表一份都认不出来 ——
 #: 而且 `classify` 会给所有 sheet 打 0 分、全部判成 unknown，
-#: 结果是**整份材料静默返回空**（实测 MBA Mentored Study 那两份）。
+#: 结果是**整份材料静默返回空**（实测 MBA 某材料 那两份）。
 _MARKERS = {
     "balance": ("资产总计", "负债合计", "负债及所有者权益总计", "流动资产合计",
                 "资产负债表", "所有者权益合计",
@@ -58,7 +58,7 @@ _MARKERS = {
                   "Financing Activities", "Net Cash", "Cash Flow Statement"),
 }
 
-#: `编制单位:江苏新锐环境监测有限公司` / `2024 年12 月 31 日`
+#: `编制单位:某小企业` / `2024 年12 月 31 日`
 _ENTITY = re.compile(r"编\s*制\s*单\s*位\s*[:：]\s*(.+)")
 _PERIOD = re.compile(r"(20\d{2})\s*年")
 
@@ -122,7 +122,7 @@ def _period_columns(rows: list[list[object]]) -> int:
 def _sheet_score(name: str, rows: list[list[object]]) -> int:
     """这张 sheet 有多像「该公司的正表」。
 
-    ## 为什么要打分（实测：Cicero 那份利润表有 12 张 sheet 都判成 income）
+    ## 为什么要打分（实测：某美国公司 那份利润表有 12 张 sheet 都判成 income）
 
     `Income Statement Summary.xlsx` 里每一张 sheet 都含「Net Income」，
     所以全都判成 income：
@@ -215,7 +215,7 @@ def load_excel_statements(paths: list[str | Path],
             _into(target, out)
 
         # **表头文字也要进判据** —— 「会工01表」这种表号在标题行里，
-        # 不在科目列里。只拿科目名判的话，新锐环境那种真正的 1993 年
+        # 不在科目列里。只拿科目名判的话，某小企业那种真正的 1993 年
         # 格式会被判成普通 CAS（实测）。
         header_texts.append(" ".join(
             excel._cell_str(v) for r in sh.rows[:8] for v in r))
