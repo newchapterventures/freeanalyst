@@ -309,26 +309,59 @@ MAPPINGS: tuple[Mapping, ...] = (
 
     # ================= 现金流量表 =================
     Mapping(Field.CFO, ("经营活动产生的现金流量净额", "经营活动现金流量净额",
-                        "经营活动产生的现金流量"),
+                        "经营活动产生的现金流量",
+                        # H 股 / IFRS 写法：`所用` 而不是 `产生的`。
+                        # 净流出时英文写 "net cash used in operating activities"。
+                        # **实测就是这一处差异让宝宝树的现金勾稽判不了。**
+                        "经营活动所用现金净额", "经营活动所用的现金净额",
+                        "经营活动现金流出净额",
+                        "Net cash used in operating activities",
+                        "Net cash generated from operating activities"),
             ("NetCashProvidedByUsedInOperatingActivities",)),
     Mapping(Field.CFI, ("投资活动产生的现金流量净额", "投资活动现金流量净额",
-                        "投资活动产生的现金流量"),
+                        "投资活动产生的现金流量",
+                        "投资活动所用的现金净额", "投资活动所用现金净额",
+                        "Net cash used in investing activities"),
             ("NetCashProvidedByUsedInInvestingActivities",)),
     Mapping(Field.CFF, ("筹资活动产生的现金流量净额", "筹资活动现金流量净额",
-                        "筹资活动产生的现金流量"),
+                        "筹资活动产生的现金流量", "融资活动产生的现金流量净额",
+                        "融资活动所用的现金净额", "融资活动所用现金净额",
+                        "Net cash used in financing activities"),
             ("NetCashProvidedByUsedInFinancingActivities",)),
     Mapping(Field.CAPEX, ("购建固定资产、无形资产和其他长期资产支付的现金",
                           "购建固定资产等支付的现金", "资本开支"),
             ("PaymentsToAcquirePropertyPlantAndEquipment",)),
-    Mapping(Field.NET_CASH_CHANGE, ("现金及现金等价物净增加额",),
+    Mapping(Field.NET_CASH_CHANGE, ("现金及现金等价物净增加额",
+                                    # H 股写法（减少时）
+                                    "现金及现金等价物减少净额", "现金及现金等价物净减少额",
+                                    "现金及现金等价物增加净额", "现金及现金等价物净增加/减少额",
+                                    "Net decrease in cash and cash equivalents",
+                                    "Net increase in cash and cash equivalents"),
             ("CashAndCashEquivalentsPeriodIncreaseDecrease",
              "CashAndCashEquivalentsPeriodIncreaseDecreaseExcludingExchangeRateEffect")),
     Mapping(Field.FX_EFFECT,
-            ("汇率变动对现金及现金等价物的影响", "汇率变动影响"),
+            ("汇率变动对现金及现金等价物的影响", "汇率变动影响",
+             # H 股写法
+             "汇率波动之影响", "汇率变动之影响", "外汇汇率变动的影响",
+             "Effect of foreign exchange rate changes",
+             "Effect of exchange rate changes on cash and cash equivalents"),
             ("EffectOfExchangeRateOnCashAndCashEquivalents",)),
-    Mapping(Field.CASH_BEGIN, ("期初现金及现金等价物余额",),
+    Mapping(Field.CASH_BEGIN, ("期初现金及现金等价物余额", "现金及现金等价物期初余额",
+                               # H 股常用「年初 / 年末」而不是「期初 / 期末」，
+                               # 而且中文在 PDF 里和英文**交错**排列：
+                               #   `Cash and cash equivalents at 年初的現金及現金等價物
+                               #    the beginning of the year`
+                               # 拆出来的中文片段是完整的，所以按片段名匹配有效。
+                               "年初现金及现金等价物", "年初的现金及现金等价物",
+                               "年初现金及现金等价物余额",
+                               "Cash and cash equivalents at beginning of year",
+                               "Cash and cash equivalents at the beginning of the year"),
             ("CashAndCashEquivalentsAtCarryingValue",)),
-    Mapping(Field.CASH_END, ("期末现金及现金等价物余额",),
+    Mapping(Field.CASH_END, ("期末现金及现金等价物余额", "现金及现金等价物期末余额",
+                             "年末现金及现金等价物", "年末的现金及现金等价物",
+                             "年末现金及现金等价物余额", "年终现金及现金等价物",
+                             "Cash and cash equivalents at end of year",
+                             "Cash and cash equivalents at the end of the year"),
             ("CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents",
              "CashAndCashEquivalentsAtCarryingValue")),
     # 间接法调节项（现金流量表的"净利润 → 经营现金流"那段）
@@ -357,8 +390,8 @@ MAPPINGS: tuple[Mapping, ...] = (
 #: ⚠️ 关键词要写成**去空格**的形式 —— `_norm` 会把空格也去掉，
 #: 写成 `"end of period"` 永远匹配不上（实际文本是 `endofperiod`）。踩过。
 _DISAMBIGUATING = (
-    (("期初", "beginning"), Field.CASH_BEGIN),
-    (("期末", "endofperiod", "atend"), Field.CASH_END),
+    (("期初", "年初", "beginning"), Field.CASH_BEGIN),
+    (("期末", "年末", "年终", "endofperiod", "atend", "attheend"), Field.CASH_END),
 )
 
 

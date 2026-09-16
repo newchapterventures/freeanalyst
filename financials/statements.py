@@ -124,9 +124,23 @@ class Statements:
             if r.field == Field.CFO and start is not None:
                 end_i = i
                 break
-        if start is None or end_i is None:
-            return art.Articulation("净利润 → 经营现金流（间接法）", None,
-                                    missing=[Field.NET_INCOME, Field.CFO])
+
+        if start is None:
+            # **表里没有「净利润」行 = 主表没有调节段**，不是缺数据。
+            # H 股常见：主表只列一行「经营活动所用现金净额」，后面挂个附注号，
+            # 真正的调节表在附注里（实测宝宝树是附注 22(b)）。
+            # 报「不适用」而不是「数据不足」—— 后者会让用户去翻一份本来
+            # 就不该有这段的表。
+            return art.Articulation(
+                "净利润 → 经营现金流（间接法）", None, applicable=False,
+                note="该现金流量表**没有间接法调节段**：主表只列一行"
+                     "「经营活动所用现金净额」并挂附注号，调节表在**附注**里。",
+            )
+        if end_i is None:
+            return art.Articulation(
+                "净利润 → 经营现金流（间接法）", None, missing=[Field.CFO],
+                note="有调节段，但找不到作为终点的「经营活动现金流量净额」。",
+            )
         between = [(r.label, r.value) for r in rows[start + 1:end_i]]
         return art.check_indirect_method(
             between,
