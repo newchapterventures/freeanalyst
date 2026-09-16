@@ -457,6 +457,136 @@ MAPPINGS: tuple[Mapping, ...] = (
              "AcceleratedDepreciation")),
     Mapping(Field.ID_STOCK_COMP, ("股份支付", "以权益结算的股份支付"),
             ("ShareBasedCompensation", "ShareBasedCompensationArrangementByShareBasedPaymentAwardCompensationCost")),
+
+    # ========== 美国 / 英文材料的人读科目名 ==========
+    #
+    # 上面那些英文名是 **SEC EDGAR 的 XBRL 驼峰标签**（`AssetsCurrent`），
+    # 只在 `datasources/sec_edgar.py` 那条路上用得上。
+    #
+    # 但**美国公司的 Excel / PDF 报表用的是人读的英文** ——
+    # 实测 MBA Mentored Study 那两份（Cicero，一家多分部的美国工程公司）：
+    # 30 个科目名一个都没匹配上，而且**整个结果为空、不报错**。
+    #
+    # 英文名按 `_norm` 之后的**精确**匹配（`Assets` 不会吃掉 `Total Assets`），
+    # 所以顺序不敏感。
+    Mapping(Field.TOTAL_ASSETS, ("Total Assets",)),
+    Mapping(Field.TOTAL_CURRENT_ASSETS, ("Total Current Assets",)),
+    Mapping(Field.TOTAL_NONCURRENT_ASSETS, ("Total Non-Current Assets",
+                                            "Total Noncurrent Assets",
+                                            "Total Other Assets")),
+    Mapping(Field.CASH, ("Petty Cash", "Operating Account", "Cash and Cash Equivalents",
+                         "Cash and Bank Balances", "Cash at Bank and in Hand")),
+    Mapping(Field.SHORT_TERM_INVESTMENTS, ("Money Market Savings", "Money Market Account",
+                                           "Short-Term Investments")),
+    Mapping(Field.ACCOUNTS_RECEIVABLE, ("Client Fees Receivables", "Accounts Receivable",
+                                        "Trade Receivables", "Retainage Receivable",
+                                        "Accounts Receivable Net")),
+    Mapping(Field.PREPAID_EXPENSES, ("Prepaid Expenses", "Prepaid Insurance")),
+    Mapping(Field.INVENTORY, ("Work in Progress", "Work-in-Progress", "WIP Inventory")),
+    Mapping(Field.PPE, ("Property and Equipment", "Total Property and Equipment",
+                        "Property, Plant and Equipment", "Furniture and Fixtures",
+                        "Leasehold Improvements", "Office Equipment",
+                        "Machinery and Equipment", "Net Fixed Assets",
+                        "Equipment", "Automobiles", "Vehicles", "Computer Equipment")),
+    Mapping(Field.INTEREST_INCOME, ("Interest Income", "Interest Revenue")),
+    Mapping(Field.INVESTMENT_INCOME, ("Dividend Income", "Investment Income",
+                                      "Income from Investments")),
+    Mapping(Field.OTHER_INCOME, ("Other Income", "Other Revenue",
+                                 "Miscellaneous Income")),
+    Mapping(Field.ACCUM_DEPRECIATION, ("Accumulated Depreciation",
+                                       "Less Accumulated Depreciation",
+                                       "Allowance for Doubtful Accounts",
+                                       "Allowance for Doubtful Account")),
+    Mapping(Field.INTANGIBLES, ("Intangible Assets", "Intangibles")),
+    Mapping(Field.GOODWILL, ("Goodwill",)),
+    Mapping(Field.TOTAL_LIABILITIES, ("Total Liabilities",)),
+    Mapping(Field.TOTAL_CURRENT_LIABILITIES, ("Total Current Liabilities",)),
+    Mapping(Field.TOTAL_NONCURRENT_LIABILITIES, ("Total Long-Term Liabilities",
+                                                 "Total Non-Current Liabilities",
+                                                 "Total Noncurrent Liabilities")),
+    Mapping(Field.ACCOUNTS_PAYABLE, ("Accounts Payable", "Trade Payables")),
+    Mapping(Field.ACCRUED_LIABILITIES, ("Accrued Liabilities", "Accrued Expenses",
+                                        "Accruals")),
+    Mapping(Field.SHORT_TERM_DEBT, ("Short-Term Debt", "Current Portion of Long-Term Debt",
+                                    "Line of Credit")),
+    Mapping(Field.LONG_TERM_DEBT, ("Long-Term Debt", "Notes Payable")),
+    Mapping(Field.EQUITY, ("Total Equity", "Total Stockholders Equity",
+                           "Total Shareholders Equity", "Stockholders Equity",
+                           "Shareholders Equity", "Owners Equity")),
+    Mapping(Field.RETAINED_EARNINGS, ("Retained Earnings", "Accumulated Deficit")),
+    Mapping(Field.CAPITAL_STOCK, ("Common Stock", "Capital Stock")),
+    Mapping(Field.REVENUE, ("Total Revenues", "Total Revenue", "Revenues", "Revenue",
+                            "Net Revenues", "Sales", "Total Sales")),
+    Mapping(Field.COST_OF_REVENUE, ("Cost of Sales", "Cost of Revenue",
+                                    "Total Cost of Sales", "Cost of Goods Sold",
+                                    "Direct Costs")),
+    Mapping(Field.GROSS_PROFIT, ("Gross Profit", "Gross Margin")),
+    Mapping(Field.OPERATING_INCOME, ("Operating Income", "Income from Operations")),
+    Mapping(Field.PRETAX_INCOME, ("Income Before Taxes", "Income Before Income Taxes",
+                                  "Profit Before Tax")),
+    Mapping(Field.INCOME_TAX, ("Income Tax Expense", "Provision for Income Taxes",
+                               "Income Taxes")),
+    Mapping(Field.NET_INCOME, ("Net Income", "Net Income (Loss)", "Net Profit",
+                               "Net Earnings")),
+    Mapping(Field.OPERATING_EXPENSES, ("Total Expenses", "Total Operating Expenses",
+                                       "Total Costs and Expenses")),
+    Mapping(Field.ADMIN_EXPENSE, ("Salaries", "Salaries and Wages", "Payroll",
+                                  "Employee Bonus", "Payroll Tax", "Payroll Taxes",
+                                  "Employee Benefit Programs", "Total Direct Comp Cost",
+                                  "Rent or Lease", "Office", "Telephone")),
+    Mapping(Field.SGNA, ("Selling, General and Administrative",
+                         "Selling General and Administrative", "SG&A",
+                         "General and Administrative")),
+    Mapping(Field.TOTAL_NONCURRENT_LIABILITIES,
+            ("Total Long Term Liabilies",)),          # 原表的拼写错误，照收
+    Mapping(Field.TOTAL_EQUITY_AND_LIABILITIES,
+            ("Total Liabilities and Capital", "Total Liabilities and Equity")),
+    Mapping(Field.CAPITAL_STOCK, ("Member's Contribution", "Members Contribution",
+                                  "Member Contribution", "Paid-In Capital",
+                                  "Paid in Capital", "Capital Contribution")),
+    Mapping(Field.RETAINED_EARNINGS, ("Current Year Profit", "Prior Year Profit",
+                                      "Accumulated Profit", "Accumulated Loss")),
+    Mapping(Field.EQUITY, ("Total Capital", "Partners Capital", "Members Equity")),
+    Mapping(Field.LONG_TERM_DEBT, ("Auto Loans", "Vehicle Loans",
+                                   "Note Payable", "Bank Loan")),
+    Mapping(Field.DEFERRED_REVENUE, ("Deferred Revenue", "Deferred Income",
+                                     "Unearned Revenue")),
+    Mapping(Field.TAXES_PAYABLE, ("Federal Payroll Taxes Payable", "Other Taxes Payable",
+                                  "Sales Tax Payable", "Payroll Taxes Payable",
+                                  "Income Taxes Payable")),
+    Mapping(Field.EMPLOYEE_PAYABLE, ("PTO Payable", "Flex Deductions Payable",
+                                     "Employee Benefits Payable", "Accrued Payroll",
+                                     "Wages Payable")),
+    Mapping(Field.OTHER_NONCURRENT_ASSETS, ("Other Assets", "Deposits",
+                                            "Investment in WSource", "Loan Fees",
+                                            "Security Deposits")),
+    Mapping(Field.OTHER_CURRENT_ASSETS, ("Medical Claims", "Other Current Assets")),
+    Mapping(Field.NET_CURRENT_ASSETS, ("Net Working Capital", "Net Current Assets")),
+    Mapping(Field.SECTION, ("Current Assets", "Current Liabilities", "Capital",
+                            "Long Term Liabilities", "Other Assets",
+                            "LIABILITIES AND CAPITAL", "Balance Sheets Continued",
+                            "Property and Equipment", "Current Portion of Long Term Debt")),
+)
+
+#: **前缀匹配** —— 真实材料里的标签会被**截断**或带尾巴。
+#:
+#: 实测 Cicero 那份资产负债表：
+#:
+#:     Accum. Depreciation - Furnitur        ← 截断了
+#:     Accum. Depreciation - Equipmen
+#:     Accum. Depreciation - Automobi
+#:     Accum. Depreciation - Leasehol
+#:
+#: 四个都是累计折旧的三个分项，但精确匹配一个都对不上。
+#: 只放**长且无歧义**的前缀 —— 短前缀会误伤。
+_PREFIXES: tuple[tuple[str, Field], ...] = (
+    ("accumdepreciation", Field.ACCUM_DEPRECIATION),
+    ("accumulateddepreciation", Field.ACCUM_DEPRECIATION),
+    ("allowancefordoubtful", Field.ACCUM_DEPRECIATION),
+    ("accumamort", Field.ACCUM_DEPRECIATION),
+    ("accruedexpense", Field.ACCRUED_LIABILITIES),
+    ("accruedliabilit", Field.ACCRUED_LIABILITIES),
+    ("note payable", Field.LONG_TERM_DEBT),
 )
 
 #: 这些标签在资产负债表和现金流量表里含义不同，要按行名区分。
@@ -649,5 +779,10 @@ def identify(label: str, xbrl_tag: str | None = None) -> tuple[Field | None, str
             hit = _BY_NAME.get(c)
             if hit is not None:
                 return hit, "name"
+        # 精确匹配全落空，才试**前缀** —— 标签被截断的情况（见 `_PREFIXES`）
+        for c in cands:
+            for pre, f in _PREFIXES:
+                if c.startswith(pre):
+                    return f, "prefix"
 
     return None, "none"

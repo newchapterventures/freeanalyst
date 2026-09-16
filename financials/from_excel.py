@@ -26,6 +26,7 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime
 from pathlib import Path
 
 from ingest import excel
@@ -35,13 +36,26 @@ from . import canonical as cn
 from . import statements as stm
 
 #: 各表独有的科目名 —— 用来判断一个 sheet 是哪张表
+#:
+#: **中英双语。** 只写中文的时候，美国公司的英文报表一份都认不出来 ——
+#: 而且 `classify` 会给所有 sheet 打 0 分、全部判成 unknown，
+#: 结果是**整份材料静默返回空**（实测 MBA Mentored Study 那两份）。
 _MARKERS = {
     "balance": ("资产总计", "负债合计", "负债及所有者权益总计", "流动资产合计",
-                "资产负债表", "所有者权益合计"),
+                "资产负债表", "所有者权益合计",
+                "Total Assets", "Total Liabilities", "Current Assets",
+                "Total Current Assets", "Total Current Liabilities",
+                "Retained Earnings", "Balance Sheet", "Total Equity",
+                "Stockholders Equity", "Shareholders Equity"),
     "income": ("净利润", "利润总额", "营业利润", "营业收入", "产品销售收入",
-               "损益表", "利润表", "产品销售利润"),
+               "损益表", "利润表", "产品销售利润",
+               "Net Income", "Total Revenues", "Total Revenue", "Gross Profit",
+               "Operating Income", "Cost of Sales", "Income Statement",
+               "Cost of Revenue", "Income Before Taxes"),
     "cash_flow": ("经营活动", "现金流量表", "投资活动", "筹资活动",
-                  "期末现金及现金等价物余额"),
+                  "期末现金及现金等价物余额",
+                  "Cash Flows", "Operating Activities", "Investing Activities",
+                  "Financing Activities", "Net Cash", "Cash Flow Statement"),
 }
 
 #: `编制单位:江苏新锐环境监测有限公司` / `2024 年12 月 31 日`
@@ -77,53 +91,127 @@ def _into(set_: stm.StatementSet, rows_out: list[list[str]]) -> None:
         set_.rows.append(stm.StatementRow(label=lab, value=v, field=f, via="excel"))
 
 
+#: 表名里出现这些词的，是「合并/汇总」视图，优先选
+_CONSOLIDATED_HINT = ("summary", "consolidated", "annual", "total", "company",
+                      "combined", "overall", "group")
+#: 表名里出现这些词的，是「某分部」或「月度」视图，降级
+_UNIT_HINT = ("month", "monthly", "weekly", "daily", "detail")
+_YEARISH = re.compile(r"^(19|20)\d{2}$")
+
+
+def _period_columns(rows: list[list[object]]) -> int:
+    """表头里有几个「年度 / 日期」列。
+
+    真表的列是**时间**（2015 / 2016-12-31）；分部表的列是**地名**，
+    月度表的列是 Jan/Feb。这一条把后者排除掉。
+    """
+    best = 0
+    for r in rows[:8]:
+        n = 0
+        for v in r:
+            if isinstance(v, datetime):
+                n += 1
+                continue
+            s = excel._cell_str(v).strip()
+            if _YEARISH.match(s) or re.match(r"^\d{4}-\d{2}-\d{2}", s):
+                n += 1
+        best = max(best, n)
+    return best
+
+
+def _sheet_score(name: str, rows: list[list[object]]) -> int:
+    """这张 sheet 有多像「该公司的正表」。
+
+    ## 为什么要打分（实测：Cicero 那份利润表有 12 张 sheet 都判成 income）
+
+    `Income Statement Summary.xlsx` 里每一张 sheet 都含「Net Income」，
+    所以全都判成 income：
+
+        「2015」「2016」「2017」「2018」   列 = 分部（Boulder/Alameda/…）
+        「Annual Summary」                列 = 年度   ← 这才是合并视图
+        「Boulder」「Alameda」…           列 = 年度，但只有一个分部
+        「Revenues」                     只有收入的分解
+
+    拿第一张（「2015」）会拿到**分部拆解**而不是**公司的利润表**，
+    列的含义完全不同 —— 而 `describe()` 会把它当成期间列报出来。
+
+    打分三块：映射上的科目数 + 表名像不像汇总 + 有没有期间列。
+    """
+    mapped = 0
+    for r in rows:
+        for v in r:
+            s = excel._cell_str(v).strip()
+            if s and len(s) < 48 and cn.identify(s)[0]:
+                mapped += 1
+    low = name.lower()
+    score = mapped
+    if any(h in low for h in _CONSOLIDATED_HINT):
+        score += 500
+    if any(h in low for h in _UNIT_HINT):
+        score -= 300
+    score += 200 * min(_period_columns(rows), 3)
+    return score
+
+
 def load_excel_statements(paths: list[str | Path],
                           unit: str = "") -> stm.Statements:
     """把若干 Excel 文件读成一套 `Statements`。
 
     一个文件里可能有左右两栏（资产负债表），会被合并成一套。
+
+    一个工作簿里可能有多张同类 sheet（分部表 / 月度表 / 年度表），
+    **按 `_sheet_score` 选最像正表的那张**，其余的记进 `warnings` 里说明。
     """
+    if isinstance(paths, (str, Path)):
+        # 传单个路径是常见误用 —— 会变成逐字符遍历，报一个看不懂的后缀错误
+        raise TypeError("paths 要传**列表**，比如 load_excel_statements([\"a.xls\"])")
+
     S = stm.Statements(gaap="CAS", scope="单体", audited="未标注")
     warnings: list[str] = []
 
+    # 先扫一遍，按类型收集候选
+    cands: dict[str, list[tuple[int, Path, object, str]]] = {
+        "balance": [], "income": [], "cash_flow": []}
     for p in paths:
         p = Path(p)
         wb = excel.read_workbook(p)
         for sh in wb.sheets:
             kind = classify(sh.rows)
             if kind == "unknown":
-                warnings.append(f"{p.name} 的 sheet「{sh.name}」认不出是哪张表，跳过")
                 continue
+            cands[kind].append((_sheet_score(sh.name, sh.rows), p, sh, sh.name))
 
-            if kind == "balance":
-                target = S.balance or stm.StatementSet(
-                    name="资产负债表", source=p.name, unit=unit)
-                S.balance = target
-            elif kind == "income":
-                target = S.income or stm.StatementSet(
-                    name="利润表", source=p.name, unit=unit)
-                S.income = target
-            else:
-                target = S.cash_flow or stm.StatementSet(
-                    name="现金流量表", source=p.name, unit=unit)
-                S.cash_flow = target
+    for kind, label in (("balance", "资产负债表"), ("income", "利润表"),
+                        ("cash_flow", "现金流量表")):
+        pool = cands[kind]
+        if not pool:
+            continue
+        pool.sort(key=lambda x: -x[0])
+        _, p, sh, best_name = pool[0]
+        target = stm.StatementSet(name=label, source=p.name, unit=unit)
+        setattr(S, kind, target)
 
-            if not S.period:
-                _, per = _meta(sh.rows)
-                if per:
-                    S.period = per
+        if len(pool) > 1:
+            others = "、".join(nm.strip() for _, _, _, nm in pool[1:6])
+            warnings.append(
+                f"{label}：这个工作簿里有 {len(pool)} 张同类表，选了「{best_name.strip()}」"
+                f"（分最高）；其余未用：{others}")
 
-            # 左右两栏各自成一个块，都灌进同一张表
-            for block in excel.split_blocks(sh.rows):
-                out, roles = excel.to_rows(block)
-                if not roles.ok:
-                    warnings.append(f"{p.name}／{sh.name}：读不出列名，跳过一块")
-                    continue
-                if roles.primary_name and roles.primary_name not in target.columns:
-                    target.columns.append(roles.primary_name)
-                if roles.other_name and roles.other_name not in target.columns:
-                    target.columns.append(roles.other_name)
-                _into(target, out)
+        if not S.period:
+            _, per = _meta(sh.rows)
+            if per:
+                S.period = per
+
+        for block in excel.split_blocks(sh.rows):
+            out, roles = excel.to_rows(block)
+            if not roles.ok:
+                warnings.append(f"{p.name}／{sh.name}：读不出列名，跳过一块")
+                continue
+            if roles.primary_name and roles.primary_name not in target.columns:
+                target.columns.append(roles.primary_name)
+            if roles.other_name and roles.other_name not in target.columns:
+                target.columns.append(roles.other_name)
+            _into(target, out)
 
     S.warnings = warnings
     return S
