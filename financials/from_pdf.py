@@ -251,7 +251,7 @@ def load_pdf_statements(path: str | Path, unit: str = "元") -> stm.Statements:
     p = Path(path)
     doc = ip.extract_pdf(p)
 
-    S = stm.Statements(gaap="CAS", scope="合并", audited="已审计",
+    S = stm.Statements(gaap="", scope="", audited="已审计",
                        period="", warnings=list(doc.warnings))
     if doc.ocr_pages:
         S.audited = "已审计（全文走 OCR，数字需人工复核）"
@@ -278,4 +278,17 @@ def load_pdf_statements(path: str | Path, unit: str = "元") -> stm.Statements:
         _fill(st, doc, pages[0], pages[-1])
         st.columns = [f"第{pages[0]}—{pages[-1]}页"]
         setattr(S, kind, st)
+
+    # 口径从**内容**推断，不写死（见 `meta.py`）。
+    # 写死 scope="合并" 的时候：苏州井利那份**非上市单体审计报告**被报成合并。
+    from . import meta
+
+    # **把三张表的标签并起来判一次** —— 逐表判会让第一张判出的
+    # 「未判定」挡住后面几张表的信息。
+    text = " ".join(r.label for st in (S.balance, S.income, S.cash_flow)
+                    if st for r in st.rows)
+    if not S.gaap:
+        S.gaap = meta.detect_gaap(text)
+    if not S.scope:
+        S.scope = meta.detect_scope(text)
     return S

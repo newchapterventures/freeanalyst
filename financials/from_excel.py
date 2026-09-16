@@ -166,8 +166,9 @@ def load_excel_statements(paths: list[str | Path],
         # 传单个路径是常见误用 —— 会变成逐字符遍历，报一个看不懂的后缀错误
         raise TypeError("paths 要传**列表**，比如 load_excel_statements([\"a.xls\"])")
 
-    S = stm.Statements(gaap="CAS", scope="单体", audited="未标注")
+    S = stm.Statements(gaap="", scope="", audited="未标注")
     warnings: list[str] = []
+    header_texts: list[str] = []
 
     # 先扫一遍，按类型收集候选
     cands: dict[str, list[tuple[int, Path, object, str]]] = {
@@ -212,6 +213,27 @@ def load_excel_statements(paths: list[str | Path],
             if roles.other_name and roles.other_name not in target.columns:
                 target.columns.append(roles.other_name)
             _into(target, out)
+
+        # **表头文字也要进判据** —— 「会工01表」这种表号在标题行里，
+        # 不在科目列里。只拿科目名判的话，新锐环境那种真正的 1993 年
+        # 格式会被判成普通 CAS（实测）。
+        header_texts.append(" ".join(
+            excel._cell_str(v) for r in sh.rows[:8] for v in r))
+
+    # 口径从**内容**推断，不写死（见 `meta.py`）。
+    # 写死的时候：美国公司的报表被报成 CAS，非上市单体审计报告被报成合并。
+    #
+    # **把三张表的标签并起来判一次**，不要一张一张判 —— 第一版逐表判，
+    # 利润表的特征词命不中就地返回「未判定」，资产负债表的信息被丢掉了。
+    from . import meta
+
+    text = " ".join(
+        [r.label for st in (S.balance, S.income, S.cash_flow) if st
+         for r in st.rows] + header_texts)
+    if not S.gaap:
+        S.gaap = meta.detect_gaap(text)
+    if not S.scope:
+        S.scope = meta.detect_scope(text)
 
     S.warnings = warnings
     return S
