@@ -57,6 +57,46 @@ _OTHER_HEADERS = ("年初数", "年初余额", "年初", "期初数", "期初余
 #: 判断「这一格是不是文本标签」——纯数字、日期、空都不算
 _NUMERICISH = re.compile(r"^[\s\d,.%()（）\-–—／/年月日:：]*$")
 
+#: **「期间」类表头** —— 年度 / 日期。
+#:
+#: 中文小企业报表的列头是「期末数 / 年初数」，但**美国公司的报表列头是时间本身**：
+#:
+#:     Annual Summary       列头  | 2015 | 2016 | 2017 |  | 6 Mos. June 30
+#:     Balance Sheets       列头  | 2015-12-31 | 2016-12-31 | 2017-12-31 | June 30, 2018
+#:
+#: 实测：只认中文列头时，这两份 Excel 的 `find_header_row` 返回 None，
+#: `to_rows` 直接报「读不出列名」——**整份材料一行都读不出来**。
+_MONTHS = ("jan", "feb", "mar", "apr", "may", "jun",
+           "jul", "aug", "sep", "oct", "nov", "dec")
+_YEAR = re.compile(r"(19|20)\d{2}")
+
+
+def period_key(text: str) -> tuple[int, int, int] | None:
+    """这个列头代表哪个期间。认不出就返回 None。
+
+    返回 `(年, 月, 日)` —— 用来排序，**最晚的那列才是「本期」**。
+    """
+    t = text.strip().lower()
+    if not t:
+        return None
+    # 2017 / 2017年
+    if re.fullmatch(r"(19|20)\d{2}\s*年?", t):
+        return (int(t[:4]), 12, 31)
+    # 2015-12-31 / 2015/12/31
+    m = re.search(r"((?:19|20)\d{2})[-/.](\d{1,2})[-/.](\d{1,2})", t)
+    if m:
+        return (int(m.group(1)), int(m.group(2)), int(m.group(3)))
+    # June 30, 2018 / Jun 2018 / 30 June 2018
+    if any(mo in t for mo in _MONTHS):
+        y = _YEAR.search(t)
+        if y:
+            mon = next((i + 1 for i, mo in enumerate(_MONTHS) if mo in t), 1)
+            d = re.search(r"\b(\d{1,2})\b", t)
+            return (int(y.group(0)), mon,
+                    int(d.group(1)) if d and int(d.group(1)) <= 31 else 1)
+        return None
+    return None
+
 
 def _is_label(text: str) -> bool:
     """这一格像不像科目名。
@@ -214,13 +254,17 @@ def two_sided_split(rows: list[list[object]]) -> int | None:
 
 def find_header_row(rows: list[list[object]]) -> int | None:
     """找表头行 —— 同时含「行次类」和「本期类」列名的那一行。"""
+    best_period = None
     for i, row in enumerate(rows):
         cells = [_cell_str(v).lower().replace(" ", "") for v in row]
         has_note = any(c in _NOTE_HEADERS or c == "行次" for c in cells)
         has_val = any(c in _CURRENT_HEADERS or c in _OTHER_HEADERS for c in cells)
         if has_note and has_val:
             return i
-    return None
+        n = sum(1 for v in row if period_key(_cell_str(v)))
+        if n >= 2 and (best_period is None or n > best_period[1]):
+            best_period = (i, n)
+    return best_period[0] if best_period else None
 
 
 def split_blocks(rows: list[list[object]]) -> list[list[list[object]]]:
@@ -254,6 +298,8 @@ class ColumnRoles:
     primary_name: str = ""
     other_name: str = ""
     header_row: int | None = None
+    #: 所有「期间」列的下标（西方式表头才有）—— 保留全部年度，不只两列
+    periods: list[int] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -269,6 +315,19 @@ def column_roles(rows: list[list[object]]) -> ColumnRoles:
     roles.header_row = idx
 
     header = [_cell_str(v).lower().replace(" ", "") for v in rows[idx]]
+    # 西方式表头：全是期间列，没有「期末数/年初数」这种角色词。
+    # **最晚的那列才是「本期」** —— 报表列通常从左到右由旧到新。
+    periods = [(k, c) for c, v in enumerate(rows[idx])
+               if (k := period_key(_cell_str(v))) is not None]
+    if len(periods) >= 2:
+        periods.sort(key=lambda x: x[0])
+        roles.primary = periods[-1][1]
+        roles.primary_name = _cell_str(rows[idx][roles.primary])
+        roles.other = periods[-2][1]
+        roles.other_name = _cell_str(rows[idx][roles.other])
+        roles.periods = [c for _, c in periods]
+        return roles
+
     for c, h in enumerate(header):
         if not h:
             continue
