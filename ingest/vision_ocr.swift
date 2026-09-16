@@ -101,7 +101,9 @@ for pageNo in first...last {
         // OCR 有时认出「行次」列、有时漏掉，于是同一个金额在不同行
         // 会落到不同栏 —— 在财务表上这是不可接受的静默错误。
         // 上层用 x 聚类成列，才对得上。
-        ["cells": row.sorted { $0.x < $1.x }.map { ["x": $0.x, "t": $0.text] }]
+        ["cells": row.sorted { $0.x < $1.x }.map {
+            ["x": $0.x, "y": $0.y, "t": $0.text]
+        }]
     }
     outPages.append(["page": pageNo, "rows": rows])
 }

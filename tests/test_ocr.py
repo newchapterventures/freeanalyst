@@ -65,6 +65,32 @@ class TestRepairSystematic(unittest.TestCase):
     def test_comma_read_as_space(self):
         self.assertEqual(repair_systematic("85 748 813 69"), "85,748,813.69")
 
+    def test_comma_then_space(self):
+        """**实测国城矿业 2022 审计报告**：千分位逗号后多插了一个空格。
+
+        40 个金额全栽在这一条上，包括 `资产总计` —— 整条勾稽判不了。
+        """
+        self.assertEqual(repair_systematic("7, 756,942, 510.86"), "7,756,942,510.86")
+        self.assertEqual(repair_systematic("770, 501, 087. 14"), "770,501,087.14")
+        self.assertEqual(repair_systematic("2, 562, 165,433.39"), "2,562,165,433.39")
+
+    def test_comma_then_space_refuses_two_cells(self):
+        """**去掉空格后必须仍符合三位分组，否则不修。**
+
+        `1,234 5,678` 本来是两格；去空格得 `1,2345,678`，分组不合法 → 拒绝。
+        """
+        self.assertIsNone(repair_systematic("1,234 5,678"))
+        self.assertIsNone(repair_systematic("1 2"))
+
+    def test_repair_must_actually_change_something(self):
+        """本来就合法的数不该被报成「修过」。
+
+        否则下游会以为这个数被动过手脚。实测这条被 `test_leaves_valid_numbers_alone`
+        抓到过。
+        """
+        self.assertIsNone(repair_systematic("6,840,705.08"))
+        self.assertEqual(parse_amount("6,840,705.08")[1], "ok")
+
     def test_refuses_ambiguous(self):
         """**末组位数不对就不能猜。**
 
