@@ -44,3 +44,6 @@ __pycache__/
 *.pyc
 .env
 .venv/
+
+# 保密：标的名称清理工具本身含禁名表，不进公开仓库
+tools/scrub_names.py

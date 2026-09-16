@@ -30,7 +30,7 @@ class TestGaap(unittest.TestCase):
     def test_modern_long_term_prepaid_not_legacy(self):
         """**假匹配回归** —— `长期待摊费用` 里含 `待摊费用`。
 
-        第一版的 1993 标志里放了 `待摊费用` / `预提费用`，结果**茅台**
+        第一版的 1993 标志里放了 `待摊费用` / `预提费用`，结果**某白酒公司**
         被判成 1993 年格式：现代资产负债表的「长期待摊费用」直接命中。
         子串匹配在这种地方必须极端小心。
         """
@@ -47,7 +47,7 @@ class TestGaap(unittest.TestCase):
     def test_us_gaap_from_income_statement_only(self):
         """只有利润表也要能判出来。
 
-        第一版的美国特征词全是资产负债表科目，导致 Cicero 的**利润表**
+        第一版的美国特征词全是资产负债表科目，导致 某美国公司 的**利润表**
         单独交进来时判成「未判定」。
         """
         text = ("Total Revenues Cost of Sales Gross Profit Operating Income "
