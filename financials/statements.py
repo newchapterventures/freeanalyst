@@ -77,6 +77,9 @@ class Statements:
     audited: str = ""
     period: str = ""
     warnings: list[str] = field(default_factory=list)
+    #: 附注里抽出来的折旧摊销（`financials/notes.py`）。
+    #: **估值要它** —— 没有 D&A 就算不出 EBITDA，倍数法整条路走不通。
+    da: object | None = None
 
     def checks(self) -> list[art.Articulation]:
         out: list[art.Articulation] = []

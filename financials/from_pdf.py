@@ -290,4 +290,13 @@ def load_pdf_statements(path: str | Path, unit: str = "元") -> stm.Statements:
         S.gaap = meta.detect_gaap(text)
     if not S.scope:
         S.scope = meta.detect_scope(text)
+
+    # **折旧摊销必须从附注取。** A 股主表现金流量表没有间接法调节段，
+    # 调节表只在「补充资料」里 —— 拿不到 D&A 就算不出 EBITDA。
+    from . import notes
+
+    S.da = notes.extract_da(doc)
+    if S.cash_flow is not None and S.da.total is not None:
+        S.cash_flow.fields.setdefault(cn.Field.DEPRECIATION_AMORTIZATION,
+                                      S.da.total)
     return S
