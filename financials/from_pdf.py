@@ -256,22 +256,26 @@ def load_pdf_statements(path: str | Path, unit: str = "元") -> stm.Statements:
     if doc.ocr_pages:
         S.audited = "已审计（全文走 OCR，数字需人工复核）"
 
-    # **先试目录**，读不到再退回标题法
-    from_toc = toc_ranges(doc)
-    if from_toc:
-        S.warnings.append(
-            "页范围取自**目录**（" +
-            "；".join(f"{k} 第{v[0]}—{v[1]}页" for k, v in from_toc.items()) + "）")
+    # **按内容组装**（`assemble.py`）：不看页码、不靠标题。
+    # 原来的「标题 + 往后取几页」走过三次补丁，12 家公司里 8 家失败 ——
+    # 标题在目录/正文/附注/交叉引用里反复出现，附注又有 200+ 页表格，
+    # 任何位置启发式都会被带偏。
+    from . import assemble
+
+    scores = assemble.page_scores(doc)
+    picked = {k: assemble.pick_pages(scores, k)
+              for k in ("balance", "income", "cash_flow")}
+    S.warnings.append(
+        "页范围按**内容**判定（" +
+        "；".join(f"{k} {v[0]}–{v[-1]}页" for k, v in picked.items() if v) + "）")
 
     for kind, label in (("balance", "资产负债表"), ("income", "利润表"),
                         ("cash_flow", "现金流量表")):
-        rng = from_toc.get(kind) if from_toc else None
-        if rng is None:
-            rng = statement_range(doc, kind)
-        if rng is None:
+        pages = picked[kind]
+        if not pages:
             continue
         st = stm.StatementSet(name=label, source=p.name, unit=unit)
-        _fill(st, doc, rng[0], rng[1])
-        st.columns = [f"第{rng[0]}—{rng[1]}页"]
+        _fill(st, doc, pages[0], pages[-1])
+        st.columns = [f"第{pages[0]}—{pages[-1]}页"]
         setattr(S, kind, st)
     return S
