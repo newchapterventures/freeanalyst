@@ -83,6 +83,51 @@ _MARKERS: dict[str, tuple[tuple[str, ...], ...]] = {
 }
 
 
+#: **必备明细行** —— 命中不足就把这一类的分归零。
+#:
+#: ## 为什么（实测踩到，四家上市年报全栽在这里）
+#:
+#: 加了「现金滚存」之后，茅台仍被判到第 10 页、安集科技到 33、江西铜业到 15。
+#: 看那几页才发现是**「主要会计数据 / 关键财务指标」概览表** ——
+#: 一张表里**混着三张表的行**：
+#:
+#:     营业收入 | 营业成本 | 销售费用 | 管理费用 | 财务费用 | 研发费用
+#:     经营活动产生的现金流量净额 | 投资活动产生的现金流量净额 | 筹资活动产生的现金流量净额
+#:
+#: 所以它**是**一张表（我加的行数门槛拦不住），三条净额行也一条不少，
+#: 词面上比真表还全。
+#:
+#: 区分点在**明细行**：真表现金流量表有 30–60 行全是现金流量科目的明细
+#: （销售商品收到的现金 / 支付给职工的现金 / 购建固定资产支付的现金…），
+#: **概览表这些一行都没有**。
+_REQUIRED: dict[str, tuple[str, tuple[str, ...], int]] = {
+    "cash_flow": (
+        "明细行",
+        ("销售商品、提供劳务收到的现金", "收到的税费返还",
+         "购买商品、接受劳务支付的现金", "支付给职工以及为职工支付的现金",
+         "支付的各项税费", "收回投资收到的现金", "取得投资收益收到的现金",
+         "购建固定资产", "取得借款收到的现金", "偿还债务支付的现金",
+         "分配股利、利润或偿付利息支付的现金", "收到的其他与经营活动有关的现金",
+         "Cash generated from operations", "Cash received from customers",
+         "Payments to suppliers", "Payments to employees"),
+        3,
+    ),
+    "balance": (
+        "明细行",
+        ("货币资金", "应收账款", "存货", "固定资产", "应付账款", "短期借款",
+         "预付款项", "其他应收款", "应付职工薪酬", "应交税费"),
+        3,
+    ),
+    "income": (
+        "明细行",
+        ("营业成本", "税金及附加", "销售费用", "管理费用", "研发费用",
+         "财务费用", "资产减值损失", "信用减值损失", "其他收益",
+         "Cost of Sales", "Gross Profit", "Operating Expenses"),
+        2,
+    ),
+}
+
+
 @dataclass
 class PageScore:
     number: int
@@ -96,14 +141,58 @@ class PageScore:
         return k if self.scores[k] > 0 else None
 
 
-def signature(text: str) -> dict[str, int]:
+def _page_rows(pg) -> list[list[str]]:
+    """这一页抽出来的表行（和 `from_pdf._fill` 用同一套抽取）。"""
+    rows: list[list[str]] = []
+    for t in pg.usable_tables():
+        rows.extend(t)
+    if not any(len(r) > 2 and str(r[2]).strip() for r in rows):
+        from . import textflow
+        flow = textflow.parse_textflow(pg.text, textflow.known_names())
+        if flow:
+            rows = flow
+    return rows
+
+
+def _row_count(pg) -> int:
+    """这一页有多少「科目名 + 数字」的行 —— 真表才有的东西。"""
+    n = 0
+    for r in _page_rows(pg):
+        if len(r) > 2 and str(r[2]).strip() and str(r[0]).strip():
+            n += 1
+    return n
+
+
+def signature(text: str, rows: int = 0, strict: bool = True) -> dict[str, int]:
     """这一页对每类报表的「证据分」。
 
     分 = 命中的**组数** × 100 + 命中的**科目数**。
 
-    组数优先：一页同时出现「营业收入」和「净利润」比出现十个
-    只有「净利润」的附注段落更有说服力。
+    ## ⚠️ 繁体要先转简体（实测踩到）
+
+    复星国际（00656.HK）的年报是繁体：`綜合損益表` / `總收入` / `人民幣千元`。
+    标志词表全是简体，于是一份 330 页的年报**三张表全判不出来**，整份归零。
+    这里统一走一遍繁转简再匹配 —— 和 `canonical.py` 用同一个转换。
+
+    ## ⚠️ 必须有表格行，光有词不算（实测踩到）
+
+    第一版只看词，结果**茅台被判到第 10 页、安集科技到 33、江西铜业到 15**
+    —— 那几页全是**管理层讨论与分析（MD&A）**。年报正文里专门有一段在
+    「讨论」现金流量表的三个数，所以三条净额行一条不少，词面上比真表还全。
+
+    **区分点不是词，是有没有「真表才有的明细行」**（见 `_REQUIRED`）。
     """
+    if text:
+        from . import canonical as cn
+        text = cn._to_simplified(text)
+    # 行数太少 → 不是正表，直接 0 分。
+    #
+    # ⚠️ **门槛要低。** 试过提到 5，结果紫金矿业（377 页）和复星国际（330 页）
+    # 的正表页也被判成 0 分 —— 那两份的表抽取本来就吃不干净，
+    # 行数少不等于不是正表。真正的过滤器是下面的 `_REQUIRED` 明细行。
+    if rows < 2:
+        return {k: 0 for k in _MARKERS}
+
     out: dict[str, int] = {}
     for kind, groups in _MARKERS.items():
         g_hit = 0
@@ -113,12 +202,60 @@ def signature(text: str) -> dict[str, int]:
             if hits:
                 g_hit += 1
                 n_hit += hits
-        out[kind] = g_hit * 100 + n_hit if g_hit >= 2 else 0
+        score = g_hit * 100 + n_hit if g_hit >= 2 else 0
+
+        # **必须有明细行**（见 `_REQUIRED`）
+        req = _REQUIRED.get(kind) if strict else None
+        if req is not None and score:
+            _need, keys, minimum = req
+            if sum(1 for k in keys if k in text) < minimum:
+                score = 0
+        out[kind] = score
     return out
 
 
-def page_scores(doc: ip.PdfDocument) -> list[PageScore]:
-    return [PageScore(number=pg.number, scores=signature(pg.text)) for pg in doc.pages]
+def page_scores(doc: ip.PdfDocument, strict: bool = True) -> list[PageScore]:
+    """每页对三类报表的证据分。
+
+    `strict=True` 时启用 `_REQUIRED` 明细行门槛；`False` 时只看标志词。
+    调用方应该**先试严格，全文档都判不出来再回落**（见 `pick_all`）。
+    """
+    return [PageScore(number=pg.number,
+                      scores=signature(pg.text, _row_count(pg), strict=strict))
+            for pg in doc.pages]
+
+
+def pick_all(doc: ip.PdfDocument) -> tuple[dict[str, list[int]], list[str]]:
+    """挑三张表的页范围。返回 `(结果, 说明)`。
+
+    ## 为什么要有「回落」（实测踩到）
+
+    `_REQUIRED` 明细行门槛在**文字层干净**的材料上很有效（洛阳钼业、江西铜业），
+    但在**文字层被打碎**的材料上完全失效：
+
+        茅台 第 64 页（真现金流量表）
+        销售商品、提供劳务收到的现 183,990,403,487.80 金客户存款和同业存放款项净…
+
+    数字**插在标签中间**，`销售商品、提供劳务收到的现金` 这个串根本不存在，
+    连 `支付给职工` 这种四字片段都拼不出来。门槛一卡，整张表就没了。
+
+    所以：**先试严格；某一类全文档都判不出来时，退回不设门槛，
+    并把回落这件事说明出来。** 弱信号也比没有强，但不能假装它是强信号。
+    """
+    out: dict[str, list[int]] = {}
+    notes: list[str] = []
+    strict = page_scores(doc, strict=True)
+    loose = None
+    for kind in ("balance", "income", "cash_flow"):
+        v = pick_pages(strict, kind)
+        if not v:
+            if loose is None:
+                loose = page_scores(doc, strict=False)
+            v = pick_pages(loose, kind)
+            if v:
+                notes.append(f"{kind}：明细行门槛全文档命中不足，已回落到只看标志词")
+        out[kind] = v
+    return out, notes
 
 
 def pick_pages(scores: list[PageScore], kind: str,
