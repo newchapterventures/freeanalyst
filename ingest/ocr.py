@@ -74,6 +74,21 @@ _PERIOD_GROUPED = re.compile(r"^(\d{1,3})((?:\.\d{3})+)(?:\.(\d{2}))?$")
 #:     85,748,813.69  →  85 748 813 69
 _SPACE_GROUPED = re.compile(r"^(\d{1,3})((?:\s\d{3})+)(?:\s(\d{2}))?$")
 
+#: 系统性 OCR 错误三：**千分位逗号后面多插了一个空格**。
+#:
+#:     7, 756,942, 510.86  →  7,756,942,510.86
+#:     770, 501, 087. 14   →  770,501,087.14
+#:     2, 562, 165,433.39  →  2,562,165,433.39
+#:
+#: 实测国城矿业 2022 审计报告（104 页扫描件）：40 个金额全栽在这一条上，
+#: 包括 `资产总计` —— 导致整条勾稽判不了。
+#:
+#: **安全前提**：去掉空格后必须完全符合严格的三位分组，否则不修。
+#: 这样 `1,234 5,678` 这种「本来是两格」的情况不会被误并
+#: （去空格得 `1,2345,678`，分组不合法）。
+#: 另要求原串含 `.` 或 `,` —— 否则 `1 2` 会被并成 `12`。
+_SPACED_AMOUNT = re.compile(r"^[（(]?-?[\d\s,.]+[)）]?$")
+
 
 def repair_systematic(text: str) -> str | None:
     """修**系统性** OCR 错误（逗号被认成句点或空格）。
@@ -95,6 +110,15 @@ def repair_systematic(text: str) -> str | None:
         head, groups, cents = m.groups()
         out = head + groups.replace(" ", ",")
         return f"{out}.{cents}" if cents else out
+
+    # 千分位逗号后多插了空格 —— 去掉所有空格再看分组合不合法
+    if ("," in s or "." in s) and _SPACED_AMOUNT.match(s):
+        t = re.sub(r"\s+", "", s)
+        # **必须真的改变了字符串才算修复。**
+        # 否则本来就合法的 `6,840,705.08` 也会被报成 "repaired"，
+        # 让下游以为这个数被动过。
+        if t != s and _STRICT_AMOUNT.match(t):
+            return t
     return None
 
 
@@ -249,12 +273,12 @@ def _run_swift(pdf: Path, first: int, last: int,
     except json.JSONDecodeError as e:
         raise RuntimeError(f"OCR 输出不是合法 JSON：{e}") from e
 
-    out: dict[int, list[list[tuple[float, str]]]] = {}
+    out: dict[int, list[list[tuple[float, float | None, str]]]] = {}
     for page in payload.get("pages", []):
         rows = []
         for r in page.get("rows", []):
-            rows.append([(float(c.get("x", 0.0)), str(c.get("t", "")))
-                         for c in r.get("cells", [])])
+            rows.append([(float(c.get("x", 0.0)), c.get("y"),
+                          str(c.get("t", ""))) for c in r.get("cells", [])])
         out[int(page["page"])] = rows
     return out
 
@@ -271,7 +295,10 @@ def _read_cache(cache: Path):
             continue
         try:
             raw = json.loads(f.read_text(encoding="utf-8"))
-            out[n] = [[(float(c[0]), str(c[1])) for c in row] for row in raw]
+            for row in raw:
+                if row and len(row[0]) < 3:
+                    return None      # 旧格式（没有 y 坐标）→ 重跑
+            out[n] = [[(float(c[0]), c[1], str(c[2])) for c in row] for row in raw]
         except (OSError, json.JSONDecodeError, TypeError, ValueError, IndexError):
             return None          # 缓存坏了就重跑，别装作没事
     return out or None
@@ -343,10 +370,77 @@ def count_repairs(rows: list[list[tuple[float, str]]]) -> int:
     """
     n = 0
     for row in rows:
-        for _, t in row:
-            if parse_amount(t)[1] == "repaired":
+        for c in row:
+            if parse_amount(c[-1])[1] == "repaired":
                 n += 1
     return n
+
+
+def _norm_cells(rows):
+    """把单元格统一成 `(x, y, 文本)`。y 允许缺失（旧格式/测试用）。"""
+    out = []
+    for row in rows:
+        cells = []
+        for c in row:
+            if len(c) >= 3:
+                cells.append((float(c[0]), c[1], str(c[2])))
+            else:
+                cells.append((float(c[0]), None, str(c[1])))
+        out.append(cells)
+    return out
+
+
+def _label_columns_x(rows, centers) -> list[int]:
+    """哪些**列**装的是科目名（而不是数值）。
+
+    判据：这一列里「不像数值」的单元格占比高。
+    """
+    hits: dict[int, list[int]] = {}
+    for row in rows:
+        for x, _, t in row:
+            if not t.strip():
+                continue
+            c = _column_of(x, centers)
+            h = hits.setdefault(c, [0, 0])
+            h[1] += 1
+            if not _is_value_like(t):
+                h[0] += 1
+    return sorted(c for c, (num, tot) in hits.items()
+                  if tot >= 3 and num / tot >= 0.5)
+
+
+def split_two_sided(rows):
+    """把「左右两栏」的表按列切开，返回若干块。
+
+    ## 为什么（实测：国城矿业 2022 审计报告）
+
+    这份 A 股审计报告的合并资产负债表是 **T 型布局**：
+    左半是资产（科目名 x≈0.10），右半是负债及所有者权益（科目名 x≈0.52），
+    **同一行里装着两边的科目和金额**：
+
+        行14: 应收账款 x=0.10 | 23,504,762.10 x=0.31 | 48,724,204.22 x=0.42
+             | 应付账款 x=0.52 | 699,789,636.47 x=0.72 | 328,606,257.50 x=0.83
+
+    不切开的话，两边会被混成一行，取值时拿到**另一边的金额** ——
+    资产科目的行显示负债科目的数字，**而且不报错**。
+
+    （Excel 那份小企业报表是同样的问题，见 `ingest/excel.py`。）
+    """
+    rows = _norm_cells(rows)
+    centers = cluster_columns([[(x, t) for x, _, t in r] for r in rows])
+    if not centers:
+        return [rows]
+
+    label_cols = _label_columns_x(rows, centers)
+    if len(label_cols) < 2:
+        return [rows]
+
+    cut_x = centers[label_cols[1]]
+    left, right = [], []
+    for row in rows:
+        left.append([c for c in row if c[0] < cut_x])
+        right.append([c for c in row if c[0] >= cut_x])
+    return [left, right]
 
 
 def _is_numeric_cell(text: str) -> bool:
@@ -385,21 +479,30 @@ def rows_to_table(rows: list[list[tuple[float, str]]]) -> list[list[str]]:
     按 x 聚类会把它们分成两列，只取最左列就取空了 —— 于是所有合计行
     都变成「〔此行没有标签〕」，资产总计、负债合计全丢，**勾稽直接判不了**。
 
-    正确做法：先找出最左边的数字列，它左边的所有列合并成标签列。
+    ## ⚠ 已知未解决：T 型（左右两栏）资产负债表
 
-    ## 格式不对的金额要可见
+    有些材料（实测国城矿业 2022 审计报告）的资产负债表是左右两栏，
+    一行里同时装着资产和负债。这时本函数会**把两边混进同一行**，
+    取值时拿到另一边的金额。
 
-    前缀 `？` 标出来，让它在下游以「可疑」的形式暴露，
-    而不是被静默当成一个数。
+    试过按 x 切开（见 `split_two_sided`），但在已跑通的三份材料上
+    造成了回归（苏州井利的现金勾稽从「平」变成「数据不足」），
+    所以**没有启用**。目前靠勾稽校验兜底 —— 混栏时勾稽会报
+    「数据不足」或「不平」，不会静默给出一个错数。
     """
-    centers = cluster_columns(rows)
+    return _one_block(_norm_cells(rows))
+
+
+def _one_block(rows: list[list[tuple[float, str]]]) -> list[list[str]]:
+    """处理**单栏**的一块。"""
+    centers = cluster_columns([[(x, t) for x, _, t in r] for r in rows])
     if not centers:
         return []
 
     grid: list[dict[int, list[str]]] = []
     for row in rows:
         cells: dict[int, list[str]] = {}
-        for x, text in row:
+        for x, _, text in row:
             t = text.strip()
             if not t:
                 continue
@@ -476,7 +579,8 @@ def rows_to_text(rows: list[list[tuple[float, str]]]) -> str:
     """把 OCR 的行拼回一行行的正文，供检索和排版表解析用。"""
     lines = []
     for row in rows:
-        parts = [t.strip() for _, t in sorted(row, key=lambda p: p[0]) if t and t.strip()]
+        parts = [c[-1].strip() for c in sorted(row, key=lambda p: p[0])
+                 if c[-1] and c[-1].strip()]
         if parts:
             lines.append("  ".join(parts))
     return "\n".join(lines)
