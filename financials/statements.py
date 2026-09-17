@@ -62,6 +62,9 @@ class StatementSet:
     #: 所以列的角色从表头读、主数值列永远放在 `rows[i][2]`，
     #: 同时把原文列名留在这里，让报告能说清「这个数取自哪一列」。
     columns: list[str] = field(default_factory=list)
+    #: **同一个字段出现多个不同取值**时的记录（合并 / 母公司口径混在一起等）。
+    #: 空表示没有冲突。非空时报告必须显示 —— 这类错不会让勾稽不平。
+    conflicts: list[str] = field(default_factory=list)
 
 
 @dataclass

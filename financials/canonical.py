@@ -589,6 +589,75 @@ _PREFIXES: tuple[tuple[str, Field], ...] = (
     ("note payable", Field.LONG_TERM_DEBT),
 )
 
+#: **每个字段属于哪张表** —— 用来挡住"串表"。
+#:
+#: ## 为什么必须挡（实测踩到，差 750 亿）
+#:
+#: 某白酒公司年报第 61 页同时装着两样东西：**母公司资产负债表的尾巴**
+#: （`所有者权益(或股东权益)合计 178,999,246,453.61`）和**合并利润表的开头**。
+#:
+#: 而利润表的页范围是 61–64 —— `_fill` 把第 61 页的行全吃了，于是
+#: **资产负债表的科目混进了利润表**，报出一个 1790 亿的「所有者权益」
+#: （真值 2540 亿）。**勾稽不会不平**，因为这个字段根本不参与勾稽。
+#:
+#: 所以：填某张表时，只接受属于那张表的字段。**被挡掉的要报出来**，
+#: 不能默默丢 —— 那可能说明页范围本身就划错了。
+#:
+#: `ANY` 的字段是确实会跨表出现的：现金流量表的间接法调节段里有「净利润」，
+#: 附注里有「折旧摊销」，等等。
+ANY = "any"
+
+STATEMENT_OF: dict[str, str] = {}
+
+
+def _mark(kind: str, *names: str) -> None:
+    for n in names:
+        STATEMENT_OF[n] = kind
+
+
+_mark("balance",
+      "TOTAL_ASSETS", "TOTAL_CURRENT_ASSETS", "TOTAL_NONCURRENT_ASSETS",
+      "SHORT_TERM_INVESTMENTS", "ACCOUNTS_RECEIVABLE", "NOTES_RECEIVABLE",
+      "PREPAID_EXPENSES", "INVENTORY", "OTHER_CURRENT_ASSETS",
+      "PPE", "PPE_GROSS", "ACCUM_DEPRECIATION", "INTANGIBLES", "GOODWILL",
+      "OTHER_NONCURRENT_ASSETS", "TOTAL_LIABILITIES", "TOTAL_CURRENT_LIABILITIES",
+      "TOTAL_NONCURRENT_LIABILITIES", "ACCOUNTS_PAYABLE", "NOTES_PAYABLE",
+      "TAXES_PAYABLE", "EMPLOYEE_PAYABLE", "DIVIDENDS_PAYABLE",
+      "ACCRUED_LIABILITIES", "OTHER_CURRENT_LIABILITIES", "SHORT_TERM_DEBT",
+      "LONG_TERM_DEBT", "DEFERRED_REVENUE", "OTHER_NONCURRENT_LIABILITIES",
+      "CAPITAL_STOCK", "CAPITAL_RESERVE", "SURPLUS_RESERVE",
+      "GENERAL_RISK_RESERVE", "RETAINED_EARNINGS", "TREASURY_STOCK",
+      "MINORITY_INTEREST", "EQUITY_PARENT", "EQUITY",
+      "TOTAL_EQUITY_AND_LIABILITIES", "NET_ASSETS",
+      "ASSETS_LESS_CURRENT_LIABILITIES", "NET_CURRENT_ASSETS",
+      # ⚠️ CASH 是资产负债表科目，但现金流量表也有「现金及现金等价物」概念。
+      # 这里按**主要归属**放资产负债表 —— 现金流量表的期初/期末用
+      # CASH_BEGIN / CASH_END 单独表示。
+      "CASH")
+
+_mark("income",
+      "REVENUE", "COST_OF_REVENUE", "GROSS_PROFIT", "TAX_SURCHARGE",
+      "SELLING_EXPENSE", "ADMIN_EXPENSE", "SGNA", "RND", "OPERATING_EXPENSES",
+      "OPERATING_INCOME", "NONOPERATING_INCOME", "NONOPERATING_EXPENSE",
+      "INVESTMENT_INCOME", "OTHER_INCOME", "PRETAX_INCOME", "INCOME_TAX",
+      "ID_DA", "ID_STOCK_COMP")
+
+_mark("cash_flow",
+      "CFO", "CFI", "CFF", "CAPEX", "CASH_BEGIN", "CASH_END",
+      "NET_CASH_CHANGE", "FX_EFFECT",
+      # 间接法调节段里的营运资本变动
+      "ID_WORKING_CAPITAL")
+
+#: 确实会跨表出现的 —— 不挡
+_mark(ANY, "SECTION", "OCI", "NET_INCOME", "DEPRECIATION_AMORTIZATION",
+      "INTEREST_INCOME", "INTEREST_EXPENSE")
+
+
+def field_statement(f) -> str:
+    """这个字段属于哪张表。认不出返回 `ANY`（不挡）。"""
+    return STATEMENT_OF.get(getattr(f, "name", str(f)), ANY)
+
+
 #: 这些标签在资产负债表和现金流量表里含义不同，要按行名区分。
 #:
 #: `us-gaap:CashAndCashEquivalentsAtCarryingValue` 在资产负债表里是**期末余额**，
