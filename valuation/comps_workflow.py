@@ -1,0 +1,271 @@
+"""可比公司选取 —— **流程层**（`comps.py` 只做机械计算）。
+
+## 用户的原话（2026-09-17）
+
+> 可比公司倍数，需要网络搜索的，需要根据被分析公司的行业进行搜索，
+> 需要**建议用户**该公司应该对标哪些行业，然后从**地域、公司规模、
+> 融资轮次、商业模式**等等选取对标公司，同时对标的**相应指标也需要跟用户
+> 进行讨论确定**。对标**至少 3 家**。**基准日还是要跟分析公司响应时间对应**。
+
+## 这个模块管什么
+
+    comps.py         给一家公司，算它的市值 / EV / 倍数      （机械）
+    comps_workflow.py 决定「该拿哪几家公司来比、比哪些指标」  （判断）
+
+后者是**判断**，所以每一步都要用户拍板，程序只负责**把选项和依据摆出来**。
+
+## 四条纪律
+
+**一、查询词里绝不能带标的名称。**
+搜索引擎是公网。把「XX 公司 可比公司」发出去，等于把 deal 名单公开。
+所以查询只用**行业 + 结构化条件**，并且在发出去之前**断言标的名称不在里面**。
+项目里已有 `root/privacy-blocklist.txt` 禁名表 。
+
+**二、基准日必须和被分析公司的报表期间对齐。**
+拿 2026 年的可比公司倍数去比 2022 年的标的，是前视偏差 ——
+**用了当时还不存在的信息**。这条和 `comps.py` 里「筛选只能用基准日前已披露的财报」
+是同一条纪律的两面。
+
+**三、至少 3 家，不够就明说不够。**
+2 家算出来的「中位数」没有意义。样本不足时**拒绝给区间**，
+而不是拿 2 家凑一个数出来。
+
+**四、指标要用户确认，不代填。**
+用 EV/EBITDA 还是 EV/收入、要不要扣掉净债务 —— 这些是估值判断。
+程序列出候选指标和各自的适用条件，由用户选。
+"""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass, field
+
+#: 少于这个数就不给区间
+MIN_COMPS = 3
+
+#: 可以用来对标的主要指标 —— 每一项都带「什么时候适用 / 什么时候不适用」
+METRIC_CHOICES: tuple[dict[str, str], ...] = (
+    {"name": "EV/EBITDA",
+     "use": "有稳定正 EBITDA、资本结构差异大（要剔除杠杆影响）",
+     "avoid": "重资产折旧差异极大、或 EBITDA 为负"},
+    {"name": "EV/EBIT",
+     "use": "折旧政策差异大、或需要反映资本开支强度",
+     "avoid": "EBIT 为负"},
+    {"name": "EV/Revenue",
+     "use": "尚未盈利 / SaaS 等以收入为锚的商业模式",
+     "avoid": "毛利率差异大 —— 收入倍数对毛利率极其敏感"},
+    {"name": "P/E",
+     "use": "盈利稳定、杠杆水平接近",
+     "avoid": "亏损、或一次性损益大"},
+    {"name": "P/B",
+     "use": "金融业、或资产是主要价值来源",
+     "avoid": "轻资产、无形资产不入账（品牌、技术）"},
+    {"name": "EV/ARR",
+     "use": "订阅制 / SaaS",
+     "avoid": "非经常性收入占比高"},
+)
+
+
+@dataclass
+class ScreeningCriteria:
+    """筛选条件。**每一项都要跟用户确认，程序只给建议值。**"""
+
+    industries: list[str] = field(default_factory=list)
+    #: 地域 —— 影响倍数系统性差异（新兴市场折价）
+    geography: str = ""
+    #: 用什么衡量规模
+    size_metric: str = "营业收入"
+    size_min: float | None = None
+    size_max: float | None = None
+    #: 融资轮次（一级市场 / 未上市公司才用）
+    funding_stage: str = ""
+    #: 商业模式 —— 同一行业里 to B / to C 的倍数能差一倍
+    business_model: str = ""
+    #: 是否只取上市公司（上市公司才有连续公开报价）
+    listed_only: bool = True
+
+    def render(self) -> str:
+        parts = [f"行业：{'、'.join(self.industries) or '**未定**'}"]
+        if self.geography:
+            parts.append(f"地域：{self.geography}")
+        if self.size_min is not None or self.size_max is not None:
+            lo = f"{self.size_min:,.0f}" if self.size_min is not None else "—"
+            hi = f"{self.size_max:,.0f}" if self.size_max is not None else "—"
+            parts.append(f"{self.size_metric}：{lo} – {hi}")
+        if self.funding_stage:
+            parts.append(f"轮次：{self.funding_stage}")
+        if self.business_model:
+            parts.append(f"商业模式：{self.business_model}")
+        if self.listed_only:
+            parts.append("只取上市公司")
+        return "  · " + "\n  · ".join(parts)
+
+
+@dataclass
+class Candidate:
+    """一家候选可比公司。**用户逐家确认。**"""
+
+    name: str
+    industry: str = ""
+    geography: str = ""
+    size: float | None = None
+    funding_stage: str = ""
+    business_model: str = ""
+    #: 为什么算可比 —— 一句话，**不写清楚就不该进候选**
+    why: str = ""
+    source: str = ""
+    #: None = 待用户定；True / False = 用户已表态
+    accepted: bool | None = None
+    #: 用户否掉的原因 / 需要补的数据
+    note: str = ""
+
+
+@dataclass
+class CompsSelection:
+    target_industry: str = ""
+    criteria: ScreeningCriteria = field(default_factory=ScreeningCriteria)
+    candidates: list[Candidate] = field(default_factory=list)
+    #: 拿去算倍数的指标（用户确认过的）
+    metrics: list[str] = field(default_factory=list)
+    #: 基准日 —— **必须和被分析公司的报表期间对齐**
+    as_of: str = ""
+    target_period: str = ""
+    notes: list[str] = field(default_factory=list)
+
+    def accepted(self) -> list[Candidate]:
+        return [c for c in self.candidates if c.accepted]
+
+    def ready(self) -> bool:
+        return len(self.accepted()) >= MIN_COMPS and bool(self.metrics) and bool(self.as_of)
+
+    def check(self) -> list[str]:
+        """还差什么才能算。**每一条都是「不能开始」的理由，不是提醒。**"""
+        out = []
+        if not self.criteria.industries:
+            out.append("**行业还没定** —— 要先跟用户确认对标哪些行业")
+        if not self.accepted():
+            out.append("**一家可比公司都还没确认**")
+        elif len(self.accepted()) < MIN_COMPS:
+            out.append(
+                f"**只确认了 {len(self.accepted())} 家，不够 {MIN_COMPS} 家。**"
+                f"样本不足时算出来的「中位数」没有意义 —— "
+                f"这种情况要拒绝给区间，不要拿两三家凑一个数。")
+        if not self.metrics:
+            out.append("**对标指标还没定** —— EV/EBITDA 还是 EV/收入，是估值判断，"
+                       "要用户拍板")
+        if not self.as_of:
+            out.append("**基准日没给** —— 可比公司的倍数取哪一天，必须显式指定")
+        elif self.target_period and self.as_of < self.target_period:
+            out.append(
+                f"⚠ **基准日（{self.as_of}）早于标的报表期间（{self.target_period}）。**"
+                f"这样算出来的倍数比标的还旧，比出来的数会系统性偏低。")
+        return out
+
+
+# ---------------------------------------------------------------------------
+# 查询构造 —— 这一节是保密的落点
+# ---------------------------------------------------------------------------
+
+#: 查询里**只允许**出现这类词
+_SAFE_TOKEN = re.compile(r"^[\w\u4e00-\u9fff\s\-&/]+$")
+
+
+def build_queries(sel: CompsSelection, blocked_names: list[str]) -> list[str]:
+    """把筛选条件翻成搜索查询。
+
+    ## 这是整个流程最需要小心的一步
+
+    搜索是在**公网**上跑的。把「XX 公司 可比公司」发出去，
+    等于把 deal 名单公开 —— 项目里已有「标的公司名是机密」这条纪律。
+
+    所以：
+    1. 查询**只用行业 + 结构化条件**（地域、规模、上市地）
+    2. 发出去之前**逐条断言**禁名表里的名字没混进去
+    3. 断言失败就**抛异常**，不是静默过滤 —— 静默过滤会让人以为查过了
+
+    ## 为什么是抛异常而不是自动删掉
+
+    如果标的名称不小心进了查询词，那说明**上游把机密内容传下来了**。
+    自动删掉会让这个 bug 沉下去，下次换个字段又漏一遍。
+    """
+    qs: list[str] = []
+    for ind in sel.criteria.industries:
+        bits = [ind]
+        if sel.criteria.geography:
+            bits.append(sel.criteria.geography)
+        if sel.criteria.listed_only:
+            bits.append("上市公司")
+        bits.append("可比公司")
+        qs.append(" ".join(bits))
+
+    for q in qs:
+        _assert_no_blocked(q, blocked_names)
+    return qs
+
+
+def _assert_no_blocked(query: str, blocked_names: list[str]) -> None:
+    low = query.lower()
+    for name in blocked_names:
+        n = (name or "").strip()
+        if len(n) >= 2 and n.lower() in low:
+            raise ValueError(
+                f"**查询词里出现了禁名表里的名字「{n}」，已中止。**\n"
+                f"  查询：{query}\n"
+                f"  搜索是在公网上跑的，发出去等于公开 deal 名单。\n"
+                f"  这通常说明上游把标的名称传进了筛选条件 —— "
+                f"**要修的是上游，不是在这里偷偷把词删掉。**")
+
+
+def load_blocklist(path) -> list[str]:
+    """读禁名表。没有就返回空表 —— 但调用方要知道**空表等于没保护**。"""
+    from pathlib import Path
+
+    p = Path(path)
+    if not p.exists():
+        return []
+    return [l.strip() for l in p.read_text(encoding="utf-8").splitlines()
+            if l.strip() and not l.startswith("#")]
+
+
+# ---------------------------------------------------------------------------
+# 渲染：给用户看的确认清单
+# ---------------------------------------------------------------------------
+
+def render_worklist(sel: CompsSelection) -> str:
+    """把「还差什么」摆给用户 —— 这是互动环节的输入。"""
+    out = [f"  可比公司选取　基准日 {sel.as_of or '**未定**'}"
+           f"　标的期间 {sel.target_period or '**未定**'}"]
+    out.append(sel.criteria.render())
+    out.append("")
+    if sel.candidates:
+        out.append("  候选（待确认）：")
+        for c in sel.candidates:
+            mark = {True: "✓", False: "✗", None: "·"}[c.accepted]
+            out.append(f"    {mark} {c.name:22} {c.industry:12}"
+                       f"{c.geography:8}{c.why[:40]}")
+    else:
+        out.append("  候选：**还没有** —— 要先用行业 + 条件去搜")
+    out.append("")
+    out.append(f"  已确认 {len(sel.accepted())} 家 / 至少 {MIN_COMPS} 家")
+    if sel.metrics:
+        out.append(f"  指标：{'、'.join(sel.metrics)}")
+    else:
+        out.append("  指标：**未定**")
+    gaps = sel.check()
+    if gaps:
+        out.append("")
+        out.append("  **还不能开始算，缺：**")
+        for g in gaps:
+            out.append(f"    · {g}")
+    for n in sel.notes:
+        out.append(f"  · {n}")
+    return "\n".join(out)
+
+
+def metric_menu() -> str:
+    """指标候选清单 —— 给用户挑，附各自的适用/不适用条件。"""
+    out = ["  备选指标（要用户确认，程序不代填）："]
+    for m in METRIC_CHOICES:
+        out.append(f"    {m['name']:12} 适用：{m['use']}")
+        out.append(f"    {'':12} 不适合：{m['avoid']}")
+    return "\n".join(out)
