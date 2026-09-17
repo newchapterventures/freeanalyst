@@ -25,6 +25,10 @@ EDGAR 有财报，没有市值。所以：
 要做市值倍数，必须再配一个价格源。**这一层留了位置，但没有假装它能用。**
 """
 
-from . import prices, sec_edgar
+from . import comps_source, local_materials, prices, sec_edgar
 
-__all__ = ["prices", "sec_edgar"]
+__all__ = ["comps_source", "local_materials", "prices", "sec_edgar"]
+
+#: 默认注册进来的可比公司源。
+#: **注册 ≠ 可用** —— 每个源自己回答 `available()`，不能用的时候说清缺什么。
+comps_source.register(local_materials.LocalMaterialsSource())
