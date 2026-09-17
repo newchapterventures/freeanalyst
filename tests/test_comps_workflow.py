@@ -136,6 +136,61 @@ class TestMetricsNotFilledIn(unittest.TestCase):
         self.assertIn("EV/ARR", m)
 
 
+class TestIndustryProposal(unittest.TestCase):
+    '''行业建议 —— **提建议，不替用户定**，而且必须带依据。'''
+
+    #: 照抄实测材料的业务描述
+    MARKETING = (
+        "公司从事的主要业务：某公司是一家在大数据和社交网络时代为企业智慧经营"
+        "全面赋能的营销科技公司。业务板块包括：全案推广服务（数字营销、公共关系、"
+        "活动管理等）、全案广告代理（数字广告投放、中国企业出海广告投放代理等）。"
+        "服务地域基本覆盖全球主要市场。核心业务包括程序化媒体购买、基于 Meta、"
+        "Google、TikTok for Business 的一站式出海营销。"
+    )
+
+    def test_proposes_marketing_industries(self):
+        props = cw.propose_industries(self.MARKETING)
+        names = [p.industry for p in props]
+        self.assertIn("营销服务 / 广告代理", names)
+        self.assertIn("出海营销", names)
+
+    def test_every_proposal_has_evidence(self):
+        '''**每条建议都要回带依据** —— 用户要能看出它是不是在胡猜。
+
+        对哪个行业直接决定倍数取值，猜错了后面全错。
+        '''
+        for p in cw.propose_industries(self.MARKETING):
+            self.assertTrue(p.evidence, p.industry)
+            self.assertTrue(p.why, p.industry)
+            self.assertTrue(p.caveat, p.industry)
+
+    def test_caveat_warns_about_the_real_trap(self):
+        '''**光说「对标营销服务」不够。**
+
+        还得说「媒介代理过手金额大、毛利极薄，要区分收入口径和净收入口径」——
+        不然用户拿着一堆看起来可比的倍数，比出来的东西是错的。
+        '''
+        props = {p.industry: p for p in cw.propose_industries(self.MARKETING)}
+        self.assertIn("净收入口径", props["营销服务 / 广告代理"].caveat)
+
+    def test_capacity_weighted_by_hits(self):
+        '''命中的关键词越多越靠前。'''
+        props = cw.propose_industries(self.MARKETING)
+        hits = [len(p.evidence) for p in props]
+        self.assertEqual(hits, sorted(hits, reverse=True))
+
+    def test_empty_text_proposes_nothing(self):
+        self.assertEqual(cw.propose_industries(""), [])
+
+    def test_render_says_it_cannot_propose(self):
+        self.assertIn("提不出行业建议", cw.render_industry_proposal([]))
+
+    def test_render_lists_evidence(self):
+        t = cw.render_industry_proposal(cw.propose_industries(self.MARKETING))
+        self.assertIn("依据", t)
+        self.assertIn("请确认或修改", t)
+
+
 class TestRender(unittest.TestCase):
     def test_worklist_lists_gaps(self):
         s = cw.CompsSelection()
