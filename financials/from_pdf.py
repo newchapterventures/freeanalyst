@@ -207,13 +207,27 @@ def _known_names() -> list[str]:
     return [n for m in cn.MAPPINGS for n in m.names]
 
 
-def _fill(st: stm.StatementSet, doc: ip.PdfDocument, lo: int, hi: int) -> None:
+def _fill(st: stm.StatementSet, doc: ip.PdfDocument, lo: int, hi: int,
+          kind: str = "") -> None:
+    """把 `lo`–`hi` 页里属于这张表的行填进来。
+
+    `kind` 是 `balance` / `income` / `cash_flow` —— 用来**挡住串表**。
+    留空则不挡（老行为）。
+    """
     from . import textflow
 
     names = _known_names()
+    #: 每个字段见过的所有取值 —— `(值, 页码, 该页是不是合并报表)`
+    seen: dict[object, list[tuple[float, int, bool]]] = {}
+    #: 被挡掉的（别的表的）科目，按字段计数 —— 只报数，不刷屏
+    foreign: dict[str, int] = {}
+
     for pg in doc.pages:
         if not (lo <= pg.number <= hi):
             continue
+
+        # 这一页像不像**合并**报表 —— 母公司表不会有「归属于母公司」「少数股东权益」
+        consolidated = ("归属于母公司" in pg.text or "少数股东权益" in pg.text)
 
         rows_out: list[list[str]] = []
         for t in pg.usable_tables():
@@ -236,14 +250,85 @@ def _fill(st: stm.StatementSet, doc: ip.PdfDocument, lo: int, hi: int) -> None:
             if not lab:
                 continue
             f, _ = cn.identify(lab)
+            # **挡住串表。** 页范围可能扫到相邻那张表的尾巴（实测第 61 页
+            # 混进母公司资产负债表的所有者权益，差 750 亿）。
+            if f is not None and kind:
+                owner = cn.field_statement(f)
+                if owner not in (kind, cn.ANY):
+                    foreign[f"{owner}:{getattr(f, 'value', f)}"] = (
+                        foreign.get(f"{owner}:{getattr(f, 'value', f)}", 0) + 1)
+                    continue
             raw = str(row[2] or "").strip()
             # **OCR 标出来的可疑金额一律不用。**
             # `？7, 756,942, 510.86` 若交给 `_to_number` 会被剥成
             # 775694251086 —— 差得离谱且不报错。
             v = None if raw.startswith("？") else _to_number(raw)
             st.rows.append(stm.StatementRow(label=lab, value=v, field=f, via="pdf"))
-            if f and f not in st.fields and v is not None:
-                st.fields[f] = v
+            if f and v is not None:
+                seen.setdefault(f, []).append((v, pg.number, consolidated))
+                if f not in st.fields:
+                    st.fields[f] = v
+
+    if foreign:
+        items = "、".join(f"{k.split(':')[1]}×{n}" for k, n in
+                          sorted(foreign.items(), key=lambda x: -x[1])[:6])
+        st.conflicts.append(
+            f"页范围里有 {sum(foreign.values())} 行属于**别的表**，已挡掉（{items}）。"
+            f"—— 说明页范围划宽了，扫到了相邻表的尾巴。")
+
+    _resolve_conflicts(st, seen)
+
+
+def _resolve_conflicts(st: stm.StatementSet,
+                       seen: dict[object, list[tuple[float, int, bool]]]) -> None:
+    """同一个字段出现多个不同取值时的裁决。
+
+    ## 为什么必须做（实测踩到，金额差 750 亿）
+
+    某白酒公司年报里，`所有者权益(或股东权益)合计` 出现两次：
+
+        第 59页  合并资产负债表        253,959,253,909.07
+        第 61页  母公司资产负债表的尾部   178,999,246,453.61
+
+    而利润表的页范围是 61–64 —— **第 61 页还残留着母公司资产负债表的尾巴**，
+    于是 `_fill` 把它当利润表的数据吃了进去。
+
+    原来的代码是 `if f not in st.fields` —— **第一个值赢，静默**。
+    出来一个 1790 亿的「所有者权益」，而真值是 2540 亿。
+    **勾稽不会不平**，因为这个字段根本不参与勾稽。
+
+    ## 裁决规则：**取首次出现，并把另一个值报出来**
+
+    试过更聪明的规则（按页判断是不是合并报表，优先取合并那个）—— **不行**。
+    母公司利润表里也有「归属于母公司所有者的净利润」，一样会被标成合并页，
+    于是一个「合并」标志在两类页上都成立，**区分度为零**。
+    实测把 `营业收入` 从 172,054,171,890.91（合并）改判成了
+    98,318,530,088.73（母公司），**方向正好反了**。
+
+    可靠的是文档结构本身：
+
+        **中文年报里，合并表永远排在母公司表前面。**
+
+    所以一个连续页范围里，同一个科目**第一次出现**就是合并口径。
+
+    ⚠️ 这条成立的前提是**串表已经被 `field_statement` 挡住** ——
+    750 亿那个 bug 正是「没挡住的外表字段成了第一个」。
+
+    所以另一个值**不丢**：报出来，让人能核对。
+    """
+    for f, pairs in seen.items():
+        vals = {round(v, 2) for v, _, _ in pairs}
+        if len(vals) <= 1:
+            continue
+
+        chosen = pairs[0]
+        st.fields[f] = chosen[0]
+        others = "；".join(f"{b[0]:,.2f}（第 {b[1]} 页）"
+                          for b in pairs[1:4] if round(b[0], 2) != round(chosen[0], 2))
+        st.conflicts.append(
+            f"「{getattr(f, 'value', str(f))}」出现 {len(vals)} 个取值，"
+            f"取**首次出现**的 {chosen[0]:,.2f}（第 {chosen[1]} 页）"
+            f"—— 年报里合并表排在母公司表前面。其余：{others}")
 
 
 def load_pdf_statements(path: str | Path, unit: str = "元") -> stm.Statements:
@@ -274,9 +359,12 @@ def load_pdf_statements(path: str | Path, unit: str = "元") -> stm.Statements:
         if not pages:
             continue
         st = stm.StatementSet(name=label, source=p.name, unit=unit)
-        _fill(st, doc, pages[0], pages[-1])
+        _fill(st, doc, pages[0], pages[-1], kind=kind)
         st.columns = [f"第{pages[0]}—{pages[-1]}页"]
         setattr(S, kind, st)
+        # **字段冲突要浮到顶层。** 这类错不会让勾稽不平，只在报告里显示才有用。
+        for c in st.conflicts:
+            S.warnings.append(f"[{label}] {c}")
 
     # 口径从**内容**推断，不写死（见 `meta.py`）。
     # 写死 scope="合并" 的时候：某非上市公司那份**非上市单体审计报告**被报成合并。
