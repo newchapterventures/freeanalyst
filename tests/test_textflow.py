@@ -15,6 +15,9 @@ from financials.textflow import parse_textflow  # noqa: E402
 NAMES = ["流动资产合计", "货币资金", "应收账款", "存货", "长期股权投资",
          "资产总计", "营业收入", "营业成本", "净利润", "固定资产"]
 
+#: 利润表下半段的科目名 —— 带括号说明的那些（见 `TestLabelPunctuation`）
+NAMES_IS = NAMES + ["营业利润", "利润总额", "所得税费用"]
+
 
 class TestAmountCount(unittest.TestCase):
     def test_two_periods(self):
@@ -80,6 +83,67 @@ class TestLabelStripping(unittest.TestCase):
         """科目名认不出来就丢掉 —— **不许造一个假科目**。"""
         rows = parse_textflow("这根本不是科目 123.45", NAMES)
         self.assertEqual(rows, [])
+
+
+class TestLabelPunctuation(unittest.TestCase):
+    """**科目名里的括号说明不能把标签切断。**
+
+    实测原始文本（某 A 股年报第 75 页，`“` `”` 是弯引号 U+201C/U+201D）：
+
+        三、营业利润(亏损以“-”号填列) 284,992,517.86 -286,489,949.67
+        四、利润总额(亏损总额以“-”号填 286,137,806.23 -276,696,267.60 列)
+
+    引号、连字符、冒号原先都不在 `_PIECE` 的字符类里 —— 匹配在「亏损以」
+    后面断掉，然后从「号填列)」重新开始，**真科目名丢了**。
+    `strip_names` 认不出「号填列」这种残渣，整行被**静默丢掉**。
+
+    代价：`营业利润` 和 `利润总额` 两行全丢 → EBITDA 和实际税率都算不出来。
+    另一份材料的完整标签 `三、营业利润(亏损以“-”号填列)` 反而能过 ——
+    所以这个 bug 只在**换行把标签切断时**才发作，非常隐蔽。
+    """
+
+    QUOTED = [
+        "三、营业利润(亏损以“-”号填列) 284,992,517.86 -286,489,949.67",
+        # ↓ 标签被换行切断，结尾的「列)」跑到了数字后面
+        "四、利润总额(亏损总额以“-”号填 286,137,806.23 -276,696,267.60 列)",
+        "减：所得税费用 63,303,783.82 20,245,213.77",
+        "其中：归属于母公司股东的净利润 224,665,777.93 -290,675,602.27",
+    ]
+
+    def test_operating_income_survives_quotes(self):
+        rows = parse_textflow(self.QUOTED[0], NAMES_IS)
+        self.assertIn("营业利润", [r[0] for r in rows])
+        got = next(r for r in rows if r[0] == "营业利润")
+        self.assertEqual(got[2], "284,992,517.86")
+
+    def test_pretax_income_survives_truncated_label(self):
+        """标签被切断也要认出来 —— 靠 `strip_names` 从右往左剥。"""
+        rows = parse_textflow(self.QUOTED[1], NAMES_IS)
+        labels = [r[0] for r in rows]
+        self.assertIn("利润总额", labels)
+        got = next(r for r in rows if r[0] == "利润总额")
+        self.assertEqual(got[2], "286,137,806.23")
+
+    def test_fullwidth_colon(self):
+        rows = parse_textflow(self.QUOTED[2], NAMES_IS)
+        got = next((r for r in rows if r[0] == "所得税费用"), None)
+        self.assertIsNotNone(got, "全角冒号不能切断标签")
+        self.assertEqual(got[2], "63,303,783.82")
+
+    def test_negative_without_space(self):
+        """**标签后面直接跟负数不能被吃掉负号。**
+
+        字符类里放进连字符以后，`营业利润 -286` 有可能被贪婪匹配成
+        `营业利润-` + `286`。`strip_names` 从右往左剥能兜住，这里锁住它。
+        """
+        rows = parse_textflow("营业利润 -286,489,949.67 100.00", NAMES_IS)
+        got = next(r for r in rows if r[0] == "营业利润")
+        self.assertEqual(got[2], "-286,489,949.67")
+
+    def test_original_bug_would_have_dropped_the_row(self):
+        """锁住「修之前会怎样」—— 防的是一直没意识到这个问题又改回去。"""
+        before = (r"([\u4e00-\u9fff][\u4e00-\u9fff（）()、·]*)")
+        self.assertNotIn("“", before, "旧字符类里没有引号 —— 这正是 bug")
 
 
 if __name__ == "__main__":
