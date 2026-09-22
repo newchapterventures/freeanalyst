@@ -268,6 +268,41 @@ def cmd_ask(args: argparse.Namespace) -> int:
 
 # ---------------------------------------------------------------- 运维
 
+def cmd_models(args: argparse.Namespace) -> int:
+    """看本机有哪些模型运行时 —— 以及选中的那个够不够格。"""
+    from llm import backends, gate
+
+    print("模型运行时（全部走 127.0.0.1，不出网）：")
+    found = backends.detect()
+    for name, ok, why in found:
+        print(f"  {'✓' if ok else '✗'} {name:14} {why}")
+    usable = [n for n, ok, _ in found if ok]
+    if not usable:
+        print()
+        print("  一个都没在跑。**这不是错误** —— 提取和估值是纯代码算的，")
+        print("  没有模型也能跑出结论，只是「读了材料回答问题」不可用。")
+        print("  想用：装 ollama（ollama.com），然后 `ollama serve`。")
+        return 0
+
+    b = backends.pick()
+    print(f"\n用 {b.name} 的模型：")
+    try:
+        for m in b.list_models():
+            print(f"  · {m}")
+    except Exception as exc:                                  # noqa: BLE001
+        print(f"  列不出来：{exc}")
+        return 1
+
+    if args.gate:
+        print(f"\n跑质量门槛（{args.gate}）—— 三类致命错误一个都不能犯：")
+        r = gate.run_gate(args.gate)
+        for line in gate.report_lines([r]):
+            print(line)
+        return 0 if r.passed else 1
+
+    return 0
+
+
 def cmd_audit(args: argparse.Namespace) -> int:
     summary = audit_summary()
     print(f"审计日志：{summary['path']}")
@@ -308,6 +343,11 @@ def main() -> int:
     p_ask.add_argument("--model", default=DEFAULT_MODEL)
     p_ask.add_argument("--top-k", type=int, default=6)
     p_ask.set_defaults(func=cmd_ask)
+
+    p_models = sub.add_parser("models", help="看本机有哪些模型运行时，能不能用")
+    p_models.add_argument("--gate", default="",
+                          help="对这个模型跑质量门槛（不跑就只列模型）")
+    p_models.set_defaults(func=cmd_models)
 
     sub.add_parser("audit", help="查看出网审计").set_defaults(func=cmd_audit)
     sub.add_parser("doctor", help="环境自检").set_defaults(func=cmd_doctor)
