@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>FreeAnalyst 交互形态</title>
+<style>
+  * { box-sizing: border-box; }
+  .wrap { max-width: 1000px; color: var(--foreground); font-size: 13.5px; line-height: 1.65; }
+
+  h1 { font-size: 19px; font-weight: 650; margin: 0 0 4px; letter-spacing: .01em; }
+  .sub { color: var(--muted-foreground); font-size: 12.5px; margin-bottom: 20px; }
+
+  /* ── 步骤条 ── */
+  .steps { display: flex; gap: 6px; margin-bottom: 18px; flex-wrap: wrap; }
+  .step {
+    display: flex; align-items: center; gap: 7px;
+    padding: 7px 13px 7px 10px; border-radius: 8px;
+    border: 1px solid var(--border); cursor: pointer;
+    color: var(--muted-foreground); font-size: 12.5px;
+    transition: all .16s ease; background: transparent;
+  }
+  .step:hover { border-color: var(--accent); color: var(--foreground); transform: translateY(-1px); }
+  .step.on { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+  .step .n {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 19px; height: 19px; border-radius: 50%;
+    font-size: 11px; font-weight: 700;
+    background: var(--card); border: 1px solid var(--border);
+  }
+  .step.on .n { border-color: var(--accent); color: var(--accent); }
+
+  /* ── 屏 ── */
+  .screen { display: none; }
+  .screen.on { display: block; }
+  .panel { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+
+  .bar {
+    padding: 9px 14px; font-size: 12px; color: var(--muted-foreground);
+    border-bottom: 1px solid var(--border);
+    display: flex; justify-content: space-between; gap: 12px;
+  }
+  .bar b { color: var(--foreground); font-weight: 600; }
+
+  .row { padding: 11px 14px; border-bottom: 1px solid var(--border); }
+  .row:last-child { border-bottom: 0; }
+  .row:nth-child(even) { background: color-mix(in srgb, var(--card) 55%, transparent); }
+  .row:hover { background: color-mix(in srgb, var(--accent) 7%, transparent); }
+
+  .k { color: var(--muted-foreground); font-size: 12px; }
+  .v { font-variant-numeric: tabular-nums; }
+  .ok { color: #2e9e6b; }
+  .warn { color: #c98a1a; }
+  .bad { color: #cf5b5b; }
+  .dim { color: var(--muted-foreground); }
+
+  .cards { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 12px 14px; }
+  .card {
+    border: 1px solid var(--border); border-radius: 9px; padding: 11px 12px;
+    transition: all .16s ease; cursor: pointer;
+  }
+  .card:hover { border-color: var(--accent); transform: translateY(-1px); }
+  .card.picked { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+  .card h4 { margin: 0 0 5px; font-size: 13px; font-weight: 620; }
+  .card .why { font-size: 12px; color: var(--muted-foreground); margin-bottom: 6px; }
+  .card .trap { font-size: 11.5px; color: #c98a1a; line-height: 1.5; }
+
+  table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+  th {
+    text-align: left; font-weight: 600; font-size: 11.5px; color: var(--muted-foreground);
+    padding: 9px 14px; border-bottom: 1px solid var(--border);
+  }
+  td { padding: 9px 14px; border-bottom: 1px solid var(--border); }
+  tbody tr:nth-child(even) { background: color-mix(in srgb, var(--card) 55%, transparent); }
+  tbody tr:hover { background: color-mix(in srgb, var(--accent) 7%, transparent); }
+  td.num { font-variant-numeric: tabular-nums; text-align: right; }
+
+  .foot {
+    padding: 11px 14px; border-top: 1px solid var(--border);
+    display: flex; gap: 18px; align-items: center; font-size: 12px;
+    color: var(--muted-foreground); flex-wrap: wrap;
+  }
+  .btn {
+    padding: 6px 14px; border-radius: 7px; border: 1px solid var(--accent);
+    color: var(--accent); font-size: 12px; font-weight: 600; cursor: pointer;
+    transition: all .15s ease;
+  }
+  .btn:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+  .btn.ghost { border-color: var(--border); color: var(--muted-foreground); }
+
+  /* ── Football field ── */
+  .ff { padding: 14px; }
+  .ffrow { display: grid; grid-template-columns: 132px 1fr; align-items: center; gap: 10px; margin-bottom: 9px; }
+  .fflabel { font-size: 12px; text-align: right; }
+  .fflabel .src { display: block; font-size: 10.5px; color: var(--muted-foreground); }
+  .track { position: relative; height: 20px; }
+  .band {
+    position: absolute; top: 4px; height: 12px; border-radius: 3px;
+    background: color-mix(in srgb, var(--accent) 26%, transparent);
+    border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  }
+  .rule { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--muted-foreground); opacity: .55; }
+  .rule span { position: absolute; top: -1px; left: 4px; font-size: 10px; color: var(--muted-foreground); white-space: nowrap; }
+  .axis { position: relative; height: 26px; margin-left: 142px; border-top: 1px solid var(--border); margin-top: 4px; }
+  .tick { position: absolute; top: 3px; font-size: 10.5px; color: var(--muted-foreground); transform: translateX(-50%); }
+
+  .note {
+    font-size: 12px; color: var(--muted-foreground); padding: 9px 14px;
+    background: color-mix(in srgb, var(--card) 60%, transparent);
+    border-top: 1px solid var(--border); line-height: 1.6;
+  }
+  .gap { font-size: 12.5px; color: var(--muted-foreground); }
+  .gap b { color: var(--foreground); font-weight: 600; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>FreeAnalyst 的造型</h1>
+  <div class="sub">本地跑的一个网页，全程不出网。左边六步，每一步都是「程序准备好、你点头才往下走」。</div>
+
+  <div class="steps">
+    <div class="step on" data-s="0"><span class="n">1</span>丢材料</div>
+    <div class="step" data-s="1"><span class="n">2</span>提取核对</div>
+    <div class="step" data-s="2"><span class="n">3</span>行业建议</div>
+    <div class="step" data-s="3"><span class="n">4</span>可比公司</div>
+    <div class="step" data-s="4"><span class="n">5</span>假设清单</div>
+    <div class="step" data-s="5"><span class="n">6</span>结论</div>
+  </div>
+
+  <!-- ① 丢材料 -->
+  <div class="screen on" data-s="0">
+    <div class="panel">
+      <div class="bar"><span><b>把这个项目的材料拖进来</b>　年报 / 招股书 / 审计报告 / Excel，混着放也行</span><span class="dim">local only</span></div>
+      <div style="padding:26px 14px;text-align:center;border-bottom:1px solid var(--border)">
+        <div style="font-size:24px;color:var(--muted-foreground)">⤓</div>
+        <div style="margin-top:6px;font-weight:600">拖到这儿，或点一下选文件</div>
+        <div class="k" style="margin-top:4px">PDF　HTML　Excel　扫描件也能读（本机 OCR）</div>
+      </div>
+      <table>
+        <thead><tr><th>材料</th><th>识别出的公司</th><th>期间</th><th>口径</th><th>三张表</th></tr></thead>
+        <tbody>
+          <tr><td>2025年年度报告.pdf</td><td>某广告公司</td><td>2025 年报</td><td class="k">CAS · 合并</td><td class="ok">找到 70 / 74 / 78</td></tr>
+          <tr><td>招股说明书.pdf</td><td>某教育公司</td><td>2022H1 等四期</td><td class="k">CAS · 合并</td><td class="ok">找到 203 / 205 / 207</td></tr>
+          <tr><td>Income Statement.xlsx</td><td>某美国公司</td><td>2017</td><td class="k">US GAAP · 单体</td><td class="ok">找到　勾稽平</td></tr>
+          <tr><td>审计报告（扫描件）.pdf</td><td>某电子公司</td><td>2024</td><td class="k">CAS · 合并</td><td class="warn">走 OCR，45 秒</td></tr>
+        </tbody>
+      </table>
+      <div class="note">
+        <b>识别结果不对的，点一下就改。</b>页码只是给个参照 —— 真正定位靠内容，所以目录页码印错也不影响。
+      </div>
+    </div>
+  </div>
+
+  <!-- ② 提取核对 -->
+  <div class="screen" data-s="1">
+    <div class="panel">
+      <div class="bar"><span><b>提取核对</b>　能自己查的错，程序自己查了</span><span class="ok">勾稽 ✓ 资产 = 负债 + 权益</span></div>
+      <table>
+        <thead><tr><th>科目</th><th style="text-align:right">本期</th><th style="text-align:right">上期</th><th>来源页</th><th></th></tr></thead>
+        <tbody>
+          <tr><td>营业收入</td><td class="num">68,692,672,430</td><td class="num">60,320,671,128</td><td class="k">74</td><td></td></tr>
+          <tr><td>营业利润</td><td class="num">284,992,517</td><td class="num">-286,489,949</td><td class="k">75</td><td></td></tr>
+          <tr><td>利润总额</td><td class="num">286,137,806</td><td class="num">-276,696,267</td><td class="k">75</td><td></td></tr>
+          <tr><td>所得税费用</td><td class="num">63,303,783</td><td class="num">20,245,213</td><td class="k">75</td><td></td></tr>
+          <tr><td>资产总计</td><td class="num">30,383,484,402</td><td class="num">—</td><td class="k">70</td><td></td></tr>
+          <tr style="background:color-mix(in srgb,#c98a1a 9%,transparent)">
+            <td>货币资金 <span class="warn">◆ 两个取值</span></td><td class="num">4,763,934,557</td><td class="num">—</td><td class="k">70</td>
+            <td class="warn">另一个 85,765,146（p72 母公司）</td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="note">
+        <b>◆ 标出来的都是「有几个可能值」的。</b>程序取首次出现（年报里合并表排在母公司表前面），但会把另一个值摆出来让你核 —— <b>不静默选一个</b>。
+      </div>
+      <div class="foot">
+        <span class="gap"><b>缺 3 项：</b>附注 D&A　CapEx　上期收入</span>
+        <span style="margin-left:auto"></span>
+        <span class="btn ghost">手动补录</span>
+        <span class="btn">核对无误，往下</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ③ 行业建议 -->
+  <div class="screen" data-s="2">
+    <div class="panel">
+      <div class="bar"><span><b>这家公司该对标哪些行业</b>　按业务描述提的，<b>你确认或改</b></span><span class="dim">从第 10 页「公司从事的主要业务」</span></div>
+      <div class="cards">
+        <div class="card picked"><h4>营销服务 / 广告代理</h4>
+          <div class="why">依据：营销、广告、公共关系、传播、创意、投放</div>
+          <div class="trap">⚠ 媒介代理过手金额大、毛利极薄，要区分「收入口径」和「净收入口径」</div></div>
+        <div class="card picked"><h4>出海营销</h4>
+          <div class="why">依据：出海、跨境、全球主要市场、Meta、Google、TikTok</div>
+          <div class="trap">⚠ 地域要对齐 —— 出海业务的倍数锚在海外同业，不是 A 股同业</div></div>
+        <div class="card"><h4>营销科技 / MarTech</h4>
+          <div class="why">依据：营销科技、数字营销、程序化、DSP、智能投放</div>
+          <div class="trap">⚠ 挂个「科技」名字但实质是代理的，倍数不该按 SaaS 给</div></div>
+        <div class="card"><h4>企业服务 / to B 服务</h4>
+          <div class="why">依据：赋能、解决方案、智慧经营</div>
+          <div class="trap">⚠ to B 与 to C 的倍数能差一倍，筛选时商业模式要单独拎出来</div></div>
+      </div>
+      <div class="note">
+        <b>每条都带「依据」和「这个行业最容易比错的地方」。</b>光说「对标营销服务」不够 —— 坑不说清楚，拿着一堆看起来可比的倍数，比出来的东西是错的。
+      </div>
+      <div class="foot"><span class="gap">已选 2 个</span><span style="margin-left:auto"></span>
+        <span class="btn ghost">加一个</span><span class="btn">就用这两个</span></div>
+    </div>
+  </div>
+
+  <!-- ④ 可比公司 -->
+  <div class="screen" data-s="3">
+    <div class="panel">
+      <div class="bar"><span><b>挑可比公司</b>　至少 3 家，<b>缺数据的会明说缺什么</b></span><span class="dim">基准日 2025-12-31</span></div>
+      <table>
+        <thead><tr><th></th><th>公司</th><th>地域</th><th class="num">收入</th><th>商业模式</th><th>数据齐不齐</th></tr></thead>
+        <tbody>
+          <tr><td>✓</td><td>同业 A</td><td>A 股</td><td class="num">12,480,000,000</td><td>媒介代理</td><td class="ok">EV、收入、EBITDA 齐</td></tr>
+          <tr><td>✓</td><td>同业 B</td><td>A 股</td><td class="num">8,220,000,000</td><td>数字营销</td><td class="ok">齐</td></tr>
+          <tr><td>✓</td><td>同业 C</td><td>港股</td><td class="num">5,910,000,000</td><td>出海投放</td><td class="warn">缺净债务 → 算不出 EV</td></tr>
+          <tr><td>○</td><td>同业 D</td><td>美股</td><td class="num">3,400,000,000</td><td>MarTech</td><td class="ok">齐</td></tr>
+          <tr><td>○</td><td>同业 E</td><td>A 股</td><td class="num">1,120,000,000</td><td>公关</td><td class="bad">规模差 60 倍，不建议</td></tr>
+        </tbody>
+      </table>
+      <div class="note">
+        <b>基准日必须和分析公司的报表期对上。</b>拿 2024 年的可比公司倍数去比 2025 年的标的，倍数比标的还旧，结果系统性偏低。筛选时只用基准日<b>之前已披露</b>的财报。
+      </div>
+      <div class="foot"><span class="gap">已选 <b>3</b> 家（≥3 才可以算）</span><span style="margin-left:auto"></span>
+        <span class="btn ghost">自己补一家</span><span class="btn">下一步：取数</span></div>
+    </div>
+  </div>
+
+  <!-- ⑤ 假设清单 -->
+  <div class="screen" data-s="4">
+    <div class="panel">
+      <div class="bar"><span><b>DCF 假设清单　16 条</b>　能算的算好了，<b>要你定的留着</b></span><span class="dim">12 条要你确认</span></div>
+      <table>
+        <thead><tr><th>假设</th><th style="text-align:right">报表值</th><th>怎么校验 / 最容易拍错</th><th></th></tr></thead>
+        <tbody>
+          <tr><td>收入增速</td><td class="num dim">要外部数据</td><td class="k">可比公司同期增速 —— 已取到 3 家的</td><td class="ok">可填</td></tr>
+          <tr><td>永续增长率</td><td class="num">—</td><td class="k">绝不能超过长期名义 GDP（3–4%）</td><td class="warn">要你定</td></tr>
+          <tr><td>EBITDA 利润率</td><td class="num">4.9%</td><td class="k">别把最好的一年当常态，用 3–5 年平均</td><td class="warn">可调</td></tr>
+          <tr><td>D&A 占收入</td><td class="num">—</td><td class="k">附注里取不到，要不要手动补</td><td class="bad">缺</td></tr>
+          <tr><td>ΔNWC 占收入</td><td class="num">-0.8%</td><td class="k">存量占比，ΔNWC 要看两期之差</td><td class="warn">可调</td></tr>
+          <tr><td>实际税率</td><td class="num">22.1%</td><td class="k">单年值，有递延所得税调整会失真</td><td class="warn">可调</td></tr>
+          <tr><td>WACC</td><td class="num">—</td><td class="k">Rf / ERP / β / Kd / D比E 拆开给，不报一个总数</td><td class="warn">要你定</td></tr>
+          <tr><td>终值算法</td><td class="num">—</td><td class="k">两种都算，摆足球场上做区间</td><td class="warn">要你定</td></tr>
+          <tr><td>净债务口径</td><td class="num">—</td><td class="k">租赁负债算不算债务 —— EV 和 EBITDA 口径要配套</td><td class="warn">要你定</td></tr>
+        </tbody>
+      </table>
+      <div class="note">
+        每条都写了<b>它影响什么、怎么校验、最容易拍错的地方</b>。缺数据就说缺，<b>不拿默认值填</b> —— 填出来的清单看着完整，但你会以为某项已经定了。
+      </div>
+      <div class="foot"><span class="gap">3 条自动填好　12 条待你确认</span><span style="margin-left:auto"></span>
+        <span class="btn ghost">导出这份清单</span><span class="btn">按这个算</span></div>
+    </div>
+  </div>
+
+  <!-- ⑥ 结论 -->
+  <div class="screen" data-s="5">
+    <div class="panel">
+      <div class="bar"><span><b>估值结论</b>　股权价值（元/股）</span><span class="dim">基准日 2025-12-31</span></div>
+      <div class="ff">
+        <div class="ffrow"><div class="fflabel">DCF · 永续<span class="src">置信度 中</span></div>
+          <div class="track"><div class="band" style="left:20%;width:33%"></div></div></div>
+        <div class="ffrow"><div class="fflabel">DCF · 退出倍数<span class="src">置信度 中</span></div>
+          <div class="track"><div class="band" style="left:27%;width:26%"></div></div></div>
+        <div class="ffrow"><div class="fflabel">可比公司 EV/EBITDA<span class="src">3 家 · 置信度 高</span></div>
+          <div class="track"><div class="band" style="left:33%;width:24%"></div></div></div>
+        <div class="ffrow"><div class="fflabel">可比公司 EV/收入<span class="src">3 家 · 置信度 低</span></div>
+          <div class="track"><div class="band" style="left:12%;width:19%"></div></div></div>
+        <div class="ffrow"><div class="fflabel">近期交易<span class="src">置信度 低</span></div>
+          <div class="track"><div class="band" style="left:44%;width:17%"></div></div></div>
+      </div>
+      <div class="axis">
+        <div class="rule" style="left:53%"><span>现价 8.42</span></div>
+        <div class="tick" style="left:0%">4</div><div class="tick" style="left:20%">6</div>
+        <div class="tick" style="left:40%">8</div><div class="tick" style="left:60%">10</div>
+        <div class="tick" style="left:80%">12</div><div class="tick" style="left:100%">14</div>
+      </div>
+      <div class="note">
+        <b>共识区间取交集，不取平均。</b>五条没有交集就直说「分歧过大」—— 不糊成一个中间数。跨度超过中值 50% 会报警。每条都带上来源和置信度，算不出来的方法<b>留在图上并说明原因</b>，不悄悄删掉。
+      </div>
+      <div class="foot"><span class="gap">敏感性：WACC × 永续增长（5×5）　可比公司表　假设对照表</span><span style="margin-left:auto"></span>
+        <span class="btn ghost">审计留痕</span><span class="btn">导出 Excel</span></div>
+    </div>
+  </div>
+</div>
+
+<script>
+  document.querySelectorAll('.step').forEach(function (el) {
+    el.addEventListener('click', function () {
+      var i = el.dataset.s;
+      document.querySelectorAll('.step').forEach(function (x) { x.classList.remove('on'); });
+      document.querySelectorAll('.screen').forEach(function (x) { x.classList.remove('on'); });
+      el.classList.add('on');
+      document.querySelector('.screen[data-s="' + i + '"]').classList.add('on');
+    });
+  });
+  document.querySelectorAll('.card').forEach(function (el) {
+    el.addEventListener('click', function () { el.classList.toggle('picked'); });
+  });
+</script>
+</body>
+</html>
