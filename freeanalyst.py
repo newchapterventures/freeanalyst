@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""airlock —— 本地优先的投资尽调 agent。
+"""freeanalyst —— 本地优先的投资尽调 agent。
 
     ingest   把材料切分、本地建索引（数据不出机器）
     ask      检索 + 本地模型作答，每条结论强制带原文出处
@@ -224,7 +224,7 @@ def verify_citations(answer: str, allowed_ids: set[str]) -> dict:
 def cmd_ask(args: argparse.Namespace) -> int:
     chunks = load_index()
     if not chunks:
-        print("索引为空。先运行：python3 airlock.py ingest <材料目录>", file=sys.stderr)
+        print("索引为空。先运行：python3 freeanalyst.py ingest <材料目录>", file=sys.stderr)
         return 1
 
     engine = BM25(chunks)
@@ -331,7 +331,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(prog="airlock", description="本地优先的投资尽调 agent")
+    parser = argparse.ArgumentParser(prog="freeanalyst", description="本地优先的投资尽调 agent")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     p_ingest = sub.add_parser("ingest", help="把材料入库到本机索引")
