@@ -18,6 +18,13 @@ JSON 里每个数字可以有两种写法：
     "ebitda_margin": [{"value": 0.245,
                        "source": "管理层规划 p.12",
                        "confidence": "低"}, 0.25]    # 带来源
+
+## 两条入口，同一套报告
+
+    value.py <配置>         配置驱动（手工或 intake 写出来的 JSON）
+    intake.py 调 run_report 材料目录驱动（三张表在内存里装好，不走配置）
+
+**报告正文只写一份** —— 两条路各写一份的话，迟早会长得不一样。
 """
 
 from __future__ import annotations
@@ -110,25 +117,23 @@ def render_result(r: ValuationResult, show_trace: bool = True) -> str:
     return "\n".join(lines)
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser(description="估值引擎")
-    ap.add_argument("config", help="估值输入 JSON")
-    ap.add_argument("--no-trace", action="store_true", help="不打印计算追溯")
-    args = ap.parse_args()
+def run_report(cfg: dict, base: Path, *, statements=None,
+               no_trace: bool = False) -> str:
+    """跑一遍完整报告，**返回文本，不打印**。
 
-    path = Path(args.config)
-    if not path.exists():
-        print(f"找不到配置文件：{path}", file=sys.stderr)
-        return 1
+    `cfg` 是配置字典；`base` 是配置所在目录（配置里 `statements` 的
+    相对路径以它为基准）。
 
-    cfg = json.loads(path.read_text(encoding="utf-8"))
+    `statements` 给了就直接用它 —— 那是 `intake.py` 从材料目录装好的
+    一整套三张表（PDF / Excel 走不了配置，只能这么进来）。没给才去读
+    `cfg["statements"]`。
 
-    # 早期项目走另一套流程 —— 输入形态完全不同（评分和情景，不是三张表）。
-    # 自动分流，不用记两个命令。
-    if "early_stage" in cfg:
-        from early_cli import run_early_stage
-        return run_early_stage(cfg, show_trace=not args.no_trace)
+    ## 为什么把它从 main() 里抽出来
 
+    材料目录驱动和配置驱动**必须走同一条报告流**：勾稽怎么报、
+    缺口怎么列、假设参谋怎么接，只该有一处实现。两份实现迟早会
+    长得不一样，而"不一样"在这个产品里就是不可追溯。
+    """
     # 金额单位跟着配置走。默认为万元是给中文材料的历史默认值，
     # 但美股报表是千美元 —— 写死会把千美元的数标成万元。
     global UNIT
@@ -150,10 +155,19 @@ def main() -> int:
     # **必须最先跑。** 推出来的事实类口径要填进 cfg["dcf"] / cfg["multiples"]，
     # 而 DCF、乘数法等都在后面读这些值。
     # 实测踩到：放在乘法之后，乘数法拿不到净债务直接报错。
-    if "statements" in cfg:
+    if statements is not None:
+        from financials.cli import apply_facts, render_statements
+
+        render_statements(statements, out)
+        filled = apply_facts(cfg, statements)
+        if filled:
+            out.append("\n  已自动填入（事实类，均可核对到行）：")
+            for line in filled:
+                out.append(f"    · {line}")
+    elif "statements" in cfg:
         from financials.cli import StatementConfigError, apply_facts, run_statements
         try:
-            st = run_statements(cfg, out, path.parent)
+            st = run_statements(cfg, out, base)
             filled = apply_facts(cfg, st)
             if filled:
                 out.append("\n  已自动填入（事实类，均可核对到行）：")
@@ -181,7 +195,7 @@ def main() -> int:
         wacc_val = wr.wacc
         out.append(hr("折现率（WACC）"))
         out.append(f"  WACC = {wr.wacc:.2%}   （股权成本 {wr.cost_of_equity:.2%}，β_L {wr.beta_levered:.3f}）")
-        if not args.no_trace:
+        if not no_trace:
             out.append("\n  计算追溯：")
             out.append(wr.trace.render())
 
@@ -204,7 +218,7 @@ def main() -> int:
         r = run_multiples(mi)
         results.append(r)
         out.append(hr(f"方法一 · {r.method}"))
-        out.append(render_result(r, not args.no_trace))
+        out.append(render_result(r, not no_trace))
 
     # ---------------- SDE ----------------
     if "sde" in cfg:
@@ -222,7 +236,7 @@ def main() -> int:
         ))
         out.append(hr("SDE 构建（中小企业并购口径）"))
         out.append(f"  SDE = {sde_obj.value:,.0f} {UNIT}")
-        if not args.no_trace:
+        if not no_trace:
             out.append("\n  计算追溯：")
             out.append(sde_trace.render())
 
@@ -250,7 +264,7 @@ def main() -> int:
         ) if "sensitivity" in d else None)
         results.append(r)
         out.append(hr("方法二 · DCF（FCFF）"))
-        out.append(render_result(r, not args.no_trace))
+        out.append(render_result(r, not no_trace))
 
         # 退出倍数法交叉验证（终值占比过高时尤其需要）
         if "exit_multiple" in d:
@@ -275,9 +289,9 @@ def main() -> int:
         # 反向估值
         if "ask_price" in cfg:
             res = reverse_dcf_growth(di, wacc_val, float(cfg["ask_price"]))
-            out.append(hr(f"反向估值 · 从对方要价反推假设（{cfg["ask_price"]:,.0f} {UNIT}）"))
+            out.append(hr(f"反向估值 · 从对方要价反推假设（{cfg['ask_price']:,.0f} {UNIT}）"))
             out.append(f"  {res.note}")
-            if not args.no_trace:
+            if not no_trace:
                 out.append("\n  计算追溯：")
                 out.append(res.trace.render())
 
@@ -290,7 +304,7 @@ def main() -> int:
             out.append(f"  样本 {stats['n']} 家")
             out.append(f"  P25 {stats['p25']:.2f}x   中位 {stats['median']:.2f}x   P75 {stats['p75']:.2f}x")
             out.append(f"  均值 {stats['mean']:.2f}x   区间 {stats['min']:.2f}x – {stats['max']:.2f}x")
-        if not args.no_trace:
+        if not no_trace:
             out.append("\n  计算追溯：")
             out.append(trace.render())
 
@@ -340,7 +354,29 @@ def main() -> int:
         for r in results:
             out.append(f"  {r.method:<16} {r.range_text}")
 
-    print("\n".join(out))
+    return "\n".join(out)
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description="估值引擎")
+    ap.add_argument("config", help="估值输入 JSON")
+    ap.add_argument("--no-trace", action="store_true", help="不打印计算追溯")
+    args = ap.parse_args()
+
+    path = Path(args.config)
+    if not path.exists():
+        print(f"找不到配置文件：{path}", file=sys.stderr)
+        return 1
+
+    cfg = json.loads(path.read_text(encoding="utf-8"))
+
+    # 早期项目走另一套流程 —— 输入形态完全不同（评分和情景，不是三张表）。
+    # 自动分流，不用记两个命令。
+    if "early_stage" in cfg:
+        from early_cli import run_early_stage
+        return run_early_stage(cfg, show_trace=not args.no_trace)
+
+    print(run_report(cfg, path.parent, no_trace=args.no_trace))
     return 0
 
 

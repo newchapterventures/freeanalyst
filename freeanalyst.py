@@ -3,6 +3,8 @@
 
     ingest   把材料切分、本地建索引（数据不出机器）
     ask      检索 + 本地模型作答，每条结论强制带原文出处
+    appraise 从材料目录跑到估值报告：认三张表 → 列问答清单 → 出报告
+    models   看本机有哪些模型，够不够格（质量门槛）
     audit    查看出网审计日志
     doctor   检查本地模型是否就绪
 
@@ -330,6 +332,18 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_appraise(args: argparse.Namespace) -> int:
+    """**材料目录 → 估值报告，全程不碰 JSON。**
+
+    三张表在内存里装好（PDF / Excel 走不了配置节，只能这么进来），
+    事实类自动填、假设类只列成问答清单等用户给。
+    """
+    from intake import appraise
+    return appraise(args.materials, args.answers, unit=args.unit,
+                    out_dir=args.out, no_trace=args.no_trace,
+                    growth_years=args.years)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(prog="freeanalyst", description="本地优先的投资尽调 agent")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -343,6 +357,15 @@ def main() -> int:
     p_ask.add_argument("--model", default=DEFAULT_MODEL)
     p_ask.add_argument("--top-k", type=int, default=6)
     p_ask.set_defaults(func=cmd_ask)
+
+    p_app = sub.add_parser("appraise", help="从材料目录跑到估值报告（不用手写 JSON）")
+    p_app.add_argument("materials", help="材料目录")
+    p_app.add_argument("--answers", help="填好的问答清单（不填就先出清单）")
+    p_app.add_argument("--unit", default="", help="金额单位（认不出时用它声明）")
+    p_app.add_argument("--out", help="配置与报告的输出目录（默认放材料目录）")
+    p_app.add_argument("--years", type=int, default=5, help="预测年数（默认 5）")
+    p_app.add_argument("--no-trace", action="store_true", help="不打印计算追溯")
+    p_app.set_defaults(func=cmd_appraise)
 
     p_models = sub.add_parser("models", help="看本机有哪些模型运行时，能不能用")
     p_models.add_argument("--gate", default="",
