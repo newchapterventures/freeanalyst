@@ -1,0 +1,989 @@
+"""intake —— 从**一个材料目录**到一份跑得动的估值报告。
+
+## 它接的是哪一条断链
+
+`value.py` 是配置驱动的：跑一次估值，得先有人写一份 JSON —— 哪张表在哪个
+文件、每个假设填多少。**这份 JSON 的形状是给程序看的，不该由人写。**
+
+更硬的一处：**PDF 和 Excel 材料根本没有通路。** 配置里的 `statements` 节
+只认「一张表一个文件」的 HTML（`statements.load_one()` 只走 HTML 抽取）；
+PDF 和 Excel 各有自己的装载器（`from_pdf` / `from_excel`），一次出一整套
+三张表，形状上就进不了那个配置节。实测后果：三类材料里有两类的解析结果
+**走不到估值**。
+
+intake 做三件事，把断链接上：
+
+    1  认材料   扫目录，判断哪份文件是哪张表（**复用已有装载器，不重写**）
+    2  列问题   把必须由人给的假设列成一份可填的清单（**不代填**）
+    3  拼配置   事实类自动填、假设类留空并标成缺口，交给 `value.run_report`
+
+## 三条不能破的界线
+
+**一、事实自动填，假设绝不自动填。**
+历史比率只作为参考资料出现在问答清单的**注释**里。把历史 EBITDA 率自动
+填成预测假设，用户会以为那是自己的判断 —— 那正是这个产品要避免的事。
+
+**二、认不出来就说认不出来。**
+没认出来的文件、判不出的单位、算不出的口径，全部列出来。少了材料会让后面
+的问答用「材料里没写」来解释这个缺失，而实际上是根本没读进来。
+
+**三、单位没确定就不算。**
+报表是千美元、引擎默认万元 —— 猜错是 1000 倍级的静默错误。
+认不出单位时停下要你声明，不替你做主。
+
+## 用法
+
+    python3 freeanalyst.py appraise <材料目录>              # 第一遍：认材料 + 出问答清单
+    python3 freeanalyst.py appraise <材料目录> --answers a.txt  # 第二遍：出报告
+
+    python3 intake.py <材料目录>                            # 也可以单独跑
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import sys
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:                                      # 只为类型检查，运行时不导入
+    from financials import statements as stm
+
+#: 扩展名 → 材料类型。
+EXT_KIND = {
+    ".pdf": "pdf",
+    ".htm": "html", ".html": "html",
+    ".xls": "excel", ".xlsx": "excel",
+    ".txt": "text", ".md": "text",
+}
+
+#: 三种表的显示名。
+LABEL = {"balance": "资产负债表", "income": "利润表", "cash_flow": "现金流量表"}
+
+#: 一份 PDF 里三张表加起来映射少于这个行数，就认为「这份 PDF 不是正表」。
+#: 实测：10-K 的封面页 / 附注节也能映射出几行，但远达不到正表的量。
+_MIN_PDF_MAPPED = 8
+
+
+# ─────────────────────────── 材料扫描 ───────────────────────────
+
+@dataclass
+class Candidate:
+    """一个候选文件，以及它像哪张表。"""
+
+    path: Path
+    kind: str            # balance / income / cash_flow / unknown
+    mapped: int = 0      # 映射上的行数
+    rows: int = 0        # 总行数
+
+    @property
+    def rate(self) -> float:
+        return self.mapped / self.rows if self.rows else 0.0
+
+    def render(self) -> str:
+        k = LABEL.get(self.kind, "认不出")
+        return (f"{self.path.name} → {k}"
+                f"（映射 {self.mapped}/{self.rows} 行）")
+
+
+@dataclass
+class Materials:
+    """一个材料目录里认出来的东西。"""
+
+    directory: Path
+    statements: "stm.Statements | None" = None    # financials.statements.Statements
+    unit: str = ""
+    unit_basis: str = ""
+    source: str = ""                          # pdf / excel / html
+    detected: dict[str, str] = field(default_factory=dict)
+    candidates: list[Candidate] = field(default_factory=list)
+    unused: list[str] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
+
+    def ok(self) -> bool:
+        return self.statements is not None and bool(self.detected)
+
+    def render(self) -> str:
+        out = [f"材料目录　{self.directory}"]
+        if self.source:
+            out.append(f"  采用的来源　{self.source}")
+        for kind in ("balance", "income", "cash_flow"):
+            name = self.detected.get(kind)
+            c = next((x for x in self.candidates
+                      if x.kind == kind and name and x.path.name == name), None)
+            if c is not None:
+                out.append("  ✓ " + c.render())
+            else:
+                out.append(f"  ✗ {LABEL[kind]} —— 没认出来")
+        out.append(f"  单位　{self.unit or '**没认出来（必须你声明）**'}"
+                   + (f"　依据：{self.unit_basis}" if self.unit_basis else ""))
+        if self.statements is not None:
+            s = self.statements
+            out.append(f"  口径　{s.gaap or '未判定'} · {s.scope or '未判定'} · "
+                       f"{s.audited or '未标注'} · {s.period or '期间未标'}")
+        if self.unused:
+            out.append("  没用上的文件（**不是静默跳过**）：")
+            for u in self.unused:
+                out.append(f"    · {u}")
+        for n in self.notes:
+            out.append(f"  注：{n}")
+        return "\n".join(out)
+
+
+# 单位提示：「单位：万元」「(In thousands)」「人民币千元」
+_UNIT_CN = re.compile(
+    r"单位[:：]\s*(?:人民币)?\s*(亿元|万元|千元|百万元|元"
+    r"|千美元|百万美元|万美元|美元)")
+_UNIT_WORD = (
+    ("人民币千元", "千元"), ("人民币百万元", "百万元"), ("人民币万元", "万元"),
+    ("人民币元", "元"), ("千美元", "千美元"), ("百万美元", "百万美元"),
+    ("万美元", "万美元"), ("美元", "美元"), ("万元", "万元"), ("千元", "千元"),
+)
+_UNIT_EN = (
+    (r"in\s+thousands", "千美元"), (r"in\s+millions", "百万美元"),
+    (r"\(in\s+thousands\s+of\s+u\.?s\.?\s*dollars\)", "千美元"),
+)
+
+
+def detect_unit(text: str) -> tuple[str, str]:
+    """从材料文本里认金额单位。返回 `(单位, 依据)`，认不出返回 `("", "")`。
+
+    **认不出就返回空** —— 让调用方停下来问用户，不猜。
+    猜错的代价是 1000 倍级的静默错误（千美元被当成万元）。
+    """
+    if not text:
+        return "", ""
+    m = _UNIT_CN.search(text)
+    if m:
+        return m.group(1), f"正文里的「{m.group(0).strip()}」"
+    low = text[:200_000].lower()
+    for pat, unit in _UNIT_EN:
+        if re.search(pat, low):
+            return unit, f"英文材料里的「{pat}」"
+    for word, unit in _UNIT_WORD:
+        if word in text[:200_000]:
+            return unit, f"正文里的「{word}」"
+    return "", ""
+
+
+def _read_text(path: Path, limit: int = 400_000) -> str:
+    """尽量读出文件的纯文本（HTML 去标签）。读不出就返回空串。"""
+    try:
+        raw = path.read_bytes()[:limit]
+    except OSError:
+        return ""
+    for enc in ("utf-8", "gb18030", "utf-16"):
+        try:
+            t = raw.decode(enc, errors="ignore")
+            break
+        except (UnicodeDecodeError, LookupError):
+            continue
+    else:
+        return ""
+    if path.suffix.lower() in (".htm", ".html"):
+        t = re.sub(r"(?is)<(script|style).*?</\1>", " ", t)
+        t = re.sub(r"(?s)<[^>]+>", " ", t)
+        t = re.sub(r"&nbsp;?", " ", t)
+    return t
+
+
+#: 期间：中文材料用「2024年12月31日」，英文材料用「December 31, 2016」。
+_PERIOD_CN = re.compile(r"(19|20)\d{2}\s*[-/年]\s*\d{1,2}(?:\s*[-/月]\s*\d{1,2})?")
+_PERIOD_EN = re.compile(
+    r"(?:January|February|March|April|May|June|July|August|September|October"
+    r"|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)"
+    r"\.?\s+\d{1,2},\s*(?:19|20)\d{2}")
+
+
+#: 从文本里抓一个四位年份 —— 估值基准日/期间都可能带。
+_YEAR = re.compile(r"(?:19|20)\d{2}")
+
+
+def _labels(st) -> str:
+    return " ".join(r.label for r in st.rows)
+
+
+#: 英文材料的表名标志 —— 中文标志（`assemble`）对 10-K 这类材料完全失效。
+_EN_MARK = {
+    "balance": ("total assets", "total current assets", "total liabilities",
+                "stockholders' equity", "shareholders' equity", "total equity"),
+    "income": ("total revenue", "net revenue", "revenue", "cost of revenue",
+               "gross profit", "operating income", "net income", "income tax"),
+    "cash_flow": ("cash flows from operating", "operating activities",
+                  "investing activities", "financing activities",
+                  "cash and cash equivalents at"),
+}
+
+
+def classify(labels: str, rows: int = 0) -> str:
+    """这份材料像哪张表。中文走 `assemble.signature`，英文补一套标志。"""
+    from financials import assemble as asm
+
+    sig = asm.signature(labels, rows)
+    best_cn = max(sig, key=lambda k: sig[k]) if sig else None
+    cn_score = sig.get(best_cn, 0) if best_cn else 0
+
+    low = labels.lower()
+    en = {k: sum(1 for m in ms if m in low) for k, ms in _EN_MARK.items()}
+    best_en = max(en, key=lambda k: en[k]) if en else None
+    en_score = en.get(best_en, 0) if best_en else 0
+
+    if cn_score >= 100:
+        return best_cn
+    if en_score >= 3:
+        return best_en
+    if cn_score and not en_score:
+        return best_cn
+    return "unknown"
+
+
+def _best_pdf(paths: list[Path], unit: str,
+              ) -> tuple["stm.Statements | None", Candidate | None, list[str]]:
+    """在若干 PDF 里挑最像正表的那一份。"""
+    from financials.from_pdf import load_pdf_statements
+
+    best, best_c = None, None
+    unused: list[str] = []
+    for p in paths:
+        try:
+            S = load_pdf_statements(p, unit)
+        except Exception as exc:                      # noqa: BLE001
+            unused.append(f"{p.name}：读不了（{type(exc).__name__}: {exc}）")
+            continue
+        mapped = sum(sum(1 for r in st.rows if r.field is not None)
+                     for st in (S.balance, S.income, S.cash_flow) if st)
+        rows = sum(len(st.rows) for st in (S.balance, S.income, S.cash_flow) if st)
+        c = Candidate(p, "pdf", mapped, rows)
+        kinds = [k for k in ("balance", "income", "cash_flow")
+                 if getattr(S, k) is not None]
+        if mapped >= _MIN_PDF_MAPPED and len(kinds) >= 2:
+            if best is None or mapped > best_c.mapped:      # type: ignore[union-attr]
+                if best is not None:
+                    unused.append(f"{best_c.path.name}：三张表映射更少，未采用")  # type: ignore[union-attr]
+                best, best_c = S, c
+            else:
+                unused.append(f"{p.name}：三张表映射更少，未采用")
+        else:
+            unused.append(f"{p.name}：三张表只认出 {len(kinds)} 张"
+                          f"／映射 {mapped} 行 —— 判断这不是正表")
+    return best, best_c, unused
+
+
+def _scan_html(paths: list[Path], unit: str,
+               ) -> tuple["stm.Statements | None", list[Candidate],
+                          dict[str, str], list[str]]:
+    """HTML 材料：**一张表一个文件**，逐份判它是哪张表。"""
+    from financials import statements as stm
+
+    cands: list[Candidate] = []
+    unused: list[str] = []
+    for p in paths:
+        try:
+            st = stm.load_one(p, p.stem, unit)
+        except Exception as exc:                      # noqa: BLE001
+            unused.append(f"{p.name}：读不了（{type(exc).__name__}: {exc}）")
+            continue
+        mapped = sum(1 for r in st.rows if r.field is not None)
+        kind = classify(_labels(st), len(st.rows))
+        if kind == "unknown" or not mapped:
+            unused.append(f"{p.name}：认不出是哪张表（映射 {mapped}/{len(st.rows)} 行）")
+            continue
+        cands.append(Candidate(p, kind, mapped, len(st.rows)))
+
+    detected: dict[str, str] = {}
+    picked: dict[str, Candidate] = {}
+    for kind in ("balance", "income", "cash_flow"):
+        pool = [c for c in cands if c.kind == kind]
+        if not pool:
+            continue
+        pool.sort(key=lambda c: (-c.mapped, -c.rate))
+        win = pool[0]
+        picked[kind] = win
+        detected[kind] = win.path.name
+        for other in pool[1:]:
+            unused.append(f"{other.path.name}：也像{LABEL[kind]}，"
+                          f"但映射更少（{other.mapped} 行），未采用")
+
+    if not picked:
+        return None, cands, {}, unused
+
+    S = stm.Statements(gaap="", scope="", audited="未标注", period="")
+    #: **表标题也在文件里，一起读进来判。**
+    #: 只拿行标签判会让标题那一行漏掉 —— 实测一份 10-K 的合并资产负债表
+    #: 被 meta 判成「单体」（行标签里没有 consolidated，标题里有）。
+    #: 口径报错比数字报错危险：数字错了勾稽会不平，口径错了无声无息。
+    raw = " ".join(_read_text(c.path, 20_000) for c in picked.values())
+    for kind, win in picked.items():
+        st = stm.load_one(win.path, LABEL[kind], unit)
+        setattr(S, kind, st)
+        if not S.period:
+            m = _PERIOD_CN.search(raw) or _PERIOD_EN.search(raw)
+            if m:
+                S.period = m.group(0)
+    from financials import meta
+    text = raw + " " + " ".join(
+        _labels(st) for st in (S.balance, S.income, S.cash_flow) if st)
+    S.gaap = meta.detect_gaap(text)
+    S.scope = meta.detect_scope(text)
+    return S, cands, detected, unused
+
+
+def _scan_excel(paths: list[Path], unit: str,
+                ) -> tuple["stm.Statements | None", list[str]]:
+    from financials.from_excel import load_excel_statements
+
+    try:
+        S = load_excel_statements(paths, unit)
+    except Exception as exc:                          # noqa: BLE001
+        return None, [f"Excel 读不了：{type(exc).__name__}: {exc}"]
+    return S, []
+
+
+def scan(directory: str | Path, unit: str = "") -> Materials:
+    """扫一个材料目录，认出三张表。
+
+    `unit` 显式给了就用它；没给就自己认，认不出返回空 —— 不猜。
+    """
+    d = Path(directory).expanduser()
+    if not d.is_dir():
+        raise NotADirectoryError(f"不是一个目录：{d}")
+
+    files = sorted(
+        p for p in d.rglob("*")
+        if p.is_file() and not p.name.startswith(".")
+        and p.suffix.lower() in EXT_KIND
+    )
+    mat = Materials(directory=d)
+    pdfs = [p for p in files if EXT_KIND[p.suffix.lower()] == "pdf"]
+    excels = [p for p in files if EXT_KIND[p.suffix.lower()] == "excel"]
+    htmls = [p for p in files if EXT_KIND[p.suffix.lower()] == "html"]
+    texts = [p for p in files if EXT_KIND[p.suffix.lower()] == "text"]
+
+    # ---------- 单位：先认，认不出就留空 ----------
+    if unit:
+        mat.unit, mat.unit_basis = unit, "你指定的"
+    else:
+        sniff, sniff_name = "", ""
+        for p in (htmls + pdfs + texts)[:6]:
+            t = _read_text(p, 60_000)
+            if detect_unit(t)[0]:
+                sniff, sniff_name = t, p.name
+                break
+            if not sniff:
+                sniff, sniff_name = t, p.name
+        u, basis = detect_unit(sniff)
+        mat.unit, mat.unit_basis = u, (f"{sniff_name}｜{basis}" if u else "")
+        if not u and pdfs:
+            mat.notes.append("单位没从文件名/正文里认出来 —— "
+                             "PDF 的文字层在压缩流里，认不出是正常的，"
+                             "请用 --unit 或问答清单里的 unit 声明")
+
+    # ---------- 三张表：PDF 优先，其次 Excel，最后 HTML ----------
+    if pdfs:
+        S, c, unused = _best_pdf(pdfs, mat.unit)
+        mat.unused.extend(unused)
+        if S is not None:
+            mat.statements, mat.source = S, "PDF"
+            mat.candidates = [c] if c else []
+            for kind in ("balance", "income", "cash_flow"):
+                st = getattr(S, kind)
+                if st is not None:
+                    pdf = c.path if c else d
+                    mat.detected[kind] = getattr(st, "source", "") or pdf.name
+                    mat.candidates.append(Candidate(
+                        pdf, kind,
+                        sum(1 for r in st.rows if r.field is not None),
+                        len(st.rows)))
+    if mat.statements is None and excels:
+        S, unused = _scan_excel(excels, mat.unit)
+        mat.unused.extend(unused)
+        if S is not None:
+            mat.statements, mat.source = S, "Excel"
+            for kind in ("balance", "income", "cash_flow"):
+                st = getattr(S, kind)
+                if st is not None:
+                    nm = getattr(st, "source", "")
+                    mat.detected[kind] = nm
+                    mat.candidates.append(Candidate(
+                        d / nm, kind,
+                        sum(1 for r in st.rows if r.field is not None),
+                        len(st.rows)))
+    if mat.statements is None and htmls:
+        S, cands, detected, unused = _scan_html(htmls, mat.unit)
+        mat.unused.extend(unused)
+        mat.candidates.extend(cands)
+        if S is not None:
+            mat.statements, mat.source = S, "HTML"
+            mat.detected = detected
+
+    if texts:
+        mat.notes.append(f"{len(texts)} 份文本材料（CIM／纪要）不进三张表，"
+                         "走 `freeanalyst.py ingest` 建索引后由 `ask` 用")
+    return mat
+
+
+# ─────────────────────── 问答清单（人给的部分） ───────────────────────
+
+@dataclass
+class Q:
+    """一个必须由人回答的问题。"""
+
+    key: str
+    label: str
+    hint: str = ""
+    default: str = ""
+    reference: str = ""
+    group: str = "假设"
+
+    def line(self) -> str:
+        pad = " " * max(1, 24 - len(self.key))
+        tail = f"　# {self.label}"
+        if self.reference:
+            tail += f"　｜ 参考：{self.reference}"
+        if self.hint:
+            tail += f"　｜ {self.hint}"
+        return f"{self.key}{pad}= {self.default}{tail}"
+
+
+#: 这些键不填，对应的方法就整块不跑 —— 在报告里明说，不假装跑过了。
+NEED = {
+    "dcf": ("risk_free", "equity_risk_premium", "beta_unlevered", "cost_of_debt",
+            "debt", "equity", "tax_rate", "growth", "ebitda_margin",
+            "da_pct_revenue", "capex_pct_revenue", "nwc_pct_revenue",
+            "terminal_growth"),
+    "multiples": ("multiple_low", "multiple_mid", "multiple_high"),
+}
+
+
+def questions(mat: Materials, *, growth_years: int = 5) -> list[Q]:
+    """列出这次估值必须由人给的输入。**不给默认值的键留空。**"""
+    hist = {}
+    if mat.statements is not None:
+        try:
+            hist = mat.statements.history()
+        except Exception:                              # noqa: BLE001
+            hist = {}
+
+    def ref(name: str, pct: bool = True) -> str:
+        v = hist.get(name)
+        if v is None:
+            return "数据不足"
+        return f"{v:.2%}" if pct else f"{v:,.0f}"
+
+    def cur(attr: str) -> str:
+        """材料里推出来的当前值 —— **让用户能看见、能改**。"""
+        return str(getattr(mat.statements, attr, "") or "") if mat.statements else ""
+
+    rev = hist.get("历史实际收入")
+    # **默认值不能是「，，，，」**：那不是"空"，会被读成一个值，
+    # 后面按年数对不上报错，用户看到的是个莫名其妙的提示。
+    blank = ""
+    # 货币按准则给个合理的默认：US GAAP 的报表一般是美元。
+    # 给错了用户看得见（在问答清单里明写着），不给他就得自己想起来。
+    cur_default = "USD" if "US GAAP" in (cur("gaap") or "") else "CNY"
+
+    return [
+        # ── 场景：六项不定，方法无从选 ──
+        Q("target", "标的名称（报告封面上那个）", group="场景",
+          default=mat.directory.name),
+        Q("unit", "金额单位（**错 1000 倍就是这里错**）", group="场景",
+          default=mat.unit, hint="元 / 千元 / 万元 / 百万美元 / 千美元"),
+        Q("purpose", "估值目的", group="场景", default="并购定价",
+          hint="融资定价 / 并购定价 / 投后NAV / 税务合规"),
+        Q("stance", "立场", group="场景", default="买方", hint="买方 / 卖方 / 中立"),
+        Q("stage", "发展阶段", group="场景", default="成熟企业",
+          hint="早期项目 / 成长企业 / 成熟企业 / 业主经营"),
+        Q("valuation_date", "估值基准日", group="场景",
+          default=cur("period") or str(getattr(mat.statements, "period", "") or ""),
+          hint="多期数据按这个日期对齐"),
+        Q("currency", "货币", group="场景", default=cur_default,
+          hint="CNY / USD / HKD"),
+        Q("equity_scope", "权益范围", group="场景", default="100%"),
+
+        # ── 口径：材料里推出来的，**可以覆盖** ──
+        Q("gaap", "会计准则（材料推出来的，不对就改）", group="口径",
+          default=cur("gaap"), hint="CAS / US GAAP / IFRS"),
+        Q("scope", "合并 or 单体（不对就改）", group="口径",
+          default=cur("scope"), hint="合并 / 单体 / 母公司报表"),
+        Q("audited", "审计状态（材料推出来的，不对就改）", group="口径",
+          default=cur("audited"), hint="已审计 / 未审计"),
+
+        # ── 折现率：WACC 的每一项都要来源 ──
+        Q("risk_free", "无风险利率", group="折现率", hint="对应货币的长期国债"),
+        Q("equity_risk_premium", "股权风险溢价", group="折现率"),
+        Q("beta_unlevered", "去杠杆 beta", group="折现率",
+          hint="上市可比公司的无杠杆 beta"),
+        Q("cost_of_debt", "债务成本", group="折现率", hint="实际借款利率或 LPR+利差"),
+        Q("tax_rate", "所得税率", group="折现率", reference="按材料口径"),
+        Q("debt", "有息负债（**市值口径**，WACC 用）", group="折现率"),
+        Q("equity", "股权价值（市值口径，WACC 用）", group="折现率"),
+
+        # ── 预测：这里是判断，不是算 ──
+        Q("growth", f"{growth_years} 年收入增长率（逗号分隔）", group="预测",
+          default=blank, hint="逐年给。只给一个数 = 全期沿用同一个"),
+        Q("ebitda_margin", f"{growth_years} 年 EBITDA 率（逗号分隔）", group="预测",
+          reference=ref("历史 EBITDA 率")),
+        Q("da_pct_revenue", "折旧摊销占收入比", group="预测",
+          reference=ref("历史折旧摊销占收入比")),
+        Q("capex_pct_revenue", "资本开支占收入比", group="预测",
+          reference=ref("历史资本开支占收入比")),
+        Q("nwc_pct_revenue", "净营运资本占收入比", group="预测",
+          reference=ref("历史净营运资本占收入比")),
+        Q("terminal_growth", "永续增长率", group="预测",
+          hint="上界是长期名义 GDP 增速，引擎会拦"),
+
+        # ── 乘数法 ──
+        Q("metric_name", "乘数用的指标", group="乘数法", default="EBITDA",
+          hint="EBITDA / EBIT / 收入 / SDE"),
+        Q("multiple_low", "倍数下沿", group="乘数法", hint="来自可比公司分位数"),
+        Q("multiple_mid", "倍数中枢", group="乘数法"),
+        Q("multiple_high", "倍数上沿", group="乘数法"),
+
+        # ── 可选：不填就整块不跑，报告里会说 ──
+        Q("sens_wacc", "敏感性网格 · WACC 各档（逗号分隔）", group="可选"),
+        Q("sens_growth", "敏感性网格 · 永续增长率各档（逗号分隔）", group="可选"),
+        Q("exit_multiple", "退出倍数交叉验证（如 12）", group="可选"),
+        Q("ask_price", "对方要价（填了就出反向估值）", group="可选"),
+        Q("advisor_tickers", "可比公司代码（逗号分隔，做假设参谋）", group="可选",
+          hint="如 LEA, MGA, BWA —— 走公开域取 EDGAR 数据"),
+        Q("advisor_market", "可比公司市场", group="可选", default="us",
+          hint="us / sh / sz / hk"),
+        Q("advisor_metric", "参谋对照的指标", group="可选", default="revenue_cagr",
+          hint="revenue_cagr / ebitda_margin 等"),
+    ]
+
+
+def render_template(qs: list[Q], mat: Materials) -> str:
+    """把问题排成一份**可填的 txt**。注释里带历史参考，值本身留空。"""
+    out = [
+        "# FreeAnalyst 估值问答清单",
+        "#",
+        "# 怎么用：把等号后面填上，然后跑",
+        "#   python3 freeanalyst.py appraise <材料目录> --answers 这份文件",
+        "#",
+        "# 三条规矩：",
+        "#   1  每个数后面可以跟来源，写成   key = 0.10  @管理层规划 p.12",
+        "#       来源前加 高: / 中: / 低: 可指定置信度（默认中）；不写来源 = 低置信度",
+        "#   2  注释里的「参考」是**历史值**，不是建议值。历史比率不等于预测假设，",
+        "#       填多少是你的判断 —— 引擎不替你决定。",
+        "#   3  空着的键不会替你猜：缺哪些，报告里就少哪一块，并会明说缺的是什么。",
+        "#",
+        mat.render().replace("\n", "\n# "),
+        "#",
+    ]
+    group = None
+    for q in qs:
+        if q.group != group:
+            group = q.group
+            out.append("")
+            out.append(f"[{group}]")
+        out.append(q.line())
+    out.append("")
+    out.append("# 来源示例：@高:2016 年 10-K 审计报告")
+    out.append("#          @管理层规划（CIM p.12）")
+    out.append("#          不写 = 低置信度（会被列进「结果的软肋」）")
+    return "\n".join(out) + "\n"
+
+
+# ─────────────────────────── 读回答 ───────────────────────────
+
+_KV = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$")
+_CONF = {"高": "高", "中": "中", "低": "低"}
+
+
+@dataclass
+class Answer:
+    value: str
+    source: str = ""
+    confidence: str = "低"          # 没写来源 = 低置信度
+
+
+def parse_answer(text: str) -> Answer:
+    """把「0.0245 @高:美国国债」这样一个值解析成 `Answer`。
+
+    来源和置信度的规矩只有一条：**写了来源才算有来源。**
+    没写来源的数字一律标成低置信度 —— 它会出现在报告的「结果的软肋」里，
+    这是有意的：没有来源的假设就是低置信度的假设。
+    """
+    rest = text.strip()
+    src, conf = "", "低"
+    if "@" in rest:
+        rest, tail = (x.strip() for x in rest.split("@", 1))
+        src, conf = tail, "中"
+        for c in _CONF:
+            if tail.startswith(c + ":") or tail.startswith(c + "："):
+                conf, src = c, tail[2:].strip()
+                break
+        src = src or "已注明（未写内容）"
+    return Answer(value=rest, source=src, confidence=conf)
+
+
+def read_answers(path: str | Path) -> dict[str, Answer]:
+    """读问答清单。只认 `key = value`，`#` 开头的整行是注释。"""
+    out: dict[str, Answer] = {}
+    for raw in Path(path).read_text(encoding="utf-8").splitlines():
+        line = raw.split("#")[0].rstrip() if not raw.lstrip().startswith("#") else ""
+        if not line.strip() or line.strip().startswith("["):
+            continue
+        m = _KV.match(line.strip())
+        if not m:
+            continue
+        key, rest = m.group(1), m.group(2).strip()
+        # 只有标点的「值」等于没填 —— 模板里某些默认值会渲染成一串逗号，
+        # 那不是值，读成值会在后面报一个「年数对不上」的莫名错误。
+        if not rest or not rest.strip("，,、 "):
+            continue
+        out[key] = parse_answer(rest)
+    return out
+
+
+def _num(a: Answer) -> float | None:
+    v = a.value.strip().rstrip("%")
+    try:
+        x = float(v)
+    except ValueError:
+        return None
+    # 「11%」这种写法按百分数理解 —— 6 个人里 5 个会这么写。
+    if a.value.strip().endswith("%"):
+        return x / 100.0
+    return x
+
+
+def _lst(val: str) -> list[str]:
+    return [x.strip() for x in re.split(r"[,，\s]+", val.strip()) if x.strip()]
+
+
+def _spec(a: Answer, *, unit: str = "") -> dict:
+    """一个假设 → `value.py` 认的对象形式（带来源与置信度）。"""
+    d: dict = {"value": _num(a), "source": a.source or "未注明（裸数字）",
+               "confidence": a.confidence}
+    if unit:
+        d["unit"] = unit
+    return d
+
+
+def _specs_of(values: list[str], a: Answer, unit: str = "") -> list[dict]:
+    """一组值 → 一组假设。**来源继承整条回答**（一个键一个来源）。"""
+    return [_spec(Answer(value=x, source=a.source, confidence=a.confidence), unit=unit)
+            for x in values]
+
+
+def _specs(a: Answer, unit: str = "") -> list[dict]:
+    return _specs_of(_lst(a.value), a, unit)
+
+
+def build_config(mat: Materials, ans: dict[str, Answer],
+                 *, growth_years: int = 5) -> tuple[dict, list[str]]:
+    """把材料 + 回答拼成一份 `value.py` 认的配置。
+
+    返回 `(cfg, 缺什么)` —— 缺的项对应的方法**整块不生成**，
+    并在报告里明说是缺什么才没跑。
+    """
+    def has(k: str) -> bool:
+        return k in ans and ans[k].value.strip() != ""
+
+    def raw(k: str, default=None):
+        return ans[k].value if has(k) else default
+
+    def require(keys, label: str) -> list[str]:
+        """挑出还没给的必需项。
+
+        **返回的是键名列表，不是提示文字** —— 之前这里比字符串
+        （`k in missing`）判断「缺不缺」，判断永远为假，于是缺一项也会
+        整块生成，最后在取回答时 `KeyError` 崩掉。缺就从结构上拿住。
+        """
+        miss = [k for k in keys if not has(k)]
+        for k in miss:
+            missing.append(f"{label} · {k}")
+        return miss
+
+    unit = raw("unit", mat.unit) or ""
+    missing: list[str] = []
+    cfg: dict = {
+        "target": raw("target", mat.directory.name),
+        "unit": unit,
+        "scenario": {
+            "purpose": raw("purpose", "并购定价"),
+            "stance": raw("stance", "买方"),
+            "stage": raw("stage", "成熟企业"),
+            "valuation_date": raw("valuation_date", ""),
+            "currency": raw("currency", "CNY"),
+            "equity_scope": raw("equity_scope", "100%"),
+        },
+        # 材料来源留档（**不进 statements 节**：PDF/Excel 没法只靠配置复现，
+        # 复现的正确方式是重跑 appraise）
+        "materials": {
+            "dir": str(mat.directory),
+            "source": mat.source,
+            "unit": unit,
+            "gaap": getattr(mat.statements, "gaap", ""),
+            "scope": getattr(mat.statements, "scope", ""),
+            "period": getattr(mat.statements, "period", ""),
+            "detected": mat.detected,
+        },
+    }
+
+    # ---------- 折现率（DCF 的必需项） ----------
+    wacc_keys = ("risk_free", "equity_risk_premium", "beta_unlevered",
+                 "cost_of_debt", "debt", "equity", "tax_rate")
+    if not require(wacc_keys, "折现率"):
+        cfg["wacc"] = {
+            "risk_free": _spec(ans["risk_free"]),
+            "equity_risk_premium": _spec(ans["equity_risk_premium"]),
+            "beta_unlevered": _spec(ans["beta_unlevered"]),
+            "tax_rate": _spec(ans["tax_rate"]),
+            "cost_of_debt": _spec(ans["cost_of_debt"]),
+            "debt": _spec(ans["debt"], unit=unit),
+            "equity": _spec(ans["equity"], unit=unit),
+        }
+        for opt in ("size_premium", "country_risk_premium"):
+            if has(opt):
+                cfg["wacc"][opt] = _spec(ans[opt])
+
+    # ---------- DCF ----------
+    dcf_need = ("growth", "ebitda_margin", "da_pct_revenue",
+                "capex_pct_revenue", "nwc_pct_revenue", "terminal_growth")
+    dcf_miss = require(dcf_need, "预测")
+
+    # 年数与逐年取值先在**一处**算清：dcf.py 要求 years/revenue/ebitda_margin
+    # 三者长度一致，对不上就整块不跑（而不是猜着补齐）。
+    gy = _lst(ans["growth"].value) if has("growth") else []
+    years = len(gy)
+    gm = _lst(ans["ebitda_margin"].value) if has("ebitda_margin") else []
+    if len(gm) == 1 and years > 1:
+        gm = gm * years
+
+    dcf_ready = ("wacc" in cfg and not dcf_miss
+                 and "base_revenue" in _facts_keys(mat))
+    if dcf_ready and (not years or len(gm) != years):
+        missing.append(f"预测 · ebitda_margin 给了 {len(gm)} 个，"
+                       f"增长率给了 {years} 个（年数对不上）")
+        dcf_ready = False
+    if dcf_ready:
+        base = _facts_number(mat, "base_revenue")
+        growth = [float(x) for x in _lst(ans["growth"].value)]
+        gsrc = ans["growth"].source or "未注明"
+        revs, r = [], float(base or 0.0)
+        for g in growth:
+            r *= (1 + g)
+            revs.append({"value": r, "unit": unit, "confidence": ans["growth"].confidence,
+                         "source": f"由基期收入 {base:,.0f} 与逐年增长率推算"
+                                   f"（增长率来源：{gsrc}）"})
+        # `years` 是**年份标签列表**，不是年数 —— `dcf.py` 拿它 len()，
+        # 报告里也按年份展示。从估值基准日推；推不出就先用序号占位并说出来。
+        ym = _YEAR.search(raw("valuation_date", "") or "")
+        if ym:
+            y0 = int(ym.group(0))
+            labels = list(range(y0 + 1, y0 + 1 + years))
+        else:
+            labels = list(range(1, years + 1))
+            missing.append("预测年份标签（估值基准日里没有年份，先用 1…N 占位）")
+        cfg["dcf"] = {
+            "years": labels,
+            "base_revenue": _spec(Answer(value=f"{base}", source="三张表（最近一个实际年度）",
+                                         confidence="高"), unit=unit),
+            "revenue": revs,
+            # **用展开后的 `gm`，不是原样再解析一遍** —— 用户只给一个
+            # EBITDA 率时会被展开到每一年，这里若重新 `_lst` 就又变回一个，
+            # dcf.py 会因长度不一致直接报错。
+            "ebitda_margin": _specs_of(gm, ans["ebitda_margin"], unit),
+            "tax_rate": _spec(ans["tax_rate"]),
+            "da_pct_revenue": _spec(ans["da_pct_revenue"]),
+            "capex_pct_revenue": _spec(ans["capex_pct_revenue"]),
+            "nwc_pct_revenue": _spec(ans["nwc_pct_revenue"]),
+            "terminal_growth": _spec(ans["terminal_growth"]),
+        }
+        if has("exit_multiple"):
+            cfg["dcf"]["exit_multiple"] = float(ans["exit_multiple"].value)
+        if has("sens_wacc") and has("sens_growth"):
+            cfg["dcf"]["sensitivity"] = {
+                "wacc": [float(x) for x in _lst(ans["sens_wacc"].value)],
+                "growth": [float(x) for x in _lst(ans["sens_growth"].value)],
+            }
+        else:
+            missing.append("可选 · 敏感性网格（sens_wacc / sens_growth）"
+                           "—— 没有它 Football Field 的区间只能取点值")
+
+    # ---------- 乘数法 ----------
+    mult_miss = require(("multiple_low", "multiple_mid", "multiple_high"), "乘数法")
+    metric = (raw("metric_name", "EBITDA") or "EBITDA").strip()
+    mv = _facts_number(mat, "ebitda") if metric.upper() == "EBITDA" else None
+    if mv is None:
+        mv = _facts_number(mat, "base_revenue") if metric == "收入" else None
+    if mv is None:
+        missing.append(f"乘数法 · 指标值（{metric}）—— 材料里推不出这个指标，"
+                       "要么在材料里补，要么把 metric_name 换成别的")
+    if not mult_miss and mv is not None:
+        cfg["multiples"] = {
+            "metric_name": metric,
+            "metric_value": {"value": mv, "unit": unit, "source": "三张表推算",
+                             "confidence": "高"},
+            "multiple_low": _spec(ans["multiple_low"]),
+            "multiple_mid": _spec(ans["multiple_mid"]),
+            "multiple_high": _spec(ans["multiple_high"]),
+        }
+
+    # ---------- 反向估值 ----------
+    if has("ask_price"):
+        cfg["ask_price"] = float(ans["ask_price"].value)
+
+    # ---------- 假设参谋（可选，走公开域） ----------
+    if has("advisor_tickers"):
+        tickers = _lst(ans["advisor_tickers"].value)
+        cfg["advisor"] = {"peer_sets": {
+            f"可比公司（{raw('advisor_market', 'us')}）": {
+                "tickers": tickers,
+                "metric": raw("advisor_metric", "revenue_cagr"),
+                "years": growth_years,
+                "as_of": cfg["scenario"]["valuation_date"] or "",
+            }}}
+    return cfg, missing
+
+
+def _facts_keys(mat: Materials) -> dict:
+    if mat.statements is None:
+        return {}
+    try:
+        return mat.statements.facts()
+    except Exception:                                  # noqa: BLE001
+        return {}
+
+
+def _facts_number(mat: Materials, key: str) -> float | None:
+    if key == "ebitda":
+        inc = getattr(mat.statements, "income", None) if mat.statements else None
+        if inc is None:
+            return None
+        from financials import derive as dv
+        try:
+            d = dv.ebitda(inc.fields)
+        except Exception:                              # noqa: BLE001
+            return None
+        return getattr(d, "value", None)
+    f = _facts_keys(mat).get(key)
+    return getattr(f, "value", None)
+
+
+# ─────────────────────────── 编排 ───────────────────────────
+
+def appraise(directory: str | Path, answers: str | Path | None = None,
+             *, unit: str = "", out_dir: str | Path | None = None,
+             no_trace: bool = False, growth_years: int = 5) -> int:
+    """材料目录 → 报告。没给 `answers` 时先出问答清单。"""
+    d = Path(directory).expanduser().resolve()
+    try:
+        mat = scan(d, unit=unit)
+    except NotADirectoryError as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        return 1
+
+    print("─" * 74)
+    print("材料扫描")
+    print("─" * 74)
+    print(mat.render())
+    print()
+
+    if mat.statements is None:
+        print("✗ 三张表一张都没认出来 —— 先解决这个，后面的估值没有基础。")
+        print("  常见的三种原因：① 材料是扫描件且 OCR 没跑（仅 macOS 支持）")
+        print("  ② 这份材料本来就不是三大报表（比如是商业计划书）")
+        print("  ③ 文件是我没见过的格式")
+        return 1
+
+    # 勾稽先跑一遍，让「能不能用这份材料」当场有答案。
+    try:
+        checks = mat.statements.checks()
+        bad = [c for c in checks if c.ok is False]
+        unknown = [c for c in checks if c.ok is None and c.applicable]
+        if bad:
+            print(f"⚠ 勾稽不平 {len(bad)} 条 —— 下面的推算结果先别用，"
+                  "先看是哪一行归属错了")
+        elif unknown:
+            print(f"⚠ 有 {len(unknown)} 条勾稽判不了（缺科目），"
+                  "那些口径按缺口处理")
+        else:
+            print("✓ 勾稽都能判、而且都平")
+        print()
+    except Exception as exc:                           # noqa: BLE001
+        print(f"⚠ 勾稽校验本身出错了（{type(exc).__name__}: {exc}）—— 照实报出来")
+        print()
+
+    qs = questions(mat, growth_years=growth_years)
+    tpl = d / "估值问答.txt"
+    tpl.write_text(render_template(qs, mat), encoding="utf-8")
+
+    if answers is None:
+        print(f"问答清单已写好：{tpl}")
+        print("填完再跑一次（加 --answers 指向它），中间不用碰任何 JSON。")
+        print()
+        print("这次必须你给的（空着的都不会替你猜）：")
+        for q in qs[:12]:
+            if not q.default:
+                print(f"  · {q.label}")
+        return 0
+
+    ans = read_answers(answers)
+    print(f"读到回答 {len(ans)} 条（{Path(answers).name}）")
+    if not (ans.get("unit") or mat.unit):
+        print("✗ 单位还没确定（报表可能是千美元，引擎默认万元 —— 差 1000 倍）。")
+        print("  在问答清单里把 unit 填上，或加 --unit 千美元 重跑。")
+        return 1
+
+    cfg, missing = build_config(mat, ans, growth_years=growth_years)
+
+    # 口径三项：问答清单里能覆盖材料推出来的值 ——
+    # **机器只推，改不改由人定。** 推错的口径无声无息，所以留一个改的入口。
+    for attr in ("gaap", "scope", "audited"):
+        if ans.get(attr) and ans[attr].value.strip():
+            setattr(mat.statements, attr, ans[attr].value.strip())
+
+    from value import run_report
+
+    out_dir = Path(out_dir) if out_dir else d
+    stem = re.sub(r"[^\w\u4e00-\u9fff-]+", "_", str(cfg.get("target") or "估值"))
+    cfg_path = out_dir / f"{stem}.config.json"
+    report_path = out_dir / f"{stem}.报告.txt"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    cfg_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    report = run_report(cfg, cfg_path.parent, statements=mat.statements,
+                        no_trace=no_trace)
+
+    head = ["=" * 74, "本次没跑的与没给的（**不是没发生**）", "=" * 74]
+    if missing:
+        for m in dict.fromkeys(missing):
+            head.append(f"  ✗ {m}")
+        head.append("")
+        head.append("  上面每一项都对应报告里少掉的一块。缺不是错，"
+                    "**错了的是不给却说跑过了**。")
+    else:
+        head.append("  无 —— 该给的全给了")
+    text = "\n".join(head) + "\n\n" + report
+    report_path.write_text(text, encoding="utf-8")
+
+    print()
+    print(text)
+    print()
+    print(f"配置留档：{cfg_path}")
+    print(f"报告落盘：{report_path}")
+    return 0
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description="材料目录 → 估值报告")
+    ap.add_argument("materials", help="材料目录")
+    ap.add_argument("--answers", help="填好的问答清单")
+    ap.add_argument("--unit", default="", help="金额单位（认不出时用这个声明）")
+    ap.add_argument("--out", help="配置与报告的输出目录（默认为材料目录）")
+    ap.add_argument("--no-trace", action="store_true", help="不打印计算追溯")
+    ap.add_argument("--years", type=int, default=5, help="预测年数（默认 5）")
+    args = ap.parse_args()
+    return appraise(args.materials, args.answers, unit=args.unit, out_dir=args.out,
+                    no_trace=args.no_trace, growth_years=args.years)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

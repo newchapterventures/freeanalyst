@@ -81,9 +81,24 @@ def load_from_config(cfg: dict, base: Path) -> stm.Statements:
 
 
 def run_statements(cfg: dict, out: list[str], base: Path) -> stm.Statements:
-    """把报表集的分析追加到 `out`。返回报表集供调用方继续用。"""
+    """从配置读报表集，并把分析追加到 `out`。"""
     s = load_from_config(cfg, base)
+    render_statements(s, out)
+    return s
 
+
+def render_statements(s: stm.Statements, out: list[str]) -> None:
+    """把**已经装配好的**报表集写进报告。
+
+    ## 为什么把这段拆出来
+
+    `statements` 配置节只认「一张表一个文件」的 HTML。PDF 与 Excel 走的是
+    `from_pdf.load_pdf_statements` / `from_excel.load_excel_statements`，
+    一次出一整套三张表，**根本进不了配置** —— 于是这两类材料到不了估值。
+
+    `intake.py` 就是来接这条断链的：它在内存里装好 `Statements`。
+    报告正文必须和走配置时**完全一致**，所以正文只有这一份实现。
+    """
     out.append("\n" + "─" * 74)
     out.append("三张表解析")
     out.append("─" * 74)
@@ -136,8 +151,6 @@ def run_statements(cfg: dict, out: list[str], base: Path) -> stm.Statements:
         out.append("\n  口径声明缺口：")
         for w in s.warnings:
             out.append(f"    · {w}")
-
-    return s
 
 
 def apply_facts(cfg: dict, s: stm.Statements) -> list[str]:
