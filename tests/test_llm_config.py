@@ -354,25 +354,59 @@ class TestModelGuide(unittest.TestCase):
 
 
     def test_quality_table_reads_the_real_runs(self):
-        """成绩必须来自跑过的文件 —— 页面上的每一行都要能追到一次真跑。"""
+        """成绩必须来自跑过的文件 —— 页面上的每一行都要能追到一次真跑。
+
+        **不在这里钉死具体分数**：每次重测分数就会变（14b 从 4/5 变 3/5，
+        仅仅因为本机调用路径从 /v1 换成原生 + 关掉思考），钉死分数等于让
+        "重新量一次"必然弄红测试 —— 那样人就会去改测试，而不是看数据。
+        这里只钉形状：有分、有总分、没过就写清卡在哪几项、云端的能认出来。
+        """
         from llm import guide
 
         rows = guide.quality_rows()
         self.assertTrue(rows, "bench/gate-*.json 里应该有成绩")
         by = {r["model"]: r for r in rows}
         self.assertIn("qwen3:14b", by)
-        self.assertEqual(by["qwen3:14b"]["passed"], 4)
+        r14 = by["qwen3:14b"]
+        self.assertEqual(r14["total"], 5)
+        self.assertGreaterEqual(r14["passed"], 0)
         self.assertFalse(by["deepseek/deepseek-chat"]["local"], "带服务商前缀的是云端")
-        self.assertTrue(by["qwen3:14b"]["failed"], "未过的要写出卡在哪几项")
+        if r14["passed"] < r14["total"] and not r14["error"]:
+            self.assertTrue(r14["failed"], "未过的要写出卡在哪几项")
+        self.assertIn("qwen3.5:4b", by, "当前一代要在表里（它就是过门槛的那个）")
 
-    def test_truth_says_local_does_not_pass_yet(self):
-        """**最该先说清的一句**：本机现在过不了门槛，只能当辅助。"""
+    def test_truth_reports_that_a_local_model_passes(self):
+        """**最该先说清的一句**：现在本机有过的了（qwen3.5:4b 5/5），代价也要说清。
+
+        这条断言随实测变过 —— 2026-09 修好本机调用路径（思考型模型在 /v1 上关不掉思考，
+        答案全被挤进 reasoning、content 恒空）之后重测，4b 才第一次过门槛。
+        写测试的意义就在这：**结论变了，测试必须跟着变**，而不是把旧结论钉死。
+        """
         from llm import guide
 
         txt = " ".join(guide.truth_lines())
-        self.assertIn("没有一个过门槛", txt)
-        self.assertIn("人工", txt)
+        self.assertIn("能过门槛", txt)
+        self.assertIn("qwen3.5:4b", txt, "过门槛的模型名字要报出来")
+        self.assertIn("人工", txt, "过门槛也要说\"关键结论人工核对\"")
+        self.assertIn("不等于", txt, "大不等于稳，这条也得说")
         self.assertIn("deepseek", txt.lower(), "有过门槛的要报出来（连同它的代价）")
+
+    def test_truth_still_says_assistant_when_nothing_passes(self):
+        """一场空的时候仍要说\"没有一个过门槛、只能当辅助\"—— 不能让新分支把话说丢了。"""
+        from llm import guide
+
+        rows = [{"model": "x:1b", "passed": 2, "total": 5, "score": "2/5",
+                 "verdict": "未达门槛", "error": "", "failed": ["主体识别"], "local": True},
+                {"model": "p/m", "passed": 5, "total": 5, "score": "5/5",
+                 "verdict": "够格", "error": "", "failed": [], "local": False}]
+        orig = guide.quality_rows
+        guide.quality_rows = lambda: rows
+        try:
+            txt = " ".join(guide.truth_lines())
+        finally:
+            guide.quality_rows = orig
+        self.assertIn("没有一个过门槛", txt)
+        self.assertIn("辅助", txt)
 
     def test_recommend_with_no_measurement_says_so(self):
         from llm import guide
