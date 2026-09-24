@@ -37,10 +37,11 @@
 from __future__ import annotations
 
 import argparse
-import html
 import json
+import socket
 import sys
 import threading
+import urllib.request
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -450,29 +451,74 @@ async function go(){
 """
 
 
+def find_port(host: str, want: int, tries: int = 12) -> int:
+    """端口被占就往后找一个。
+
+    ## 为什么非要这个（实测踩到）
+
+    第一次交付时，用户在浏览器里看到的是 `ERR_CONNECTION_REFUSED`：
+    服务没起来，而页面上没有一行字告诉他为什么。
+    **"打不开"绝不能是这种工具给人的第一印象** —— 它得自己说清楚是
+    端口被占了、还是别的。
+
+    所以：先试想要的那个，占了就往后挪，并把真实端口**打在屏幕上**、
+    也用真实端口去开浏览器。宁可换端口，也不要一句 error。
+    """
+    for p in range(want, want + tries):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                s.bind((host, p))
+                return p
+            except OSError:
+                continue
+    raise SystemExit(f"× {want} 起往后 {tries} 个端口都被占了 —— 用 --port 换一个")
+
+
+def _ready_check(url: str) -> None:
+    """起来之后自己请求一遍，成功就在屏幕上打一行。
+
+    这一行的意思是「端口确实通了」—— 不用人靠浏览器去猜。
+    失败也照实打出来（**不许静默**）。
+    """
+    try:
+        with urllib.request.urlopen(url + "api/health", timeout=5) as r:
+            ok = b'"ok": true' in r.read() or r.status == 200
+        print(f"  ✓ 自检通过：{url} 能打开（这一行说明端口通了）" if ok
+              else "  × 自检异常：服务起来了但健康检查没通过")
+    except Exception as exc:                            # noqa: BLE001
+        print(f"  × 自检失败：{type(exc).__name__}: {exc}")
+        print("    如果你浏览器里看到「拒绝连接」，多半是**代理**把 127.0.0.1 也劫走了 ——")
+        print("    在 Clash 的 bypass/直连列表里加上 127.0.0.1,localhost，或先关掉系统代理。")
+
+
 def serve(materials: str | None = None, *, port: int = DEFAULT_PORT,
           open_browser: bool = True) -> int:
     """起本地服务。**只绑 127.0.0.1。**
 
     传了 `materials` 会预扫一遍并把它填进页面（省得手打路径）。
     """
-    url = f"http://{HOST}:{port}/"
     if materials:
         path = str(Path(materials).expanduser().resolve())
         print(f"预扫材料：{path}")
         try:
             _CACHE[path] = intake.scan(path)
-        except Exception as exc:                       # noqa: BLE001
+        except Exception as exc:                        # noqa: BLE001
             print(f"  预扫失败（页面上可以重填）：{type(exc).__name__}: {exc}")
 
-    srv = ThreadingHTTPServer((HOST, port), Handler)
+    real = find_port(HOST, port)
+    if real != port:
+        print(f"注意：{port} 被别的程序占了，改用 {real}")
+    srv = ThreadingHTTPServer((HOST, real), Handler)
+    url = f"http://{HOST}:{real}/"
     print("─" * 66)
     print(f"FreeAnalyst 本地向导　{url}")
     print(f"  只绑 {HOST} —— 同一个 WiFi 下的其他机器**访问不到**")
     print("  按 Ctrl-C 停止")
     print("─" * 66)
+    threading.Timer(0.6, lambda: _ready_check(url)).start()
     if open_browser:
-        threading.Timer(0.4, lambda: webbrowser.open(url)).start()
+        threading.Timer(0.8, lambda: webbrowser.open(url)).start()
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

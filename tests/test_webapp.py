@@ -140,6 +140,33 @@ class TestApiAppraise(unittest.TestCase):
                              run_report(cfg, Path(d), statements=mat.statements))
 
 
+class TestPortFallback(unittest.TestCase):
+    """端口被占时要自己换一个 —— **不能让"打不开"成为第一印象。**
+
+    实测第一次交付时用户看到的就是 `ERR_CONNECTION_REFUSED`。
+    """
+
+    def test_skips_a_taken_port(self):
+        srv = ThreadingHTTPServer(("127.0.0.1", 0), webapp.Handler)
+        taken = srv.server_address[1]
+        try:
+            got = webapp.find_port("127.0.0.1", taken)
+            self.assertNotEqual(got, taken, "被占的端口不该再被选")
+            self.assertGreater(got, taken)
+        finally:
+            srv.server_close()
+
+    def test_uses_the_wanted_port_when_free(self):
+        srv = ThreadingHTTPServer(("127.0.0.1", 0), webapp.Handler)   # 先拿一个空的
+        free = srv.server_address[1]
+        srv.server_close()                                            # 马上还回去
+        self.assertEqual(webapp.find_port("127.0.0.1", free), free)
+
+    def test_gives_up_with_a_message(self):
+        with self.assertRaises(SystemExit):
+            webapp.find_port("127.0.0.1", 1, tries=1)   # 1 号端口跑不了（特权）
+
+
 class TestHttpLayer(unittest.TestCase):
     """HTTP 那一层也测 —— **只测函数的话，路由写错发现不了。**
 
