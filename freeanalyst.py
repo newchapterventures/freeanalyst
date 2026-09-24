@@ -344,6 +344,13 @@ def cmd_appraise(args: argparse.Namespace) -> int:
                     growth_years=args.years)
 
 
+def cmd_ui(args: argparse.Namespace) -> int:
+    """起本地网页向导。**只绑 127.0.0.1** —— 同一个 WiFi 下别的机器访问不到。"""
+    import webapp
+    return webapp.serve(args.materials, port=args.port,
+                        open_browser=not args.no_open)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(prog="freeanalyst", description="本地优先的投资尽调 agent")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -366,6 +373,12 @@ def main() -> int:
     p_app.add_argument("--years", type=int, default=5, help="预测年数（默认 5）")
     p_app.add_argument("--no-trace", action="store_true", help="不打印计算追溯")
     p_app.set_defaults(func=cmd_appraise)
+
+    p_ui = sub.add_parser("ui", help="起本地网页向导（只绑 127.0.0.1）")
+    p_ui.add_argument("materials", nargs="?", default=None, help="材料目录或单个文件")
+    p_ui.add_argument("--port", type=int, default=8765)
+    p_ui.add_argument("--no-open", action="store_true", help="不自动开浏览器")
+    p_ui.set_defaults(func=cmd_ui)
 
     p_models = sub.add_parser("models", help="看本机有哪些模型运行时，能不能用")
     p_models.add_argument("--gate", default="",
