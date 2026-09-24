@@ -725,6 +725,20 @@ def main() -> int:
             verdict = f"⚠ 测不了（{call_error}）"
             print(f"\n  ⚠ **这次没测成**：{call_error}")
             print("    这不是「模型不行」的结论 —— 先查密钥 / 网络 / 服务地址。")
+        # **回答为空不是"答错"。** 实测：qwen3.5:9b 五道题里四道回答是空的
+        # （思考占满 token 预算，答案一个字没出），裁定写成"未达门槛 1/5" ——
+        # 人会据此把模型否掉，而该做的是先调预算/关思考再测。
+        # 过半为空 → 这次根本没测成；少数几道空 → 仍按成绩算，但把原因点出来。
+        # （这是同一类假裁定的**第三次**出现：前两次是 401 认证失败、超时）
+        answers = [(r.get("answer") or "").strip() for rr in rounds for r in rr]
+        empty = sum(1 for a in answers if not a)
+        if not call_error and answers and empty * 2 > len(answers) and n_pass < len(CASES):
+            call_error = (f"{empty}/{len(answers)} 处回答为空 —— "
+                          "很可能是思考占满了 token 预算（不是模型答错）")
+            verdict = f"⚠ 测不了（{call_error}）"
+            print(f"\n  ⚠ **这次没测成**：{call_error}")
+            print("    先给足 token 预算（或关掉思考模式）再跑一次 ——")
+            print("    拿空回答去判质量，等于没测。")
         print(f"\n  小计：{n_pass}/{len(CASES)} —— {verdict}\n")
         report[model] = {"passed": n_pass, "total": len(CASES),
                          "verdict": verdict, "results": results,

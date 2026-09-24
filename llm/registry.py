@@ -73,7 +73,9 @@ def manifest_size_gb(family: str, tag: str, timeout: int = 20,
         return None
     total = sum(int(l.get("size") or 0)
                 for l in (d.get("layers") or d.get("manifests") or []))
-    return round(total / 1024 ** 3, 1) if total else None
+    # **按十进制 GB 报**，和 `ollama list` 显示的口径一致 ——
+    # 之前用 1024³（GiB），算出 6.1 而 ollama 显示 6.6，用户会以为哪里出错了。
+    return round(total / 1000 ** 3, 1) if total else None
 
 
 def _load_cache() -> dict:

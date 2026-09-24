@@ -82,18 +82,20 @@ def list_models() -> list[dict]:
     out = []
     for m in d.get("models", []):
         out.append({"name": m.get("name", ""),
-                    "file_gb": round((m.get("size") or 0) / 1024 ** 3, 1),
+                    # 十进制 GB —— 与 `ollama list` 显示的口径一致
+                    # （用 1024³ 会算出 6.1 而 ollama 显示 6.6，用户会以为出错了）
+                    "file_gb": round((m.get("size") or 0) / 1000 ** 3, 1),
                     "params": (m.get("details") or {}).get("parameter_size", ""),
                     "quant": (m.get("details") or {}).get("quantization_level", "")})
     return sorted(out, key=lambda x: x["file_gb"])
 
 
 def resident_gb(name: str) -> float:
-    """模型现在占多少内存（ollama 自报，含 KV cache）。"""
+    """模型现在占多少内存（ollama 自报，含 KV cache）。十进制 GB，与 ollama 一致。"""
     try:
         for m in _get(f"{OLLAMA}/api/ps").get("models", []):
             if m.get("name") == name or m.get("model") == name:
-                return round((m.get("size") or 0) / 1024 ** 3, 1)
+                return round((m.get("size") or 0) / 1000 ** 3, 1)
     except Exception:                                       # noqa: BLE001
         pass
     return 0.0

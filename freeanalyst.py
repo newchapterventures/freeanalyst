@@ -231,6 +231,10 @@ def call_model(model: str, system: str, user: str, *, consent=None,
             ],
             "temperature": 0.1,
             "stream": False,
+            # **必须给足 token 预算。** 不给的时候，思考型模型（qwen3 系、qwen3.5 系）
+            # 会把预算全烧在思考上，答案一个字都出不来 —— 实测 qwen3.5:9b 五道评测题
+            # 四道返回空字符串，而裁定写成"未达门槛 1/5"（拿空回答判质量，等于没测）。
+            "max_tokens": 4096,
         }
     ).encode("utf-8")
 

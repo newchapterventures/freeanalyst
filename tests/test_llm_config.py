@@ -391,5 +391,49 @@ class TestModelGuide(unittest.TestCase):
         self.assertEqual(q["failed"], [], "测不了的不列『卡在哪几项』（那是质量裁定）")
 
 
+    def test_mostly_empty_answers_is_not_a_verdict(self):
+        """4/5 题回答为空 ≠ 模型答错 —— 那是没测成（思考占满 token 预算）。
+
+        实测踩到：qwen3.5:9b 五道题四道"模型原文"是空的，裁定却写"未达门槛 1/5"。
+        拿空回答判质量，等于没测。
+        """
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "r.json"
+            p.write_text(json.dumps({"m": {
+                "passed": 1, "total": 5,
+                "results": [
+                    {"name": "单位纪律", "passed": True, "answer": "没问题"},
+                    {"name": "主体识别", "passed": False, "answer": "",
+                     "reasons": ["缺少「结论」分节，无法判分"]},
+                    {"name": "跨文档冲突", "passed": False, "answer": "",
+                     "reasons": ["未引用 CIM 片段"]},
+                    {"name": "格式遵循", "passed": False, "answer": "",
+                     "reasons": ["缺少分节「结论」"]},
+                    {"name": "拒答幻觉", "passed": False, "answer": "",
+                     "reasons": ["缺少「结论」分节，无法判分"]},
+                ]}}, ensure_ascii=False), encoding="utf-8")
+            r = gate._from_json("m", p)
+        self.assertIsNotNone(r)
+        assert r is not None
+        self.assertIn("4/5 处回答为空", r.error)
+        self.assertIn("测不了", r.line())
+
+    def test_one_empty_answer_still_verdicts(self):
+        """只有一道空 → 仍按成绩算（别把真不合格也说成测不了）。"""
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "r.json"
+            p.write_text(json.dumps({"m": {
+                "passed": 3, "total": 5,
+                "results": [{"name": f"用例{i}", "passed": i < 3,
+                             "answer": "" if i == 4 else "答案",
+                             "reasons": ["答错了"] if i >= 3 else []}
+                            for i in range(5)]}}, ensure_ascii=False), encoding="utf-8")
+            r = gate._from_json("m", p)
+        self.assertIsNotNone(r)
+        assert r is not None
+        self.assertEqual(r.error, "")
+        self.assertIn("3/5", r.line())
+
+
 if __name__ == "__main__":
     unittest.main()
