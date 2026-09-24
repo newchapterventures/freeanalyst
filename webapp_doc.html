@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+<!--
+  FreeAnalyst 说明文件（本机页面，路由 /doc）。
+
+  为什么单独一个文件而不是塞进 README：README 是给**开发者/审计者**看的，
+  这一页是给**使用者**看的 —— 功能、免责声明、用哪些模型、怎么用、怎么调试、
+  怎么接自己的大模型。两边的读者不同，混在一份里两边都不好用。
+
+  双语用两个内容块 + 切换显隐（而不是逐条 key）：长文逐条维护词表太脆。
+  语言选择与向导共用同一个 localStorage 键（fa.lang）。
+-->
+<html lang="zh"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FreeAnalyst · 说明文件</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 19 33' shape-rendering='crispEdges'%3E%3Cg fill='%23E9B949'%3E%3Crect x='2' y='2' width='3' height='3'/%3E%3Crect x='6' y='2' width='3' height='3'/%3E%3Crect x='10' y='2' width='3' height='3'/%3E%3Crect x='14' y='2' width='3' height='3'/%3E%3Crect x='6' y='6' width='3' height='3'/%3E%3Crect x='10' y='6' width='3' height='3'/%3E%3Crect x='14' y='6' width='3' height='3'/%3E%3C/g%3E%3Cg fill='%23C9D2DC'%3E%3Crect x='2' y='12' width='3' height='3'/%3E%3Crect x='6' y='12' width='3' height='3'/%3E%3Crect x='10' y='12' width='3' height='3'/%3E%3Crect x='14' y='12' width='3' height='3'/%3E%3Crect x='2' y='28' width='3' height='3'/%3E%3Crect x='6' y='28' width='3' height='3'/%3E%3Crect x='10' y='28' width='3' height='3'/%3E%3Crect x='14' y='28' width='3' height='3'/%3E%3C/g%3E%3Crect fill='%23E5484D' x='2' y='6' width='3' height='3'/%3E%3C/svg%3E">
+<style>
+  :root{
+    --bg:#05070A; --panel:#0A0F16; --panel2:#0D141C; --line:#16212B;
+    --fg:#D7F5E9; --mut:#5F7C77; --pri:#00E5A0; --amber:#FFB000; --mag:#FF2E63;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,"Cascadia Mono","PingFang SC",monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{background:var(--bg);color:var(--fg);font:13px/1.75 var(--mono);
+    -webkit-font-smoothing:antialiased;
+    background-image:
+      radial-gradient(900px 420px at 12% -8%, rgba(0,229,160,.055), transparent 62%),
+      linear-gradient(rgba(0,229,160,.028) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0,229,160,.028) 1px, transparent 1px);
+    background-size:auto,34px 34px,34px 34px}
+  body::after{content:"";position:fixed;inset:0;pointer-events:none;z-index:9;
+    background:repeating-linear-gradient(180deg, rgba(255,255,255,.020) 0 1px, transparent 1px 3px);
+    mix-blend-mode:screen}
+  .wrap{max-width:900px;margin:0 auto;padding:30px 24px 90px}
+  .top{display:flex;gap:14px;align-items:center;margin-bottom:6px}
+  .logo{flex:0 0 auto;filter:drop-shadow(0 0 7px rgba(108,92,231,.40))}
+  .head-txt{flex:1 1 auto}
+  h1.word{font-size:20px;font-weight:700;letter-spacing:.26em;margin:0;line-height:1.1}
+  h1.word em{font-style:normal;color:var(--pri)}
+  .tag{color:var(--mut);font-size:12px}
+  .lang{flex:0 0 auto;display:flex;border:1px solid var(--line);border-radius:2px;overflow:hidden}
+  .lang button{background:transparent;border:0;color:var(--mut);font-family:var(--mono);
+    font-size:11.5px;letter-spacing:.06em;padding:6px 12px;cursor:pointer}
+  .lang button.on{color:var(--pri);background:rgba(0,229,160,.10)}
+  .nav{display:flex;gap:14px;flex-wrap:wrap;margin:14px 0 22px;font-size:12px}
+  .nav a{color:var(--pri);text-decoration:none;border-bottom:1px solid rgba(0,229,160,.35)}
+  .nav a:hover{border-bottom-color:var(--pri)}
+  .nav a.back{color:var(--mut);border-bottom-color:var(--line)}
+  .byline{color:#42565A;font-size:11px;letter-spacing:.14em;margin-top:3px}
+  .ver{margin-top:14px;padding-top:11px;border-top:1px solid var(--line);
+       color:var(--mut);font-size:11.5px;letter-spacing:.06em}
+  .ver b{color:var(--pri);font-weight:400}
+  .ver span{color:#42565A;letter-spacing:.12em}
+  h2{font-size:14px;letter-spacing:.04em;margin:30px 0 10px;padding-top:16px;
+     border-top:1px solid var(--line)}
+  h2:first-of-type{border-top:0;padding-top:0}
+  h2 .idx{color:var(--pri);margin-right:8px}
+  h3{font-size:12.5px;color:var(--amber);font-weight:400;letter-spacing:.06em;
+     margin:16px 0 6px;text-transform:uppercase}
+  p,li{color:#BFD9CF}
+  ul{padding-left:20px;margin:8px 0}
+  li{margin:4px 0}
+  b{color:var(--fg);font-weight:700}
+  code{color:var(--amber);background:rgba(255,176,0,.07);padding:1px 5px;border-radius:2px}
+  .card{background:linear-gradient(180deg,var(--panel),var(--panel2));
+        border:1px solid var(--line);border-radius:3px;padding:14px 16px;margin:12px 0}
+  .warn{border:1px dashed rgba(255,46,99,.40);background:rgba(255,46,99,.035);
+        border-radius:3px;padding:13px 16px;margin:12px 0}
+  .warn b{color:var(--mag)}
+  .note{border:1px dashed rgba(255,176,0,.30);background:rgba(255,176,0,.025);
+        border-radius:3px;padding:13px 16px;margin:12px 0}
+  .note b{color:var(--amber)}
+  table{width:100%;border-collapse:collapse;font-size:12.5px;margin:10px 0}
+  th,td{text-align:left;padding:7px 9px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--mut);font-weight:400;font-size:11px;letter-spacing:.06em;text-transform:uppercase}
+  tbody tr:nth-child(even){background:rgba(255,255,255,.014)}
+  footer{margin-top:34px;padding-top:16px;border-top:1px solid var(--line);
+         color:var(--mut);font-size:11.5px}
+  .hide{display:none}
+</style></head><body><div class="wrap">
+
+  <div class="top">
+    <svg class="logo" width="26" height="45" viewBox="0 0 19 33" shape-rendering="crispEdges"
+         role="img" aria-label="算盘">
+      <g fill="#E9B949">
+        <rect x="2" y="2" width="3" height="3"/><rect x="6" y="2" width="3" height="3"/>
+        <rect x="10" y="2" width="3" height="3"/><rect x="14" y="2" width="3" height="3"/>
+        <rect x="6" y="6" width="3" height="3"/><rect x="10" y="6" width="3" height="3"/>
+        <rect x="14" y="6" width="3" height="3"/>
+      </g>
+      <g fill="#C9D2DC">
+        <rect x="2" y="12" width="3" height="3"/><rect x="6" y="12" width="3" height="3"/>
+        <rect x="10" y="12" width="3" height="3"/><rect x="14" y="12" width="3" height="3"/>
+        <rect x="2" y="16" width="3" height="3"/><rect x="6" y="16" width="3" height="3"/>
+        <rect x="10" y="16" width="3" height="3"/><rect x="14" y="16" width="3" height="3"/>
+        <rect x="2" y="20" width="3" height="3"/><rect x="6" y="20" width="3" height="3"/>
+        <rect x="10" y="20" width="3" height="3"/><rect x="14" y="20" width="3" height="3"/>
+        <rect x="2" y="24" width="3" height="3"/><rect x="6" y="24" width="3" height="3"/>
+        <rect x="10" y="24" width="3" height="3"/><rect x="14" y="24" width="3" height="3"/>
+        <rect x="2" y="28" width="3" height="3"/><rect x="6" y="28" width="3" height="3"/>
+        <rect x="10" y="28" width="3" height="3"/><rect x="14" y="28" width="3" height="3"/>
+      </g>
+      <rect fill="#E5484D" x="2" y="6" width="3" height="3"/>
+    </svg>
+    <div class="head-txt">
+      <h1 class="word">FREE<em>ANALYST</em></h1>
+      <div class="tag" data-zh="说明文件 · 功能 / 免责声明 / 模型 / 使用 / 调试 / 接入"
+           data-en="Documentation · Features / Disclaimer / Models / Usage / Debugging / Bring your own model"></div>
+      <div class="byline" data-zh="by New Chapter Ventures" data-en="by New Chapter Ventures"></div>
+    </div>
+    <div class="lang" role="group">
+      <button type="button" data-lang="zh">中文</button>
+      <button type="button" data-lang="en">EN</button>
+    </div>
+  </div>
+
+  <div class="nav">
+    <a href="/" class="back" data-zh="← 返回估值向导" data-en="← Back to the workbench"></a>
+    <a href="#features" data-zh="功能" data-en="Features"></a>
+    <a href="#limits" data-zh="已知限制" data-en="Known limits"></a>
+    <a href="#disclaimer" data-zh="免责声明" data-en="Disclaimer"></a>
+    <a href="#models" data-zh="使用哪些模型" data-en="Models used"></a>
+    <a href="#usage" data-zh="使用方法" data-en="How to use"></a>
+    <a href="#debug" data-zh="如何调试" data-en="Debugging"></a>
+    <a href="#byom" data-zh="接入自己的大模型" data-en="Bring your own model"></a>
+  </div>
+
+<!-- ══════════════════════════ 中文 ══════════════════════════ -->
+<div class="lang-zh">
+
+  <h2 id="features"><span class="idx">01</span>这是什么 · 功能</h2>
+  <p>FreeAnalyst 是一个<b>在本机运行的估值工作台</b>。给它一个标的的材料（年报、审计报告、
+     CIM、三张表；PDF / Excel / HTML 都行），它做三件事：</p>
+  <ul>
+    <li><b>报表识别与勾稽校验</b> —— 认出资产负债表、利润表、现金流量表，跑三条勾稽；认不出就报
+        「未识别」，不平就拒绝给结论。</li>
+    <li><b>假设清单</b> —— 机器能推的先推出来给你确认（金额单位、会计准则、合并/单体、审计状态、
+        估值基准日），能确定的字段做成下拉；推不出来的留空，<b>不替你设</b>。</li>
+    <li><b>估值计算与报告</b> —— DCF（含 WACC 逐步推导）、乘数法、Football Field 区间、
+        敏感性网格、退出倍数交叉验证、对方要价的反向估值。每一项结论都带追溯。</li>
+  </ul>
+  <p>顺带还有一路「问答」：把材料做成本地索引，<code>ask</code> 可以直接问
+     「调整后 EBITDA 是怎么算的」「回购条款对投资方有利吗」，回答带出处。</p>
+
+  <h2 id="limits"><span class="idx">02</span>已知限制（能力边界）</h2>
+  <div class="note">
+    <b>这些不是「以后可能」，是现在就做不到的事。</b>写在最前面，免得你在错误的地方信任它。
+  </div>
+  <ul>
+    <li>公开数据源只接了<b>美股 EDGAR</b> 与东方财富股价；<b>A 股 / 港股财务源未接</b>。</li>
+    <li>扫描件的报表若把<b>合并表与母公司表印在同一页</b>，光学识别会把科目串在一起 →
+        勾稽不平。它会<b>报警</b>（不静默出错），但需要你把母公司那几页挑出来。</li>
+    <li>检索是 <b>BM25</b>，没做向量检索；<code>.docx</code> 未支持。</li>
+    <li>英文界面只覆盖<b>界面文案</b>；引擎输出的报表标签、报告正文仍是中文。</li>
+    <li><b>金融业报表（保险 / 银行 / 券商）尚未覆盖。</b>这些行业的科目体系和一般工商业不同
+        （如保险的「保险服务收入」「赔付支出」「提取保险责任准备金」），词表里没有 →
+        映射率会很低（实测一份 176 页的保险公司中期报告：利润表 <b>8/76</b>、
+        现金流量表 <b>7/35</b>）。这时报告会<b>顶出显式警告</b>，点名"关键科目没映射上，
+        估值结论不可用"，而不是安静地出一份没有结论的报告。</li>
+    <li>校对责任在<b>人</b>：报告会明说哪些模块没跑、哪些输入缺失，但<b>报出来的不一定穷尽</b>。</li>
+  </ul>
+
+  <h2 id="disclaimer"><span class="idx">03</span>免责声明</h2>
+  <div class="warn">
+    <b>请完整读完这一节再用它做任何决策。</b>
+  </div>
+  <ul>
+    <li>本工具<b>不构成投资建议、估值意见，也不构成任何证券的报价或要约</b>，不构成会计师、
+        资产评估师或其他专业人士的执业意见。它是一台<b>计算器</b>，不是顾问。</li>
+    <li>输出完全取决于<b>你提供的材料</b>与<b>你设定的假设</b>。工具<b>不保证结果正确、完整，
+        也不保证适用于任何特定目的</b>。</li>
+    <li>工具会显式报出「勾稽不符 / 未识别 / 未提供的输入项 / 未执行的模块」，
+        但<b>报出的不一定穷尽</b>。任何结论必须经<b>人工复核</b>后才可用于决策。</li>
+    <li>材料来源的<b>合法性、使用授权与保密义务</b>由使用者自行负责；估值结论的对外使用
+        （如报送投资决策委员会、披露给交易对方）由使用者自行承担责任。</li>
+    <li>本软件按「现状」提供，不附带任何明示或默示担保；作者不对因使用本工具产生的
+        任何直接或间接损失负责。</li>
+  </ul>
+
+  <h2 id="models"><span class="idx">04</span>使用哪些模型</h2>
+  <p><b>一句话：算术绝不用模型。</b></p>
+  <table>
+    <thead><tr><th>环节</th><th>谁来执行</th><th>为什么</th></tr></thead>
+    <tbody>
+      <tr><td>DCF / WACC / 乘数 / 敏感性 / 勾稽校验</td>
+          <td><b>纯代码</b></td>
+          <td>可复现、可审计：同样输入必得同样结果。编排可以有循环，算术不能有随机。</td></tr>
+      <tr><td>从材料里<b>抽取</b>（把 OCR 出的文字结构化成表与科目）</td>
+          <td>大模型</td>
+          <td>这是语言问题，不是算术问题。</td></tr>
+      <tr><td><b>问答与找依据</b>（<code>ask</code>）</td>
+          <td>大模型 + 本地索引</td>
+          <td>回答必须带出处，指回材料原文。</td></tr>
+    </tbody>
+  </table>
+  <ul>
+    <li>模型通过 <b>OpenAI 兼容接口</b>接入，<b>不绑定厂商</b>：Ollama、LM Studio、llama.cpp、
+        vLLM 或任何兼容网关都可以，换机器不用改代码。</li>
+    <li>默认<b>指向本机</b>。没有模型也能跑完整估值 —— 只是不做问答。</li>
+    <li>质量门槛：<code>python3 freeanalyst.py models --gate &lt;模型&gt;</code>。
+        <b>不合格的模型不参与产出</b>（一票否决），本机基线 <code>qwen3:14b</code> 4/4 过关。</li>
+  </ul>
+
+  <h2 id="usage"><span class="idx">05</span>使用方法</h2>
+  <h3>网页向导（最省事）</h3>
+  <pre style="color:#BFE9DA;font-size:11.5px;white-space:pre-wrap">cd ~/Docs/AI/freeanalyst
+python3 freeanalyst.py ui &lt;材料目录&gt;</pre>
+  <p>浏览器会打开 <code>http://127.0.0.1:8765/</code>（<b>只绑本机</b>，同一局域网内别的机器访问不到）。六步：
+     载入材料 → 报表识别与勾稽校验 → 假设录入 → 估值结论。
+     （第 3、4 步「行业建议 / 可比公司选取」尚未接入，页面上照实标注。）</p>
+  <p><b>载入材料的三种方式</b>：点「选择文件夹… / 选择文件…」调系统原生选择框；或把文件夹从
+     访达直接拖进卡片；或手工填路径。<b>三种都不复制文件</b> —— 路径而已，材料留在原地。</p>
+
+  <h3>命令行</h3>
+  <pre style="color:#BFE9DA;font-size:11.5px;white-space:pre-wrap"># 材料目录 → 估值报告（两遍：先出问答清单，填完再出报告）
+python3 freeanalyst.py appraise &lt;材料目录&gt;
+python3 freeanalyst.py appraise &lt;材料目录&gt; --answers &lt;估值问答.txt&gt;
+
+# 材料 → 本地索引 → 带出处的回答
+python3 freeanalyst.py ingest &lt;材料目录&gt;
+python3 freeanalyst.py ask "调整后 EBITDA 是怎么算的？"</pre>
+  <p>产物统一落在 <code>out/&lt;标的&gt;/</code>（配置、问答清单、报告）。
+     <b>材料目录只读</b> —— 工具不往你的材料库里写东西。</p>
+
+  <h2 id="debug"><span class="idx">06</span>如何调试</h2>
+  <table>
+    <thead><tr><th>命令 / 开关</th><th>看什么</th></tr></thead>
+    <tbody>
+      <tr><td><code>--trace</code> / <code>--no-trace</code></td>
+          <td>打印每一项计算是怎么来的：用了哪条公式、哪个输入、出自哪份材料。</td></tr>
+      <tr><td><code>freeanalyst.py audit</code></td>
+          <td><b>查这一次到底有没有东西出网</b>：每一次云端调用与授权记录都在这里。</td></tr>
+      <tr><td><code>freeanalyst.py doctor</code></td>
+          <td>环境体检：依赖、模型运行时、数据源可达性。</td></tr>
+      <tr><td><code>freeanalyst.py models --gate &lt;模型&gt;</code></td>
+          <td>模型质量门槛 —— 不合格就一票否决，别用它出数。</td></tr>
+      <tr><td><code>python3 tools/check_ui.py</code></td>
+          <td>界面自检：元素 id、中英词表是否一一对应、服务是否与页面对表、logo 几何。</td></tr>
+      <tr><td><code>python3 -m unittest discover -s tests</code></td>
+          <td>全量测试（700+ 项）。改了引擎先跑这个。</td></tr>
+    </tbody>
+  </table>
+  <h3>最常见的两种「不对」</h3>
+  <ul>
+    <li><b>勾稽不平</b>：先看报告里「N 个科目出现多个取值」的提示 —— 多半是同一页并列了
+        合并表与母公司表，取值串了。把母公司那几页挑出来单独放，或人工核对所取的是合并列。</li>
+    <li><b>单位认不出来</b>：它<b>不会猜</b>（猜错是 1,000 倍级错误），会停下来要你声明。
+        在第 2 步的下拉里选一个，或自己填。</li>
+  </ul>
+  <div class="note">
+    <b>改了 <code>.py</code> 要重启服务</b>（Python 代码不会热加载）；只改
+    <code>webapp_page.html</code> 不用 —— 页面每次请求都是现读磁盘的。
+    服务是旧进程时，页面会自己在顶部提示并给重启命令。
+  </div>
+
+  <h2 id="byom"><span class="idx">07</span>接入自己的大模型</h2>
+  <p>任何 <b>OpenAI 兼容端点</b>都能接：本地或闭源，改配置即可，不碰代码。</p>
+  <h3>本地（推荐用于机密材料）</h3>
+  <ul>
+    <li><b>Ollama</b>：<code>ollama pull qwen3:14b</code>，端点默认
+        <code>http://127.0.0.1:11434/v1</code>。</li>
+    <li><b>LM Studio</b>：开启本地服务器，端点通常 <code>http://127.0.0.1:1234/v1</code>。</li>
+    <li><b>llama.cpp / vLLM</b>：启动时开 OpenAI 兼容模式，填对应 <code>base_url</code>。</li>
+    <li>配置项：<code>base_url</code> / <code>model</code>（以及需要时的 <code>api_key</code> 环境变量）。
+        本机端点不需要密钥。</li>
+  </ul>
+  <h3>闭源（OpenAI / Anthropic 兼容网关 / DeepSeek / Moonshot 等）</h3>
+  <div class="warn">
+    <b>闭源模型有数据风险，必须知情。</b><br>
+    你把材料（或材料的片段）发给对方服务器，那一刻它<b>离开了本机</b>。这可能与你的
+    保密义务、与客户的约定、与个人信息保护的要求冲突 —— 而且对方的数据留存与训练策略
+    不由你控制。
+  </div>
+  <p>本工具为此做了三件事，是刻意的设计而不是开关：</p>
+  <ul>
+    <li><b>不做「一键全局放行」。</b>没有 <code>ALLOW_CLOUD=1</code> 这种粗暴开关 ——
+        每一次云端调用都要 <b>按次授权</b>（绑定主机 + 用途 + 内容描述），授权本身进审计。</li>
+    <li><code>privacy.py</code> 是<b>唯一的跨域出口</b>：机密域只放行回环地址，
+        出境的值与本地语料逐字比对。</li>
+    <li><b>可查</b>：<code>python3 freeanalyst.py audit</code> 会告诉你这一次到底有没有东西出网。</li>
+  </ul>
+  <p><b>建议的做法</b>：机密标的只用本地模型；闭源模型用在公开材料（如上市公司年报）
+     或脱敏片段上。一句话原则 —— <b>模型的自由度越高，能碰到的数据就要越少</b>。</p>
+</div>
+
+<!-- ══════════════════════════ English ══════════════════════════ -->
+<div class="lang-en hide">
+
+  <h2 id="features-en"><span class="idx">01</span>What this is · Features</h2>
+  <p>FreeAnalyst is a <b>valuation workbench that runs on your own machine</b>. Point it at a
+     target's materials (annual report, audit report, CIM, the three statements; PDF / Excel /
+     HTML), and it does three things:</p>
+  <ul>
+    <li><b>Statement extraction and reconciliation</b> — identifies the balance sheet, income
+        statement and cash flow statement and runs three reconciliation tests. What it cannot
+        identify is reported as <b>not identified</b>; when a test fails it refuses to give a
+        conclusion.</li>
+    <li><b>Assumption register</b> — anything the machine can derive is derived and shown for
+        confirmation (reporting unit, accounting basis, consolidated vs standalone, audit status,
+        valuation date), with closed sets offered as dropdowns. What it cannot derive is left
+        blank — <b>it will not set assumptions for you</b>.</li>
+    <li><b>Valuation and report</b> — DCF (with WACC derivation), multiples, a football-field
+        range, sensitivity grids, exit-multiple cross-checks and reverse valuation against an
+        asking price. Every conclusion is traceable.</li>
+  </ul>
+  <p>There is also a Q&amp;A path: index the materials locally and ask
+     <code>ask</code> questions such as how adjusted EBITDA is defined, with citations.</p>
+
+  <h2 id="limits-en"><span class="idx">02</span>Known limits</h2>
+  <div class="note"><b>These are not roadmap items — they are things it cannot do today.</b></div>
+  <ul>
+    <li>Public data sources cover <b>US EDGAR</b> and East Money prices only;
+        <b>A-share / HK financial sources are not wired</b>.</li>
+    <li>If a scanned report prints the <b>consolidated and parent-only statements on the same
+        page</b>, OCR interleaves the line items and reconciliation will fail. It <b>raises a
+        flag</b> rather than failing silently, but you must separate the parent-only pages.</li>
+    <li>Retrieval is <b>BM25</b>; no vector search. <code>.docx</code> unsupported.</li>
+    <li>The English interface covers <b>interface copy only</b>; engine output remains Chinese.</li>
+  </ul>
+
+  <h2 id="disclaimer-en"><span class="idx">03</span>Disclaimer</h2>
+  <div class="warn"><b>Read this section in full before using any output.</b></div>
+  <ul>
+    <li>This tool <b>does not constitute investment advice, a valuation opinion, or an offer or
+        solicitation for any security</b>, and is not professional advice from an accountant or
+        valuer. It is a <b>calculator</b>, not an adviser.</li>
+    <li>Output depends entirely on <b>the materials you provide</b> and <b>the assumptions you
+        set</b>. No warranty of correctness, completeness or fitness for any purpose is given.</li>
+    <li>Failed reconciliations, unidentified items, missing inputs and modules that did not run
+        are reported explicitly — but <b>the report may not be exhaustive</b>. Any conclusion must
+        be <b>reviewed by a human</b> before use.</li>
+    <li>Legality, authorisation and confidentiality obligations attached to the materials are the
+        user's responsibility, as is any onward use of the output.</li>
+    <li>The software is provided "as is", without warranty of any kind. The author accepts no
+        liability for any loss arising from its use.</li>
+  </ul>
+
+  <h2 id="models-en"><span class="idx">04</span>Which models are used</h2>
+  <p><b>In one line: arithmetic never goes through a model.</b></p>
+  <table>
+    <thead><tr><th>Step</th><th>Executed by</th><th>Why</th></tr></thead>
+    <tbody>
+      <tr><td>DCF / WACC / multiples / sensitivity / reconciliation</td>
+          <td><b>Plain code</b></td>
+          <td>Reproducible and auditable: identical inputs give identical outputs.</td></tr>
+      <tr><td><b>Extraction</b> (structuring OCR text into tables and line items)</td>
+          <td>LLM</td><td>A language problem, not an arithmetic one.</td></tr>
+      <tr><td><b>Q&amp;A with citations</b> (<code>ask</code>)</td>
+          <td>LLM + local index</td><td>Answers must cite the material.</td></tr>
+    </tbody>
+  </table>
+  <ul>
+    <li>Models are reached through an <b>OpenAI-compatible endpoint</b> — no vendor lock-in
+        (Ollama, LM Studio, llama.cpp, vLLM or any gateway).</li>
+    <li>Defaults to <b>local</b>. Valuation runs fully without any model; only Q&amp;A needs one.</li>
+    <li>Quality gate: <code>python3 freeanalyst.py models --gate &lt;model&gt;</code>.
+        A model that fails is <b>not used in production output</b>. Local baseline:
+        <code>qwen3:14b</code> passes 4/4.</li>
+  </ul>
+
+  <h2 id="usage-en"><span class="idx">05</span>How to use</h2>
+  <h3>Web workbench</h3>
+  <pre style="color:#BFE9DA;font-size:11.5px;white-space:pre-wrap">cd ~/Docs/AI/freeanalyst
+python3 freeanalyst.py ui &lt;materials&gt;</pre>
+  <p>Opens <code>http://127.0.0.1:8765/</code> (<b>loopback only</b> — other devices on the same
+     network cannot reach it). Four working steps: load materials → extraction and reconciliation →
+     assumptions → conclusion. (Industry guidance and comparable selection are not wired and are
+     labelled as such.)</p>
+  <p><b>Three ways to load materials</b>: the native folder/file picker, dragging a folder in from
+     Finder, or typing a path. <b>None of them copies anything</b> — only a path travels.</p>
+  <h3>Command line</h3>
+  <pre style="color:#BFE9DA;font-size:11.5px;white-space:pre-wrap">python3 freeanalyst.py appraise &lt;materials&gt;
+python3 freeanalyst.py appraise &lt;materials&gt; --answers &lt;answers.txt&gt;
+python3 freeanalyst.py ingest &lt;materials&gt;
+python3 freeanalyst.py ask "How is adjusted EBITDA defined?"</pre>
+  <p>Artifacts land in <code>out/&lt;target&gt;/</code>. The materials folder is treated as
+     <b>read-only</b>.</p>
+
+  <h2 id="debug-en"><span class="idx">06</span>Debugging</h2>
+  <table>
+    <thead><tr><th>Command / flag</th><th>What it tells you</th></tr></thead>
+    <tbody>
+      <tr><td><code>--trace</code> / <code>--no-trace</code></td>
+          <td>Prints how each figure was derived: formula, input, and source material.</td></tr>
+      <tr><td><code>freeanalyst.py audit</code></td>
+          <td><b>Whether anything left this machine</b> — every cloud call and authorisation.</td></tr>
+      <tr><td><code>freeanalyst.py doctor</code></td>
+          <td>Environment check: dependencies, model runtime, data-source reachability.</td></tr>
+      <tr><td><code>freeanalyst.py models --gate &lt;model&gt;</code></td>
+          <td>Model quality gate — a failing model must not produce figures.</td></tr>
+      <tr><td><code>python3 tools/check_ui.py</code></td>
+          <td>Interface self-check: element ids, zh/en key parity, service/page contract, logo geometry.</td></tr>
+      <tr><td><code>python3 -m unittest discover -s tests</code></td>
+          <td>Full test suite (700+).</td></tr>
+    </tbody>
+  </table>
+  <h3>The two most common problems</h3>
+  <ul>
+    <li><b>Reconciliation fails</b>: look for the "N line items carry more than one value" note —
+        typically consolidated and parent-only statements sharing a page.</li>
+    <li><b>Reporting unit undetermined</b>: it <b>will not guess</b> (a wrong unit is a
+        1,000× error); it stops and asks you to declare it.</li>
+  </ul>
+  <div class="note"><b>Restart the service after changing any <code>.py</code></b> — Python code is
+    not hot-reloaded. Only <code>webapp_page.html</code> is re-read on every request. When the
+    service is stale, the page detects it and shows the restart command.</div>
+
+  <h2 id="byom-en"><span class="idx">07</span>Bring your own model</h2>
+  <p>Any <b>OpenAI-compatible endpoint</b> works: local or closed-source, via configuration, no code
+     changes.</p>
+  <h3>Local (recommended for confidential materials)</h3>
+  <ul>
+    <li><b>Ollama</b>: <code>ollama pull qwen3:14b</code>, endpoint
+        <code>http://127.0.0.1:11434/v1</code>.</li>
+    <li><b>LM Studio</b>: start the local server, usually
+        <code>http://127.0.0.1:1234/v1</code>.</li>
+    <li><b>llama.cpp / vLLM</b>: enable OpenAI-compatible mode and set <code>base_url</code>.</li>
+  </ul>
+  <h3>Closed-source (OpenAI / Anthropic-compatible gateways / DeepSeek / Moonshot …)</h3>
+  <div class="warn">
+    <b>Closed-source models carry data risk, and you must be aware of it.</b><br>
+    The moment you send materials (or fragments of them) to a provider's servers they
+    <b>leave this machine</b>. That may conflict with your confidentiality obligations, client
+    agreements and data-protection requirements — and retention/training policies are outside
+    your control.
+  </div>
+  <p>Three deliberate design choices address this:</p>
+  <ul>
+    <li><b>No global "allow cloud" switch.</b> There is no <code>ALLOW_CLOUD=1</code> escape hatch:
+        every cloud call requires a <b>per-call authorisation</b> (host + purpose + content
+        description), and the authorisation itself is audited.</li>
+    <li><code>privacy.py</code> is the <b>only egress path</b>: the confidential domain permits
+        loopback only, and outbound values are compared verbatim against the local corpus.</li>
+    <li><b>Verifiable</b>: <code>python3 freeanalyst.py audit</code> reports what did or did not
+        leave the machine.</li>
+  </ul>
+  <p><b>Suggested practice</b>: confidential targets on local models only; use closed-source models
+     for public materials (e.g. listed-company annual reports) or redacted excerpts. One principle:
+     <b>the more freedom a model has, the less data it should see</b>.</p>
+</div>
+
+  <footer>
+    <span data-zh="本页是 FreeAnalyst 的本机说明文件（/doc）。界面文案中英双语；引擎输出目前为中文。"
+          data-en="This is FreeAnalyst's local documentation page (/doc). Interface copy is bilingual; engine output is currently Chinese."></span>
+    <!-- 版本号取自服务端（webapp.VERSION 是唯一来源），页面不自己写死 -->
+    <div class="ver" id="verline"><b id="ver"></b><span>　by New Chapter Ventures</span></div>
+  </footer>
+
+<script>
+// 语言：与向导共用同一个键（fa.lang），所以在向导里切过一次，这里跟着走
+function setLang(lang){
+  document.documentElement.lang = (lang === "en") ? "en" : "zh";
+  localStorage.setItem("fa.lang", lang);
+  document.querySelectorAll(".lang-zh").forEach(el =>
+    el.classList.toggle("hide", lang === "en"));
+  document.querySelectorAll(".lang-en").forEach(el =>
+    el.classList.toggle("hide", lang !== "en"));
+  document.querySelectorAll("[data-zh]").forEach(el => {
+    el.textContent = el.getAttribute(lang === "en" ? "data-en" : "data-zh");
+  });
+  document.querySelectorAll(".lang button").forEach(b =>
+    b.classList.toggle("on", b.dataset.lang === lang));
+}
+const LANG0 = localStorage.getItem("fa.lang") || "zh";
+document.querySelectorAll(".lang button").forEach(b =>
+  b.addEventListener("click", () => setLang(b.dataset.lang)));
+setLang(LANG0);
+
+// 版本号：从服务拿（唯一来源）。没有服务就是直接打开的文件，照实说。
+const VER = document.getElementById("ver");
+fetch("/api/health", {cache:"no-store"}).then(r => r.json()).then(h => {
+  if(VER && h && h.version) VER.textContent = "FreeAnalyst v" + h.version;
+}).catch(() => {
+  if(VER) VER.textContent = "FreeAnalyst · 离线副本 / offline copy";
+});
+</script>
+</div></body></html>

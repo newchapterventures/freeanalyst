@@ -28,6 +28,16 @@
     --bg:#05070A; --panel:#0A0F16; --panel2:#0D141C; --line:#16212B;
     --fg:#D7F5E9; --mut:#5F7C77; --pri:#00E5A0; --amber:#FFB000; --mag:#FF2E63;
     --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,"Cascadia Mono","PingFang SC",monospace;
+    /* 页头算盘高度 —— 字标贴顶、署名贴底就是按这个高度撑开的。
+       **两行之间的空档 = 这个高度 − 两行字高**，所以想收紧空档就调这一个数。 */
+    --logo-h:48px;
+    /* 算盘宽度：按 SVG viewBox 的 19:33 从高度算出来，**不另写一个数**。
+       以前这里写死过 54px（38+16），后来算盘改成按高度缩放、实际宽度 27.6px，
+       标语那行就悄悄右移了 10px —— 三行没对齐，根子在这儿。 */
+    --logo-w:calc(var(--logo-h) * 19 / 33);
+    --head-gap:16px;
+    /* 字标字号（另一个旋钮：字大一点，空档也会跟着小一点） */
+    --word-size:33px;
   }
   *{box-sizing:border-box}
   html,body{margin:0}
@@ -47,8 +57,9 @@
   .wrap{max-width:1000px;margin:0 auto;padding:30px 24px 90px}
 
   /* ── 抬头 ── */
-  .top{display:flex;gap:16px;align-items:center;margin-bottom:8px}
+  .top{display:flex;gap:var(--head-gap);align-items:center;margin-bottom:8px}
   .logo{flex:0 0 auto;transition:filter .25s ease, transform .25s ease;
+        height:var(--logo-h);width:var(--logo-w);   /* 两个值同源，改高度宽度自动跟 */
         filter:drop-shadow(0 0 7px rgba(108,92,231,.40))}
   .logo:hover{filter:drop-shadow(0 0 15px rgba(255,194,75,.5));transform:translateY(-1px)}
   .logo .lg-up{fill:#E9B949}
@@ -57,10 +68,16 @@
   .logo:hover .lg-up{fill:#F5CB6E}
   .logo:hover .lg-down{fill:#DDE5EC}
   .logo:hover .lg-acc{fill:#FF6A6E}
-  .head-txt{flex:1 1 auto}
-  .word{font-size:23px;font-weight:700;letter-spacing:.30em;margin:0;line-height:1.1}
+  .head-txt{flex:1 1 auto;align-self:stretch;      /* 撑满算盘的高度（由 logo 决定） */
+            display:flex;flex-direction:column;justify-content:space-between}
+  /* 字标：字号由 --word-size 定；line-height 压到 1 让上下两端尽量顶满 */
+  .word{font-size:var(--word-size);font-weight:700;letter-spacing:.24em;margin:0;line-height:1}
   .word em{font-style:normal;color:var(--pri);text-shadow:0 0 12px rgba(0,229,160,.55)}
   .tag{color:var(--mut);font-size:12px;letter-spacing:.02em}
+  /* 字标贴顶、署名贴底 —— 一上一下夹住算盘（stretch + space-between 自动得到） */
+  /* 标语那行的左缩进 = 算盘宽 + 间距（同一个算式）→ 三行左对齐是**算出来的**，不是对齐出来的 */
+  .tagline-row{margin:9px 0 18px;padding-left:calc(var(--logo-w) + var(--head-gap))}
+  .byline{color:#42565A;font-size:11px;letter-spacing:.14em}
 
   /* ── 语言切换 ── */
   .lang{flex:0 0 auto;display:flex;border:1px solid var(--line);border-radius:2px;overflow:hidden}
@@ -68,8 +85,16 @@
     font-size:11.5px;letter-spacing:.06em;padding:6px 12px;cursor:pointer;transition:all .16s ease}
   .lang button:hover{color:var(--fg)}
   .lang button.on{color:var(--pri);background:rgba(0,229,160,.10)}
+  /* 说明文件入口：跟语言开关并排，同一套描边风格 */
+  .doclink{flex:0 0 auto;display:inline-flex;align-items:center;gap:6px;
+    border:1px solid var(--line);border-radius:2px;padding:6px 12px;
+    color:var(--mut);font-size:11.5px;letter-spacing:.06em;text-decoration:none;
+    transition:all .18s ease}
+  .doclink:hover{color:var(--pri);border-color:var(--pri);background:rgba(0,229,160,.08)}
+  .doclink::before{content:"?";color:var(--pri);font-weight:700}
 
-  .prompt{color:var(--mut);font-size:12px;margin:12px 0 18px}
+  /* 装饰性命令行：放进 .tagline-row 里，左沿由外层 padding 决定（自己不写缩进） */
+  .prompt{color:var(--mut);font-size:12px;margin:7px 0 0}
   .caret{display:inline-block;width:7px;height:13px;background:var(--pri);
          vertical-align:-2px;animation:blink 1.05s steps(1) infinite;margin-left:2px}
   @keyframes blink{50%{opacity:0}}
@@ -116,6 +141,16 @@
     transition:border-color .18s ease,box-shadow .18s ease}
   input[type=text]::placeholder{color:#3F5450}
   input[type=text]:focus{outline:none;border-color:var(--pri);box-shadow:0 0 0 3px rgba(0,229,160,.10)}
+  /* 能选的就别让人打字：封闭集合用下拉，建议值用可编辑下拉（datalist） */
+  select{width:100%;background:#070C11;color:var(--fg);font-family:var(--mono);
+    font-size:12px;padding:10px 12px;border:1px solid var(--line);border-radius:2px;
+    cursor:pointer;appearance:none;
+    background-image:linear-gradient(45deg,transparent 50%,var(--pri) 50%),
+                     linear-gradient(135deg,var(--pri) 50%,transparent 50%);
+    background-position:calc(100% - 16px) 18px, calc(100% - 11px) 18px;
+    background-size:5px 5px, 5px 5px;background-repeat:no-repeat}
+  select:focus{outline:none;border-color:var(--pri);box-shadow:0 0 0 3px rgba(0,229,160,.10)}
+  select option{background:#0A0F16;color:var(--fg)}
   button.act{font-family:var(--mono);font-size:12.5px;font-weight:700;letter-spacing:.05em;
     padding:10px 20px;border-radius:2px;cursor:pointer;transition:all .18s ease;
     background:transparent;color:var(--pri);border:1px solid var(--pri)}
@@ -156,13 +191,29 @@
 
   h3.grp{font-size:11px;color:var(--amber);letter-spacing:.14em;text-transform:uppercase;
          margin:18px 0 6px;font-weight:400}
-  .q{display:grid;grid-template-columns:minmax(200px,260px) 1fr;gap:12px;
-     align-items:start;padding:9px 0;border-bottom:1px solid var(--line)}
+  .q{padding:9px 0;border-bottom:1px solid var(--line);
+     display:grid;grid-template-columns:minmax(200px,260px) 1fr;gap:12px;align-items:start}
   .q:last-child{border-bottom:0}
   .q label{font-size:12.5px}
   .q .hint{display:block;color:var(--mut);font-size:11px;margin-top:3px;line-height:1.5}
   .q .hint b{color:var(--amber);font-weight:400}
   .q input{font-size:12px}
+  /* 这个数**从哪来** —— 四类各有颜色：
+     财报（工具必须给）／财报推算（给数+请确认）／外部（由你提供）／你的判断。
+     不标，人就分不清"报表里有的"和"公司之外要我自己找的"。 */
+  .org{font-style:normal;font-size:10px;letter-spacing:.04em;padding:1px 5px;
+       border-radius:2px;margin-right:6px;border:1px solid;white-space:nowrap}
+  .org.filing{color:var(--pri);border-color:rgba(0,229,160,.45)}
+  .org.derived{color:var(--amber);border-color:rgba(255,176,0,.45)}
+  .org.external{color:var(--mag);border-color:rgba(255,46,99,.45)}
+  .org.judgment{color:var(--mut);border-color:var(--line)}
+  /* 百分比字段：% 显示在框里（默认就在），人**只填数值**。
+     提交时由引擎按 % 解读 —— 界面不自己算，也不让值裸着过去。 */
+  .pctwrap{position:relative;display:block}
+  .pctwrap input{padding-right:26px}
+  .pctsuf{position:absolute;right:10px;top:50%;transform:translateY(-50%);
+          color:var(--pri);font-size:12.5px;font-style:normal;
+          pointer-events:none;opacity:.9}
 
   .term{border:1px solid var(--line);border-radius:3px;overflow:hidden;background:#04070A}
   .term .bar{display:flex;align-items:center;gap:9px;padding:7px 12px;
@@ -181,7 +232,10 @@
   .notice.quiet{border-color:var(--line);background:transparent}
   footer{margin-top:34px;padding-top:18px;border-top:1px solid var(--line);
          color:var(--mut);font-size:11.5px;line-height:2}
-  footer span{color:var(--pri)}
+  .verline{margin-top:14px;padding-top:12px;border-top:1px solid var(--line);
+           color:var(--mut);font-size:11.5px;letter-spacing:.06em}
+  .verline b{color:var(--pri);font-weight:400}
+  footer span.ttl{color:var(--pri)}
   .hide{display:none}
   code{font-family:var(--mono);color:var(--amber);background:rgba(255,176,0,.07);
        padding:1px 5px;border-radius:2px}
@@ -189,8 +243,10 @@
 
   <div class="top">
     <!-- 极简算盘：28 个方块（4 列 × 上 2 下 5），无轴无梁无框无高光。
-         上金 #E9B949、下银 #C9D2DC，红块 #E5484D 在左起第 1 列 · 上排第 2 颗。 -->
-    <svg class="logo" width="38" height="66" viewBox="0 0 19 33" shape-rendering="crispEdges"
+         上金 #E9B949、下银 #C9D2DC，红块 #E5484D 在左起第 1 列 · 上排第 2 颗。
+         **尺寸以 CSS 的 --logo-h / --logo-w 为准**；下面两个属性只是没 CSS 时的兜底，
+         所以数值要与 --logo-h 保持一致（check_ui 会核对，不一致就红）。 -->
+    <svg class="logo" width="28" height="48" viewBox="0 0 19 33" shape-rendering="crispEdges"
          role="img" aria-label="算盘">
       <g class="lg-up">
         <rect x="2" y="2" width="3" height="3"/>
@@ -227,15 +283,25 @@
     </svg>
     <div class="head-txt">
       <h1 class="word">FREE<em>ANALYST</em></h1>
-      <div class="tag" data-i18n="tagline"></div>
+      <!-- 署名中英一样，所以是**静态文字**，不走词表：
+           少一层 JS 依赖 —— JS 没跑、图还没渲染完，它也在。 -->
+      <div class="byline">by New Chapter Ventures</div>
     </div>
+    <a class="doclink" id="docLink" href="/doc" data-i18n="nav.doc"></a>
     <div class="lang" role="group">
       <button type="button" data-lang="zh">中文</button>
       <button type="button" data-lang="en">EN</button>
     </div>
   </div>
 
-  <div class="prompt">$ freeanalyst --local --no-egress<span class="caret"></span></div>
+  <!-- 标语在 logo / 字标整块的下方整行铺开（左缩进与字标同源，见 .tagline-row） -->
+  <div class="tagline-row">
+    <!-- 静态写中文：JS 没跑也有内容（默认语言就是中文），JS 起来后再按选择的语言替换 -->
+    <div class="tag" data-i18n="tagline">本地估值向导 · 尽调材料 → 估值报告 · 全程不出网</div>
+    <!-- 这行是装饰性的命令行，与上一句的「不出网」说的是同一件事的两种说法；
+         放进同一列 → **左沿自动同源**，不用再写一份缩进（写一份就会错开） -->
+    <div class="prompt">$ freeanalyst --local --no-egress<span class="caret"></span></div>
+  </div>
 
   <div class="pills">
     <span class="pill on"><span class="dot"></span>LOCAL · 127.0.0.1</span>
@@ -305,10 +371,13 @@
   </div>
 
   <footer>
-    <span data-i18n="foot.title"></span><br>
+    <span class="ttl" data-i18n="foot.title"></span><br>
     <span data-i18n="foot.1"></span><br>
     <span data-i18n="foot.2"></span><br>
     <span data-i18n="foot.3"></span>
+    <!-- 版本号取自服务端（webapp.VERSION 是唯一来源）——
+         不让页面自己写一个可能与服务对不上的号 -->
+    <div class="verline"><b id="ver"></b></div>
   </footer>
 
   <div class="notice hide" id="demoTag" data-i18n-html="demo.tag" style="margin-bottom:0"></div>
@@ -319,6 +388,10 @@
 const I18N = {
   zh: {
     "tagline": "本地估值向导 · 尽调材料 → 估值报告 · 全程不出网",
+    "foot.version": "FreeAnalyst v{v} · 本机运行 · 只绑 127.0.0.1",
+    "foot.offline": "FreeAnalyst · 设计预览（未连接本机服务）",
+    "nav.doc": "说明文件",
+    "nav.docstale": "服务是旧进程，可能还没有说明文件页 —— 先重启服务再打开",
     "pill.egress": "零出境 · 机密材料仅在本机处理",
     "pill.arith": "算术由代码执行 · 不交由模型",
     "pill.declare": "输入缺失即声明 · 不作假设",
@@ -331,7 +404,7 @@ const I18N = {
     "s1.btn": "解析材料",
     "s1.pickdir": "▸ 选择文件夹…", "s1.pickfile": "▸ 选择文件…",
     "s1.picklabel": "载入方式",
-    "stale.banner": "<b>本页比服务新 —— 跑着的服务是旧进程，缺少新接口。</b><br>页面每次请求都是现读磁盘，所以它已经更新了；但 Python 代码不会热加载，那个进程还是旧的 —— 所以点「选择文件夹」只回一句 unknown endpoint。<br><b>请重启服务</b>：到运行它的终端按 <code>Ctrl-C</code>，再执行 <code>python3 freeanalyst.py ui &lt;材料目录&gt;</code>。在此之前这两个按钮不可用。",
+    "stale.banner": "<b>本页比服务新 —— 跑着的服务是旧进程（缺新接口，或缺新字段）。</b><br>页面每次请求都是现读磁盘，所以它已经更新了；但 Python 代码不会热加载，那个进程还是旧的 —— 点「选择文件夹」会只回一句 unknown endpoint，第 5 步的<b>百分比字段也不会显示 %</b>（那就不知道该填 5、0.05 还是 5%）。<br><b>请重启服务</b>：到运行它的终端按 <code>Ctrl-C</code>，再执行 <code>python3 freeanalyst.py ui &lt;材料目录&gt;</code>。在此之前这几个功能不可用。",
     "s1.drophint": "也可以把文件夹或文件从访达直接拖进本区域 —— 只填入路径，不复制文件",
     "s1.picking": "请在系统选择框中选定…（窗口可能在后台，注意查看）",
     "s1.cancelled": "已取消选择",
@@ -351,6 +424,9 @@ const I18N = {
     "chk.dups": "本材料有 {n} 个科目存在多个取值 —— 通常见于同一页面并列合并报表与母公司报表，请确认所取为合并口径。",
     "meta.basis": "会计口径", "meta.period": "会计期间", "meta.fix": "如有误，可在下方修正",
     "unit.label": "金额单位", "unit.warn": "（此处有误即为 1,000 倍量级错误）",
+    "unit.pct": "百分比 · 只填数值（填 8.5 即 8.5%）",
+    "origin.filing": "财报", "origin.derived": "推算 · 请确认",
+    "origin.external": "外部 · 由你提供", "origin.judgment": "你的判断",
     "unit.basis": "判定依据：", "unit.unknown": "未能判定 —— 必须由您指定",
     "s5.title": "估值假设", "s5.sub": "仅由您提供的输入 —— 引擎不代为设定",
     "s5.notice": "每个数值后可附来源，格式 <code>0.10 @管理层规划 p.12</code>；来源前可加 <code>高:</code>/<code>中:</code>/<code>低:</code> 指定置信度。<b>未标注来源视为低置信度</b>，将列示于报告的「结果的软肋」。注释中的「参考」为历史值，<b>不作为建议输入</b>。",
@@ -369,6 +445,10 @@ const I18N = {
   },
   en: {
     "tagline": "Local valuation workbench · Diligence materials → valuation report · Nothing leaves this machine",
+    "foot.version": "FreeAnalyst v{v} · running locally · bound to 127.0.0.1",
+    "foot.offline": "FreeAnalyst · design preview (no local service connected)",
+    "nav.doc": "Documentation",
+    "nav.docstale": "The service process is stale and may not serve the documentation page yet — restart the service first",
     "pill.egress": "No egress · Confidential materials processed locally only",
     "pill.arith": "Arithmetic executed in code, never by the model",
     "pill.declare": "Missing inputs are declared, never assumed",
@@ -381,7 +461,7 @@ const I18N = {
     "s1.btn": "Parse materials",
     "s1.pickdir": "▸ Choose folder…", "s1.pickfile": "▸ Choose file…",
     "s1.picklabel": "Load via",
-    "stale.banner": "<b>This page is newer than the running service — the service process is stale and lacks the new endpoint.</b><br>The page is re-read from disk on every request, so it is current; Python code, however, is not hot-reloaded, and the process still running is the old one — hence unknown endpoint.<br><b>Restart the service</b>: press <code>Ctrl-C</code> in the terminal running it, then run <code>python3 freeanalyst.py ui &lt;materials&gt;</code> again. Until then these two buttons are disabled.",
+    "stale.banner": "<b>This page is newer than the running service — the service process is stale (it lacks a new endpoint or new fields).</b><br>The page is re-read from disk on every request, so it is current; Python code, however, is not hot-reloaded, and the process still running is the old one — clicking “Choose folder…” returns unknown endpoint, and the <b>percentage fields in step 5 show no % sign</b> (leaving you unsure whether to type 5, 0.05 or 5%).<br><b>Restart the service</b>: press <code>Ctrl-C</code> in the terminal running it, then run <code>python3 freeanalyst.py ui &lt;materials&gt;</code> again. Until then these features are unavailable.",
     "s1.drophint": "Or drag a folder / file here from Finder — the path is filled in; nothing is copied",
     "s1.picking": "Select in the system dialog… (it may open behind this window)",
     "s1.cancelled": "Selection cancelled",
@@ -401,6 +481,9 @@ const I18N = {
     "chk.dups": "{n} line items carry more than one value — typically a page holding both consolidated and parent-only statements. Confirm the consolidated column was used.",
     "meta.basis": "Accounting basis", "meta.period": "Period", "meta.fix": "override below if incorrect",
     "unit.label": "Reporting unit", "unit.warn": "(an error here is a 1,000× error)",
+    "unit.pct": "Percentage · number only (8.5 means 8.5%)",
+    "origin.filing": "From filings", "origin.derived": "Derived · confirm",
+    "origin.external": "External · your input", "origin.judgment": "Your judgement",
     "unit.basis": "Determined from: ", "unit.unknown": "Could not be determined — you must specify",
     "s5.title": "Valuation assumptions", "s5.sub": "Inputs only you can provide — the engine will not set them for you",
     "s5.notice": "Append a source to each figure: <code>0.10 @management plan p.12</code>. Prefix the source with <code>高:</code>/<code>中:</code>/<code>低:</code> to set confidence (engine syntax remains Chinese). <b>No source is treated as low confidence</b> and appears under the report's weak points. \"Reference\" shows historical values, <b>not recommended inputs</b>.",
@@ -421,7 +504,16 @@ const I18N = {
 
 const $ = id => document.getElementById(id);
 let LANG = localStorage.getItem("fa.lang") || "zh";
+//: 服务端报的版本号（/api/health）。**空 = 没连上服务**（预览模式）——
+//: 页面不自己写死版本号，免得写的是一个跟服务对不上的号。
+let VER = "";
 const t = k => (I18N[LANG] && I18N[LANG][k]) || (I18N.zh[k] || k);
+
+function setVer(){
+  const el = $("ver");
+  if(!el) return;
+  el.textContent = VER ? t("foot.version").replace("{v}", VER) : t("foot.offline");
+}
 
 function applyLang(lang){
   LANG = lang;
@@ -433,7 +525,8 @@ function applyLang(lang){
   document.querySelectorAll(".lang button").forEach(b => {
     b.classList.toggle("on", b.dataset.lang === lang);
   });
-  if (STATE.data) rerender();          // 有数据时，表格/清单跟着换语言
+  if(STATE.data) rerender();          // 有数据时，表格/清单跟着换语言
+  setVer();                           // 版本号那行也是文案，跟着换
 }
 
 // 直接打开文件（无后端）时用示例数据把六步渲染出来 —— 看设计不必先起服务。
@@ -459,19 +552,36 @@ const DEMO_DATA = {
   warnings:[],
   questions:[
     {group:"① 机器推导项（如无异议可直接采用）", key:"unit", label:"金额单位",
-     hint:"此处有误即为 1,000 倍量级错误", default:"千美元", reference:"报表正文"},
+     hint:"此处有误即为 1,000 倍量级错误", default:"千美元", reference:"报表正文",
+     suggest:["元", "千元", "万元", "百万元", "千美元", "百万美元"]},
     {group:"① 机器推导项（如无异议可直接采用）", key:"gaap", label:"会计口径",
-     hint:"由标题与科目标签共同判定", default:"US GAAP", reference:""},
-    {group:"② 资本成本参数（WACC）", key:"risk_free", label:"无风险利率",
+     hint:"由标题与科目标签共同判定", default:"US GAAP", reference:"",
+     options:["US GAAP", "CAS", "IFRS"]},
+    {group:"① 机器推导项（如无异议可直接采用）", key:"scope", label:"合并 / 单体",
+     hint:"下拉里第一个就是材料推出来的那个值", default:"合并", reference:"",
+     options:["合并", "单体", "母公司报表"]},
+    {group:"① 机器推导项（如无异议可直接采用）", key:"audited", label:"审计状态",
+     hint:"", default:"未标注", reference:"", options:["未标注", "已审计", "未审计"]},
+    {group:"② 场景（决定用哪套方法）", key:"purpose", label:"估值目的",
+     hint:"", default:"并购定价", reference:"",
+     options:["并购定价", "融资定价", "投后NAV", "税务合规"]},
+    {group:"② 场景（决定用哪套方法）", key:"stance", label:"立场",
+     hint:"买方的关注点与卖方不同，结论要看的区间也不一样", default:"买方",
+     reference:"", options:["买方", "卖方", "中立"]},
+    {group:"② 场景（决定用哪套方法）", key:"stage", label:"发展阶段",
+     hint:"", default:"成熟企业", reference:"",
+     options:["成熟企业", "早期项目", "成长企业", "业主经营"]},
+    {group:"③ 资本成本参数（WACC）", key:"risk_free", label:"无风险利率",
      hint:"10 年期国债收益率", default:"", reference:"0.0245"},
-    {group:"② 资本成本参数（WACC）", key:"beta_unlevered", label:"无杠杆 β",
+    {group:"③ 资本成本参数（WACC）", key:"beta_unlevered", label:"无杠杆 β",
      hint:"可比公司无杠杆贝塔", default:"", reference:"1.10"},
-    {group:"③ 预测期参数（DCF）", key:"growth", label:"营业收入增长率（逐年，逗号分隔）",
+    {group:"④ 预测期参数（DCF）", key:"growth", label:"营业收入增长率（逐年，逗号分隔）",
      hint:"年数须与配置中的年份标签一致", default:"", reference:"0.05, 0.05, 0.05"},
-    {group:"③ 预测期参数（DCF）", key:"ebitda_margin", label:"EBITDA 率（逐年）",
+    {group:"④ 预测期参数（DCF）", key:"ebitda_margin", label:"EBITDA 率（逐年）",
      hint:"仅填一项时自动展开至各年", default:"", reference:"0.06"},
-    {group:"③ 预测期参数（DCF）", key:"terminal_growth", label:"永续增长率",
-     hint:"不建议显著高于长期通胀", default:"", reference:"0.025"}
+    {group:"⑤ 可选（不填则对应模块不执行）", key:"advisor_metric", label:"参谋对照的指标",
+     hint:"引擎只支持这三项", default:"revenue_cagr", reference:"",
+     options:["revenue_cagr", "ebitda_margin", "revenue_scale"]}
   ],
   out_dir:"out/target"
 };
@@ -522,6 +632,7 @@ function demo(){
   $("card6").classList.remove("hide");
   $("srvNote").classList.remove("hide");
   $("demoTag").classList.remove("hide");
+  setVer();                           // 预览模式：显示"未连接服务"
 }
 
 // 让服务去调系统原生选择框，拿真实路径 —— **不上传、不复制**（材料留在原地）
@@ -646,6 +757,11 @@ function renderChecks(d){
   const dups = (d.warnings || []).filter(w => w.indexOf("个取值") >= 0).length;
   if(dups) h += '<div class="notice issue" style="margin-top:12px">' +
                 esc(t("chk.dups").replace("{n}", dups)) + '</div>';
+  // 映射率过低 —— 这条比"勾稽平不平"更靠前：表没读懂时，勾稽可能照样平。
+  // 引擎的中文原话直接显示（界面层不重写引擎的判断）。
+  const mp = d.mapping_warnings || [];
+  if(mp.length) h += '<div class="notice issue" style="margin-top:12px">' +
+                     mp.map(w => esc(w)).join("<br>") + '</div>';
   $("checks").innerHTML = h;
 }
 
@@ -672,14 +788,65 @@ function renderUnit(d){
     '</div></div>';
 }
 
+// 引擎的问题标签里带 markdown 的 **加粗**（那是给 txt 清单排版用的），
+// 网页里要转成真加粗 —— 不然界面上会看到一对星号。
+function md(s){ return esc(s).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>"); }
+
+// **能确定的就不要人打字**：
+//   封闭集合（买方/卖方/中立…）→ 下拉，只能选
+//   建议值（元/千元/千美元…）→ 可编辑下拉，能点选也能自己写
+//   其余 → 普通输入框
+function field(q){
+  const k = esc(q.key), v = q.default || "";
+  const opts = q.options || [], sug = q.suggest || [];
+  if(opts.length){
+    const has = opts.indexOf(v) >= 0;
+    let h = '<select data-key="' + k + '">';
+    // 当前值不在选项里（材料推出来一个不常见的写法）时，把它补进去，
+    // 否则下拉会显示成空白 —— 用户会以为数据丢了。
+    if(v && !has) h += '<option value="' + esc(v) + '" selected>' + esc(v) + '</option>';
+    for(const o of opts){
+      h += '<option value="' + esc(o) + '"' + (o === v ? " selected" : "") + '>' + esc(o) + '</option>';
+    }
+    return h + '</select>';
+  }
+  if(sug.length){
+    const id = "dl-" + q.key;
+    return '<input type="text" spellcheck="false" list="' + id + '" data-key="' + k +
+           '" value="' + esc(v) + '"><datalist id="' + id + '">' +
+           sug.map(s => '<option value="' + esc(s) + '"></option>').join("") + '</datalist>';
+  }
+  const inp = '<input type="text" spellcheck="false" data-key="' + k +
+              '" value="' + esc(v) + '">';
+  // 百分比字段：% 默认显示在框里（人只填数值）；提交后由引擎把值补成 "8.5%" 再读。
+  // 界面上不自己乘除 —— 算术和单位转换都不该发生在显示层。
+  return q.unit === "%"
+    ? '<span class="pctwrap">' + inp + '<i class="pctsuf">%</i></span>'
+    : inp;
+}
+
+// 这个数**从哪来**。分不清来源，人就会把"公司之外要自己找的数"当成工具该给的数。
+const ORIGIN = {
+  "财报":     {cls: "filing",   key: "origin.filing"},
+  "财报推算": {cls: "derived",  key: "origin.derived"},
+  "外部":     {cls: "external", key: "origin.external"},
+  "判断":     {cls: "judgment", key: "origin.judgment"}
+};
+function originTag(o){
+  const m = ORIGIN[o];
+  return m ? '<i class="org ' + m.cls + '">' + t(m.key) + '</i>' : "";
+}
+
 function renderQuestions(d){
   let g = "", h = "";
   for(const q of d.questions){
     if(q.group !== g){ g = q.group; h += '<h3 class="grp">' + esc(g) + '</h3>'; }
     const ref = q.reference ? '　｜ <b>参考 / ref</b>：' + esc(q.reference) : "";
-    h += '<div class="q"><label>' + esc(q.label) + '<span class="hint">' + esc(q.hint || "") +
-         ref + '</span></label><input type="text" spellcheck="false" data-key="' +
-         esc(q.key) + '" value="' + esc(q.default || "") + '"></div>';
+    // 百分比字段先说清写法：只填数值，% 已经显示在框里
+    const pct = q.unit === "%" ? '<b>' + t("unit.pct") + '</b>　' : "";
+    h += '<div class="q"><label>' + originTag(q.origin) + md(q.label) +
+         '<span class="hint">' + pct + md(q.hint || "") + ref + '</span></label>' +
+         field(q) + '</div>';
   }
   $("questions").innerHTML = h;
 }
@@ -693,7 +860,8 @@ function go(){
   }
   $("goBtn").disabled = true;
   const answers = {};
-  document.querySelectorAll("#questions input").forEach(i => {
+  // 下拉和输入框都要收 —— 做成下拉的字段不能因为选择器漏了而被丢掉
+  document.querySelectorAll("#questions input, #questions select").forEach(i => {
     if(i.value.trim()) answers[i.dataset.key] = i.value.trim();
   });
   const u = $("unit") ? $("unit").value.trim() : "";
@@ -727,6 +895,8 @@ function showStale(){
     const el = $(id);
     if(el) el.disabled = true;
   });
+  const dl = $("docLink");
+  if(dl) dl.title = t("nav.docstale");
 }
 
 // ── 启动：有后端就等人操作；没后端（双击打开、聊天里预览）自动进设计预览 ──
@@ -736,11 +906,25 @@ function boot(){
   document.querySelectorAll(".lang button").forEach(b => {
     b.addEventListener("click", () => applyLang(b.dataset.lang));
   });
-  if(DEMO){ demo(); return; }
+  if(DEMO){
+    // 没有后端时，说明文件就在旁边这个文件里 —— 别指到 /doc 去撞 404
+    const dl = $("docLink");
+    if(dl) dl.setAttribute("href", "webapp_doc.html");
+    demo();
+    return;
+  }
   const timer = setTimeout(() => demo(), 1800);
   fetch("/api/health", {cache:"no-store"}).then(r => r.json()).then(h => {
     const eps = (h && h.endpoints) || [];
-    if(eps.indexOf("pick") < 0) showStale();
+    const pages = (h && h.pages) || [];
+    const feats = (h && h.features) || [];
+    VER = (h && h.version) || "";
+    setVer();
+    // 接口、页面、**能力标记**逐条核对：少任何一条都说明跑着的是旧进程。
+    // 能力标记这一类是后补的 —— 百分比字段加进来但没重启时，
+    // 页面上那些框会**静默地没有 %**，用户根本不知道填 5 还是 0.05。
+    if(eps.indexOf("pick") < 0 || pages.indexOf("doc") < 0 ||
+       feats.indexOf("percent-unit") < 0) showStale();
   }).catch(() => demo()).finally(() => clearTimeout(timer));
 }
 const STATE = { path:"", unit:"", data:null };

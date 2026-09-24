@@ -112,6 +112,11 @@ def render_statements(s: stm.Statements, out: list[str]) -> None:
             out.append(f"  {name}：{len(st.rows)} 行，映射上 {matched} 行"
                        f"（{Path(st.source).name}）")
 
+    # 映射率过低要说出来：这是"表没读懂"，不是"报表里没有"。
+    # 不说的时候，报告会安静地少掉估值结论，人以为材料本来就这样。
+    for w in s.mapping_warnings():
+        out.append("  " + w)
+
     # ---------- 勾稽校验 ----------
     out.append("\n  【勾稽校验 —— 三条全平才说明映射对了】")
     checks = s.checks()

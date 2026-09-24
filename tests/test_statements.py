@@ -155,5 +155,77 @@ class TestStatementsObject(unittest.TestCase):
         self.assertAlmostEqual(ratio, 38133.0 / 2169461.0, places=5)
 
 
+class TestMappingWarnings(unittest.TestCase):
+    """映射率过低必须**显式警告** —— 这是"表没读懂"，不是"报表里没有"。
+
+    实测：一份 176 页的保险公司中期报告 → 利润表 8/76、现金流量表 7/35，
+    收入 / 营业利润 / 折旧摊销全没映射上。不说的时候，报告会**安静地**少掉
+    估值结论，而人以为这份材料本来就缺数。
+    """
+
+    @staticmethod
+    def _set(name: str, total: int, mapped: int,
+             fields: dict | None = None) -> stm.StatementSet:
+        rows = [stm.StatementRow(label=f"行{i}", value=1.0,
+                                 field=(Field.REVENUE if i < mapped else None),
+                                 via="")
+                for i in range(total)]
+        return stm.StatementSet(name=name, source="x.pdf", rows=rows,
+                                fields=dict(fields or {}))
+
+    def test_low_income_rate_warns(self):
+        s = stm.Statements(balance=self._set("资产负债表", 33, 28),
+                           income=self._set("利润表", 76, 8),
+                           cash_flow=self._set("现金流量表", 35, 7))
+        w = " ".join(s.mapping_warnings())
+        self.assertIn("利润表只映射上 8/76 行", w)
+        self.assertIn("没被读懂", w)
+        # 现金流量表的比率**不单独报警** —— 明细行多不等于没读懂（见下一条）
+        self.assertNotIn("现金流量表只映射", w)
+        self.assertNotIn("资产负债表只映射", w)
+
+    def test_cash_flow_rate_alone_does_not_warn(self):
+        """回归：Fillbit 的形状 —— 现金流量表 24/61（39%）但关键科目都在。
+
+        这是**误报现场**：一开始按 50% 一刀切，把这门健康的材料也打了警告。
+        「会喊狼来了的检查比没有检查更坏」，所以比率判据只留给利润表。
+        """
+        income_fields = {Field.REVENUE: 1.0, Field.OPERATING_INCOME: 1.0,
+                         Field.DEPRECIATION_AMORTIZATION: 1.0}
+        cf_fields = {Field.CFO: 1.0}
+        s = stm.Statements(balance=self._set("资产负债表", 35, 31),
+                           income=self._set("利润表", 28, 16, income_fields),
+                           cash_flow=self._set("现金流量表", 61, 24, cf_fields))
+        self.assertEqual(s.mapping_warnings(), [])
+
+    def test_missing_key_fields_are_named(self):
+        """缺哪些科目要**点名** —— 不然人不知道该去补什么。"""
+        s = stm.Statements(income=self._set("利润表", 76, 8))
+        w = " ".join(s.mapping_warnings())
+        self.assertIn("关键科目没映射上", w)
+        self.assertIn("营业收入", w)
+        self.assertIn("营业利润", w)
+        self.assertIn("折旧与摊销", w)
+        self.assertIn("经营活动产生的现金流量净额", w)
+        self.assertIn("不可用", w)
+
+    def test_healthy_mapping_does_not_warn(self):
+        """映射正常时一个字都不该多说 —— 会喊狼来了的检查比没有检查更坏。"""
+        income_fields = {Field.REVENUE: 1.0, Field.OPERATING_INCOME: 1.0,
+                         Field.DEPRECIATION_AMORTIZATION: 1.0}
+        cf_fields = {Field.CFO: 1.0}
+        s = stm.Statements(balance=self._set("资产负债表", 33, 30),
+                           income=self._set("利润表", 28, 20, income_fields),
+                           cash_flow=self._set("现金流量表", 61, 40, cf_fields))
+        self.assertEqual(s.mapping_warnings(), [])
+
+    def test_report_shows_the_warning(self):
+        """报告正文里必须有（命令行与网页走的是同一份正文）。"""
+        s = stm.Statements(income=self._set("利润表", 76, 8))
+        out: list[str] = []
+        fc.render_statements(s, out)
+        self.assertIn("这张表很可能没被读懂", "\n".join(out))
+
+
 if __name__ == "__main__":
     unittest.main()

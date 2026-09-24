@@ -56,8 +56,13 @@ DEFAULT_PORT = 8765
 #: 接口清单与版本 —— 页面拿它跟自己对表。
 #: **真踩过**：页面加了「选择文件夹…」，但跑着的服务还是旧进程（Python 代码不会热加载），
 #: 于是点下去只回一句 `unknown endpoint`。现在页面能自己发现这件事并说清楚。
-VERSION = "0.33"
+VERSION = "0.35"
 ENDPOINTS = ("health", "scan", "appraise", "pick")
+#: 页面依赖的**能力**标记（比接口更细一层：同一个接口也可能少字段）。
+#: 页面会逐条核对，缺哪条就提示"服务是旧进程"。
+#: 真踩过：百分比字段加进引擎后没重启服务，页面上那些框**静默地没有 %** ——
+#: 用户于是不知道填 5、0.05 还是 5%。
+FEATURES = ("percent-unit",)
 
 #: 项目根目录 —— 页面正文和默认输出都相对它。
 ROOT = Path(__file__).resolve().parent
@@ -66,6 +71,20 @@ ROOT = Path(__file__).resolve().parent
 #: 好处不只是省事：不存在「稿子改好看了、实现没跟上」这种分岔。
 #: `webapp_page.html` 可以直接双击打开看样式（没有后端时它自己进设计预览模式）。
 PAGE_PATH = ROOT / "webapp_page.html"
+#: 说明文件（功能 / 免责声明 / 模型 / 使用 / 调试 / 接自己的大模型）—— 独立成页，
+#: 因为它给的是**使用者**，而 README 给的是开发者/审计者，两边读者不同。
+DOC_PATH = ROOT / "webapp_doc.html"
+#: 除接口之外还提供哪些页面 —— 页面据此判断「服务是不是旧进程」
+PAGES = ("doc",)
+
+
+def doc_html() -> str:
+    """说明文件页。缺失时给一句人话，不抛 500。"""
+    if DOC_PATH.exists():
+        return DOC_PATH.read_text(encoding="utf-8")
+    return ("<!DOCTYPE html><meta charset='utf-8'>"
+            "<body style='font:14px monospace;background:#05070A;color:#D7F5E9;padding:40px'>"
+            "说明文件缺失：webapp_doc.html 不在仓库里。</body>")
 
 
 def page_html() -> str:
@@ -171,6 +190,8 @@ def material_json(mat: Materials) -> dict:
         "unused": mat.unused,
         "notes": mat.notes,
         "warnings": list(getattr(s, "warnings", []) or []) if s else [],
+        # 映射率过低 → 界面上要顶一条红字（"表没读懂" ≠ "报表里没有"）
+        "mapping_warnings": (s.mapping_warnings() if s is not None else []),
         "questions": [q.__dict__ for q in intake.questions(mat)],
         "out_dir": str(intake.out_dir_for(mat)),
     }
@@ -190,6 +211,11 @@ def api_appraise(path: str, unit: str, answers: dict[str, str],
             ans[k] = parse_answer(v)
     if unit and not ans.get("unit"):
         ans["unit"] = parse_answer(unit)
+
+    # 百分比字段：界面上把 % 显示在框里，人只填数值（填 8.5 即 8.5%）。
+    # **在引擎拿到之前把 % 补进字符串** —— 值自带单位，下游就不用猜；
+    # 猜错的代价是 100 倍级的静默错误（8.5 vs 850%）。只走网页这条路。
+    intake.normalize_percents(mat, ans)
 
     if not (ans.get("unit") or mat.unit):
         return {"ok": False, "error": "单位还没确定（报表可能是千元/千美元，"
@@ -261,7 +287,10 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, page_html().encode(), "text/html; charset=utf-8")
         elif self.path == "/api/health":
             self._json({"ok": True, "version": VERSION,
-                        "endpoints": list(ENDPOINTS)})
+                        "endpoints": list(ENDPOINTS), "pages": list(PAGES),
+                        "features": list(FEATURES)})
+        elif self.path in ("/doc", "/doc.html"):
+            self._send(200, doc_html().encode(), "text/html; charset=utf-8")
         else:
             self._send(404, b"not found", "text/plain; charset=utf-8")
 

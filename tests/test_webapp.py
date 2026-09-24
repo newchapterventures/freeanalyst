@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 import tempfile
 import threading
@@ -115,21 +116,24 @@ class TestApiScan(unittest.TestCase):
 
 
 class TestApiAppraise(unittest.TestCase):
+    #: 网页向导收上来的写法：百分比字段只填数值（% 显示在框里）。
+    #: 所以这里写 `2.45` 就等于 2.45% —— **这是界面层的约定**，
+    #: 与 txt 清单那条路的 `0.0245` 等价（见 intake.normalize_percents 的注释）。
     ANSWERS = {
         "unit": "千美元",
-        "risk_free": "0.0245 @高:国债",
-        "equity_risk_premium": "0.055 @高:ERP",
+        "risk_free": "2.45 @高:国债",
+        "equity_risk_premium": "5.5 @高:ERP",
         "beta_unlevered": "1.10 @演示",
-        "cost_of_debt": "0.045 @演示",
-        "tax_rate": "0.35 @高:法定",
+        "cost_of_debt": "4.5 @演示",
+        "tax_rate": "35 @高:法定",
         "debt": "0 @高:无有息负债",
         "equity": "800000 @演示",
-        "growth": "0.05, 0.05, 0.05 @演示",
-        "ebitda_margin": "0.06, 0.06, 0.06 @演示",
-        "da_pct_revenue": "0.0176 @中:历史",
-        "capex_pct_revenue": "0.0362 @中:历史",
-        "nwc_pct_revenue": "0.1818 @中:历史",
-        "terminal_growth": "0.025 @中",
+        "growth": "5, 5, 5 @演示",
+        "ebitda_margin": "6, 6, 6 @演示",
+        "da_pct_revenue": "1.76 @中:历史",
+        "capex_pct_revenue": "3.62 @中:历史",
+        "nwc_pct_revenue": "18.18 @中:历史",
+        "terminal_growth": "2.5 @中",
         "valuation_date": "2016-12-31",
     }
 
@@ -165,6 +169,21 @@ class TestApiAppraise(unittest.TestCase):
             self.assertTrue(r["ok"])
             self.assertTrue(any("terminal_growth" in m for m in r["missing"]))
 
+    def test_percent_input_is_read_as_percent(self):
+        """人在带 % 的框里填 2.45，引擎必须读成 2.45%（不是 245%）。
+
+        这是 100 倍级的静默错误 —— 报告照样出得来，所以从 HTTP 那层一路查到落盘的配置。
+        """
+        with tempfile.TemporaryDirectory() as d:
+            r = webapp.api_appraise(str(FITBIT), "", dict(self.ANSWERS), out_dir=str(d))
+            self.assertTrue(r["ok"], r.get("error"))
+            cfg = json.loads(Path(r["files"]["config"]).read_text(encoding="utf-8"))
+        self.assertAlmostEqual(cfg["wacc"]["risk_free"]["value"], 0.0245)
+        self.assertAlmostEqual(cfg["wacc"]["tax_rate"]["value"], 0.35)
+        self.assertAlmostEqual(cfg["wacc"]["equity_risk_premium"]["value"], 0.055)
+        # beta 不是百分比字段 —— 不许被补上 %
+        self.assertAlmostEqual(cfg["wacc"]["beta_unlevered"]["value"], 1.10)
+
     def test_interface_does_not_recompute_anything(self):
         """界面出的报告必须和命令行那条路**逐字一致** —— 同一套函数，不重写。"""
         from value import run_report
@@ -173,6 +192,8 @@ class TestApiAppraise(unittest.TestCase):
             r = webapp.api_appraise(str(FITBIT), "", self.ANSWERS, out_dir=str(d))
             mat = webapp._CACHE[str(FITBIT)]
             ans = {k: webapp.parse_answer(v) for k, v in self.ANSWERS.items()}
+            # 与界面同一条规则：百分比字段补 %（这不是"再算一遍"，是同一个规整）
+            webapp.intake.normalize_percents(mat, ans)
             cfg, _ = webapp.intake.build_config(mat, ans)
             self.assertEqual(r["report"],
                              run_report(cfg, Path(d), statements=mat.statements))
@@ -304,7 +325,71 @@ class TestHttpLayer(unittest.TestCase):
             d = json.loads(r.read().decode())
         self.assertTrue(d["ok"])
         self.assertIn("pick", d["endpoints"])
+        self.assertIn("doc", d["pages"])
         self.assertIn("version", d)
+        # 能力标记：接口都在、但**少了字段**的那种"半新"旧进程也要能发现。
+        # 实测踩过：百分比字段加进引擎没重启，页面上那些框静默地没有 %。
+        self.assertIn("percent-unit", d["features"])
+
+    def test_page_checks_the_feature_flags(self):
+        page = webapp.page_html()
+        self.assertIn('feats.indexOf("percent-unit")', page)
+
+    def test_doc_page_is_served(self):
+        with urllib.request.urlopen(self._url("/doc"), timeout=10) as r:
+            body = r.read().decode()
+        self.assertEqual(r.status, 200)
+        self.assertIn("说明文件", body)
+        self.assertIn("免责声明", body)
+
+    def test_workbench_links_to_the_doc(self):
+        """向导页上必须有一个进得去的「说明文件」入口。"""
+        page = webapp.page_html()
+        self.assertIn('id="docLink"', page)
+        self.assertIn('href="/doc"', page)
+        self.assertIn("nav.doc", page)
+
+    def test_branding_and_version_are_on_the_page(self):
+        """字标贴算盘顶、署名贴算盘底（一上一下夹住算盘）；标语在其下；版本号在底部。"""
+        page = webapp.page_html()
+        # 署名必须在字标块内，而且是**静态文字**（中英相同，不该依赖 JS 才出现）
+        seg = page.split('class="head-txt"', 1)[-1].split('class="doclink"', 1)[0]
+        self.assertIn('class="byline">by New Chapter Ventures<', seg)
+        # 上对齐/下对齐靠这两条 CSS 实现
+        rule = page.split(".head-txt{", 1)[-1].split("}", 1)[0]
+        self.assertIn("align-self:stretch", rule)
+        self.assertIn("space-between", rule)
+        self.assertIn('class="tagline-row"', page)          # 标语在整块下方
+        self.assertIn('id="ver"', page)                     # 底部版本号
+        self.assertIn("foot.version", page)
+        # 版本号的唯一来源是服务端的 /api/health —— 页面不许自己写死一个号
+        self.assertIn("VER = (h && h.version)", page)
+        self.assertNotIn("FreeAnalyst v0.", page)
+
+    def test_three_header_lines_share_one_left_edge(self):
+        """三行字左对齐必须是**算出来的**，不是对齐出来的。
+
+        这里曾经写死过 `.tagline-row{padding-left:54px}`（= 当年算盘宽 38 + 间距 16）。
+        后来算盘改成按高度缩放，宽度变 27.6px，标语就悄悄右移 10px ——
+        三行错开，而所有测试都是绿的。所以现在钉死：宽度与左缩进**同源**。
+        """
+        page = webapp.page_html()
+        flat = "".join(page.split())
+        self.assertIn("--logo-w:calc(var(--logo-h)*19/33)", flat)
+        self.assertIn("width:var(--logo-w)", flat)
+        self.assertIn("padding-left:calc(var(--logo-w)+var(--head-gap))", flat)
+        # 标语要有静态中文兜底：JS 没跑那行就是空的，量都量不出来
+        self.assertIn('data-i18n="tagline">本地估值向导', page)
+        # 装饰性命令行与标语同一块话 → 必须在同一列里（缩进只允许有一处）
+        row = page.split('class="tagline-row"', 1)[-1].split('<div class="pills"', 1)[0]
+        self.assertIn('class="prompt"', row)
+        self.assertNotIn("padding-left", page.split(".prompt{", 1)[-1].split("}", 1)[0])
+        # 兜底宽高与 CSS 变量不许各说各话
+        mh = re.search(r"--logo-h:(\d+)px", page)
+        ms = re.search(r'<svg class="logo" width="(\d+)" height="(\d+)"', page)
+        self.assertTrue(mh and ms, "找不到 --logo-h 或 svg 的兜底宽高")
+        assert mh is not None and ms is not None      # 给类型检查器一个明确承诺
+        self.assertEqual(ms.group(2), mh.group(1))
 
     def test_page_has_a_banner_for_a_stale_service(self):
         """服务是旧进程时要明说 —— 实测点按钮只回 unknown endpoint 过。"""
@@ -348,6 +433,46 @@ class TestHttpLayer(unittest.TestCase):
         self.assertEqual(d["path"], "/Users/x/deals/t")
         self.assertNotIn("files", d)
 
+    def test_choice_fields_render_as_dropdowns(self):
+        """能确定的字段在界面上必须是下拉，且收集答案时不能漏掉下拉。"""
+        page = webapp.page_html()
+        self.assertIn("<select data-key=", page)          # 封闭集合
+        self.assertIn("datalist", page)                   # 建议值（可编辑下拉）
+        self.assertIn("#questions input, #questions select", page)
+
+    def test_percent_fields_show_the_percent_sign(self):
+        """百分比字段：% 显示在框里、提示写清「只填数值」；界面**原样发送**不自己换算。
+
+        换算只允许在引擎侧一处（intake.normalize_percents）——
+        界面要是自己乘除，界面、服务端、命令行就有三份算术，早晚不一致。
+        """
+        page = webapp.page_html()
+        self.assertIn('class="pctsuf"', page)              # 框里那个 %
+        self.assertIn('q.unit === "%"', page)              # 按引擎给的 unit 判断
+        self.assertIn("unit.pct", page)                    # 「只填数值」的提示
+        self.assertIn("answers[i.dataset.key] = i.value.trim();", page)   # 原样发
+
+    def test_every_origin_kind_is_rendered(self):
+        """来源类别要画出来：财报 / 财报推算 / 外部 / 判断 —— 少一类人就会认错。"""
+        page = webapp.page_html()
+        for origin, cls in (("财报", "filing"), ("财报推算", "derived"),
+                            ("外部", "external"), ("判断", "judgment")):
+            self.assertIn(f'"{origin}"', page, origin)
+            self.assertIn(f".org.{cls}", page, cls)
+            self.assertIn(f"origin.{cls}", page, cls)
+        self.assertIn("originTag(q.origin)", page)
+
+    def test_api_passes_choices_through(self):
+        """options 必须从引擎一路传到页面，否则界面上还是手打。
+
+        直接调 api_scan() 时拿到的是元组（走 HTTP 才是 JSON 数组），
+        所以两边都 list() 一下再比 —— 比的是内容，不是容器类型。
+        """
+        d = webapp.api_scan(str(FITBIT))
+        q = {x["key"]: x for x in d["questions"]}
+        self.assertEqual(list(q["stance"]["options"]), ["买方", "卖方", "中立"])
+        self.assertTrue(q["unit"]["suggest"])
+
     def test_appraise_endpoint_end_to_end(self):
         """走 HTTP 出的报告，和直接调函数出来的必须一样（同一条路）。"""
         old_root = webapp.intake.ROOT
@@ -362,6 +487,60 @@ class TestHttpLayer(unittest.TestCase):
             self.assertTrue(r["ok"], r.get("error"))
             self.assertIn("估值报告", r["report"])
             self.assertTrue(Path(r["files"]["report"]).exists())
+
+
+class TestDocPage(unittest.TestCase):
+    """说明文件 —— 使用者要的六件事，少一件就是没写完。
+
+    正文是**长文**（不是界面小字），所以这里检查的是"每一节都在"，
+    而不是逐句比对 —— 逐句比对的测试只会让人不敢改文案。
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.doc = webapp.doc_html()
+
+    def test_covers_the_six_required_topics(self):
+        for topic in ("功能", "免责声明", "使用哪些模型", "使用方法",
+                      "如何调试", "接入自己的大模型"):
+            self.assertIn(topic, self.doc, f"说明文件缺一节：{topic}")
+
+    def test_is_bilingual(self):
+        # 英文块带着 hide（默认中文），所以只匹配到 class 开头，不写死整段
+        self.assertIn('class="lang-zh', self.doc)
+        self.assertIn('class="lang-en', self.doc)
+        for en in ("Disclaimer", "Bring your own model", "Debugging",
+                   "Which models are used"):
+            self.assertIn(en, self.doc, f"英文版缺：{en}")
+
+    def test_warns_about_closed_source_data_risk(self):
+        """闭源模型的数据风险必须写明白 —— 这是他明确要求的一条。"""
+        self.assertIn("数据风险", self.doc)
+        self.assertIn("离开了本机", self.doc)
+        self.assertIn("按次授权", self.doc)
+        self.assertIn("leave this machine", self.doc)
+
+    def test_says_arithmetic_is_not_done_by_a_model(self):
+        """「算术绝不用模型」是这套东西的底线，说明文件里必须讲。"""
+        self.assertIn("算术绝不用模型", self.doc)
+        self.assertIn("arithmetic never goes through a model", self.doc)
+
+    def test_links_back_to_the_workbench(self):
+        self.assertIn('href="/"', self.doc)
+
+    def test_doc_has_version_and_byline(self):
+        self.assertIn('id="ver"', self.doc)
+        self.assertIn("by New Chapter Ventures", self.doc)
+        self.assertIn("/api/health", self.doc)              # 版本号取自服务端
+
+    def test_missing_file_does_not_500(self):
+        """说明文件丢了，页面也得给一句人话，而不是 500。"""
+        old = webapp.DOC_PATH
+        try:
+            webapp.DOC_PATH = Path("/tmp/根本没有这个说明文件.html")
+            self.assertIn("说明文件缺失", webapp.doc_html())
+        finally:
+            webapp.DOC_PATH = old
 
 
 if __name__ == "__main__":
