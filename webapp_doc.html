@@ -219,9 +219,10 @@
     </tbody>
   </table>
   <ul>
-    <li><b>驻留内存实测是文件大小的 1.0~1.14 倍</b>（Q4 量化：qwen3:14b 文件 8.6GB → 驻留 9.4GB），
-        另外要给系统与浏览器留约 4GB。内存不足时系统开始用交换分区，<b>整台机器</b>都会卡，
-        不只是这个工具慢 —— 宁可换小一档。</li>
+    <li><b>驻留内存实测约等于文件大小</b>（0.86~1.14 倍；mmap 下常比文件小 —— qwen3.5:9b
+        文件 6.6GB、驻留 5.3GB）。别按"文件 × 1.2"吓自己，也别当成零开销：
+        另外要给系统与浏览器留约 4GB。内存不足时系统开始用交换分区，<b>整台机器</b>都会卡 ——
+        宁可换小一档。</li>
     <li><b>速度不靠估，靠量</b>：<code>python3 bench/measure_models.py --json bench/measured-local.json</code>。
         驻留内存与 tok/s 都取自 ollama 自报的数据；配置页 02 节的「本机实测」表就是它生成的。</li>
     <li>材料<b>不用整篇喂给模型</b>：工具是按问题检索片段再问，所以 7B~8B 足以应付。</li>
@@ -436,9 +437,10 @@ python3 freeanalyst.py ask "调整后 EBITDA 是怎么算的？"</pre>
     </tbody>
   </table>
   <ul>
-    <li><b>Resident memory measures 1.0–1.14× the file size</b> (Q4: qwen3:14b is 8.6 GB on disk,
-        9.4 GB resident), and the OS still needs ~4 GB. When RAM runs out the machine starts
-        swapping and <b>everything</b> crawls — drop a size rather than thrash.</li>
+    <li><b>Resident memory measures roughly the file size</b> (0.86–1.14×; under mmap often
+        smaller — qwen3.5:9b: 6.6 GB on disk, 5.3 GB resident). Don't budget "file × 1.2"
+        (that scares you off a fine model) and don't budget zero: leave ~4 GB for the OS.
+        When RAM runs out the machine starts swapping and <b>everything</b> crawls.</li>
     <li><b>Measure speed, don't guess:</b>
         <code>python3 bench/measure_models.py --json bench/measured-local.json</code>. Resident memory
         and tok/s both come from ollama's own reporting; the &quot;measured on this machine&quot;

@@ -99,16 +99,17 @@ NO_MODEL_PATHS: tuple[dict, ...] = (
             "机密材料自己拿捏 —— 工具不会替你判断。"},
 )
 
-#: 按内存挑模型。文件大小是 Q4 量化的**约数**（有实测的在注释里标了）。
+#: 按内存挑模型。体积是**实际的下载量**（十进制 GB，与 `ollama list` 一致）。
+#: 代次会过期 —— 所以候选代次也在 `llm/registry.py` 里，联网时以官方库为准。
 RECOMMEND: tuple[dict, ...] = (
-    {"ram_gb": 8, "model": "qwen3:4b", "download": "约 2.6GB",
-     "why": "8GB 的机器留给系统的余量很小，4B 是本工具的问答能用的最小档"},
-    {"ram_gb": 16, "model": "qwen3:8b", "download": "约 5GB",
-     "why": "16GB 的商务本最稳的选择；本工具的问答够用"},
-    {"ram_gb": 24, "model": "qwen3:14b", "download": "约 9.3GB",
-     "why": "判断类问题更稳（实测在本机 16GB 上能跑，速度见配置页实测表）"},
-    {"ram_gb": 32, "model": "qwen3:30b-a3b", "download": "约 18GB",
-     "why": "MoE 每次只激活一部分参数，速度快，但**大不等于稳**，先过质量门槛"},
+    {"ram_gb": 8, "model": "qwen3.5:4b", "download": "约 3.4GB",
+     "why": "当前一代的小档；8GB 机器留给系统的余量很小，这是能跑起来的最小档"},
+    {"ram_gb": 16, "model": "qwen3.5:9b", "download": "约 6.6GB",
+     "why": "16GB 商务本最稳的选择；本工具的问答够用"},
+    {"ram_gb": 24, "model": "qwen3.5:9b", "download": "约 6.6GB",
+     "why": "先上 9b 试；内存有富余再考虑 qwen3.5:27b（体积未核实，装前先看下载量）"},
+    {"ram_gb": 32, "model": "qwen3.6:35b-a3b", "download": "体积未核实",
+     "why": "大机器才谈得上的档；**大不等于稳**，装完先跑质量门槛再说"},
 )
 
 #: 装本机模型的三步 —— 命令行 `models` 和配置页共用这一段。
@@ -191,6 +192,13 @@ def quality_rows() -> list[dict]:
                 reasons = [(c.get("reasons") or []) for c in (r.get("results") or [])]
                 if reasons and all(x and all("调用失败" in y for y in x) for x in reasons):
                     err = reasons[0][0]
+            if not err and r.get("passed", 0) < r.get("total", 0):
+                answers = [(c.get("answer") or "").strip()
+                           for c in (r.get("results") or [])]
+                empty = sum(1 for a in answers if not a)
+                if answers and empty * 2 > len(answers):
+                    err = (f"{empty}/{len(answers)} 处回答为空 —— "
+                           "很可能是思考占满了 token 预算（不是模型答错）")
             rows.append({"model": model,
                          "passed": r.get("passed", 0), "total": r.get("total", 0),
                          "score": f"{r.get('passed', 0)}/{r.get('total', 0)}",
@@ -248,9 +256,11 @@ def experience(tok_s: float) -> tuple[str, str]:
 def fits(resident_gb: float, ram_gb: float) -> tuple[bool, str]:
     """装不装得下 —— 留 4GB 给系统和别的程序（浏览器吃掉的内存往往比模型还多）。
 
-    驻留与文件的比例：**实测 1.0~1.14 倍**（Q4 量化，见 `bench/measured-local.json`：
-    8.6GB 的 qwen3:14b 驻留 9.4GB）。指引里写"1.1~1.3 倍"是保守估计，
-    下面这张表按实测口径解释，留的余量仍然按 4GB 算。
+    驻留与文件的比例：**实测 0.86~1.14 倍**（Q4，见 `bench/measured-local.json`）——
+    比 1 小是正常的：ollama 用 mmap 加载权重，只算真正碰到的页
+    （实测 qwen3.5:9b 文件 6.6GB、驻留 5.7GB）。所以**不能**按"文件大小 × 1.2"
+    来估，那样会把小机器吓退；也不能按"文件大小"直接当占用，那是赌它一直不全量触页。
+    下面按 4GB 余量算，是保守且经得起检验的那条线。
     """
     if not resident_gb or not ram_gb:
         return True, "内存未知，不敢下结论"

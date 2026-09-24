@@ -158,6 +158,15 @@ def _from_json(model: str, report: Path) -> GateResult | None:
         calls = [(r.get("reasons") or []) for r in (d.get("results") or [])]
         if calls and all(c and all("调用失败" in x for x in c) for c in calls):
             err = calls[0][0]
+    # 同一类的第三种：**回答过半为空**（思考占满 token 预算）—— 拿空回答判质量
+    # 等于没测。少数几道空仍按成绩算，但原因会写在 failed 里。
+    # 全过时不适用（真全过的话答案不可能是空的：空答案连格式检查都过不了）。
+    if not err and got < total:
+        answers = [(r.get("answer") or "").strip() for r in (d.get("results") or [])]
+        empty = sum(1 for a in answers if not a)
+        if answers and empty * 2 > len(answers):
+            err = (f"{empty}/{len(answers)} 处回答为空 —— "
+                   "很可能是思考占满了 token 预算（不是模型答错）")
     if err:
         return GateResult(model=model, passed=False, score=f"{got}/{total}",
                           failed=failed[:6], report=str(report), error=err)
