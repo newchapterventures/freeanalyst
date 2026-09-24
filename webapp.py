@@ -42,6 +42,7 @@ import socket
 import subprocess
 import sys
 import threading
+import time
 import urllib.request
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -56,14 +57,14 @@ DEFAULT_PORT = 8765
 #: 接口清单与版本 —— 页面拿它跟自己对表。
 #: **真踩过**：页面加了「选择文件夹…」，但跑着的服务还是旧进程（Python 代码不会热加载），
 #: 于是点下去只回一句 `unknown endpoint`。现在页面能自己发现这件事并说清楚。
-VERSION = "0.38"
+VERSION = "0.40"
 ENDPOINTS = ("health", "scan", "appraise", "pick", "config", "gate", "cloud-check",
-             "pull", "pull-status", "model-check")
+             "pull", "pull-status", "model-check", "onboarded")
 #: 页面依赖的**能力**标记（比接口更细一层：同一个接口也可能少字段）。
 #: 页面会逐条核对，缺哪条就提示"服务是旧进程"。
 #: 真踩过：百分比字段加进引擎后没重启服务，页面上那些框**静默地没有 %** ——
 #: 用户于是不知道填 5、0.05 还是 5%。
-FEATURES = ("percent-unit", "llm-config", "install-model")
+FEATURES = ("percent-unit", "llm-config", "install-model", "onboard-state")
 
 #: 项目根目录 —— 页面正文和默认输出都相对它。
 ROOT = Path(__file__).resolve().parent
@@ -251,6 +252,7 @@ def api_appraise(path: str, unit: str, answers: dict[str, str],
 
     report = run_report(cfg, cfg_path.parent, statements=mat.statements)
     report_path.write_text(report, encoding="utf-8")
+    note_appraise()          # 记一笔"用过"—— 引导据此不再打扰（见 usage_state）
 
     return {
         "ok": True,
@@ -449,6 +451,92 @@ def api_cloud_check(provider: str, model: str, what: str) -> dict:
             "sent_bytes": len(prompt.encode("utf-8"))}
 
 
+# ─────────────────── 使用状态：引导该不该出现 ───────────────────
+#
+# **为什么记在服务端而不是浏览器**：浏览器把"看过"记在 localStorage 里是按**站点**
+# 记的，而这个服务端口会变（8765 被占就往后换一个）—— 换了端口就是一个新站点，
+# 引导会**再弹一次**；反过来清了缓存又会被拦一次教学。
+# 所以"这台机器上用过没有"记在本地文件里，按安装记，不按浏览器记。
+
+#: 使用状态文件。**可以用环境变量改路径** —— 测试必须能把它指到临时目录去，
+#: 否则跑一次测试就把人真实的使用记录改了（真踩过：测试跑了 10 次估值，
+#: 用户的 runs 直接变成 10）。
+UI_STATE = Path.home() / ".freeanalyst" / "ui-state.json"
+
+
+def _running_tests() -> bool:
+    """在跑 unittest 吗 —— 跑测试时**不许写用户真实的使用记录**。
+
+    为什么要有这个判断：测试里有好几处会真的跑 `api_appraise`，而它会记一笔
+    "用过"。真踩过：跑一次测试，用户的 runs 从 0 变成 10，引导从此再也不弹。
+    靠测试自己去设环境变量不可靠（`discover -s tests` 不会导入包级 `__init__`），
+    所以这里主动让开。
+    """
+    import sys
+
+    return "unittest" in sys.modules and "unittest" in " ".join(sys.argv[:2])
+
+
+def _ui_state_path() -> Path:
+    import os
+
+    env = os.environ.get("FREANALYST_UI_STATE")
+    if env:
+        return Path(env)
+    if _running_tests():
+        global _TEST_STATE
+        if _TEST_STATE is None:
+            import tempfile
+
+            _TEST_STATE = (Path(tempfile.mkdtemp(prefix="freeanalyst-test-"))
+                           / "ui-state.json")
+        return _TEST_STATE
+    return UI_STATE
+
+
+_TEST_STATE: Path | None = None
+
+
+def _load_ui_state() -> dict:
+    try:
+        return json.loads(_ui_state_path().read_text(encoding="utf-8"))
+    except Exception:                                       # noqa: BLE001
+        return {}
+
+
+def _save_ui_state(d: dict) -> None:
+    p = _ui_state_path()
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(d, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:                                       # noqa: BLE001
+        pass                                                # 记不住不是错误，别打断人
+
+
+def usage_state() -> dict:
+    """这台机器上用过没有 —— 页面据此决定要不要弹引导。"""
+    d = _load_ui_state()
+    return {"onboarded": bool(d.get("onboarded_at")),
+            "runs": int(d.get("runs") or 0),
+            "first_run": d.get("first_run") or ""}
+
+
+def note_appraise() -> None:
+    """成功出了一次估值 —— **这是"用过"的最强信号**（比"看过引导"强）。"""
+    d = _load_ui_state()
+    d["runs"] = int(d.get("runs") or 0) + 1
+    d.setdefault("first_run", time.strftime("%Y-%m-%d %H:%M"))
+    _save_ui_state(d)
+
+
+def api_onboarded() -> dict:
+    """页面点完引导后回记一笔（服务端 + 浏览器各记一次，互为兜底）。"""
+    d = _load_ui_state()
+    d.setdefault("onboarded_at", time.strftime("%Y-%m-%d %H:%M"))
+    _save_ui_state(d)
+    return {"ok": True, **usage_state()}
+
+
 # ─────────────────── 装模型：服务端拉取，不用开终端 ───────────────────
 #
 # 为什么放在服务端做：让**本机的 ollama**自己去下载，界面只读进度。
@@ -563,7 +651,9 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path == "/api/health":
             self._json({"ok": True, "version": VERSION,
                         "endpoints": list(ENDPOINTS), "pages": list(PAGES),
-                        "features": list(FEATURES)})
+                        "features": list(FEATURES),
+                        # 用过没有 —— 页面据此决定要不要弹引导（见 usage_state）
+                        "usage": usage_state()})
         elif self.path in ("/doc", "/doc.html"):
             self._send(200, doc_html().encode(), "text/html; charset=utf-8")
         elif self.path in ("/config", "/config.html"):
@@ -609,6 +699,8 @@ class Handler(BaseHTTPRequestHandler):
             elif self.path == "/api/model-check":
                 self._json(api_model_check(float(body.get("ram_gb") or 0),
                                            bool(body.get("consent_ok"))))
+            elif self.path == "/api/onboarded":
+                self._json(api_onboarded())
             else:
                 self._json({"ok": False, "error": "unknown endpoint"}, 404)
         except Exception as exc:                       # noqa: BLE001
