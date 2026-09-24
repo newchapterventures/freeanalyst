@@ -489,6 +489,64 @@ class TestHttpLayer(unittest.TestCase):
             self.assertTrue(Path(r["files"]["report"]).exists())
 
 
+class TestConfigPage(unittest.TestCase):
+    """模型配置页 —— 关键不是"页面好看"，是四件事不许出错：
+
+    密钥不回显、云端不带授权不许发、协议不兼容不假装可用、"测不了"≠"不合格"。
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.html = webapp.config_html()
+
+    def test_page_has_the_sections(self):
+        for token in ("本机模型", "云端模型", "哪个用途用哪个模型",
+                      "现在支持哪些", "出网审计"):
+            self.assertIn(token, self.html, token)
+
+    def test_page_says_the_data_risk_out_loud(self):
+        self.assertIn("闭源模型有数据风险", self.html)
+        self.assertIn("离开了本机", self.html)
+        self.assertIn("单独授权", self.html)          # 按次授权，不是总开关
+        self.assertIn("没有一个", self.html)          # 「没有一个总开关」
+
+    def test_page_states_what_is_not_done(self):
+        """没做的要写明（Anthropic / Gemini / Bedrock 需要适配器）。"""
+        self.assertIn("需要单独适配", self.html)
+        self.assertIn("不假装能用", self.html)
+        self.assertIn("只有「问答」这一处", self.html)
+
+    def test_js_syntax_of_the_config_page(self):
+        """页面 JS 语法要过 —— 白屏是看不出来的那种坏。"""
+        import shutil
+        import subprocess
+        import tempfile
+        exe = shutil.which("node")
+        if not exe:
+            self.skipTest("没装 node")
+        script = self.html.split("<script>", 1)[-1].split("</script>", 1)[0]
+        with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False,
+                                         encoding="utf-8") as f:
+            f.write(script)
+            p = Path(f.name)
+        try:
+            r = subprocess.run([exe, "--check", str(p)], capture_output=True, text=True)
+        finally:
+            p.unlink(missing_ok=True)
+        self.assertEqual(r.returncode, 0, r.stderr[:300])
+
+    def test_api_config_never_returns_a_key(self):
+        from llm import config as lcfg
+        d = webapp.api_config()
+        blob = json.dumps(d, ensure_ascii=False)
+        full = lcfg.key_for(lcfg.load(), "deepseek")
+        if full:
+            self.assertNotIn(full, blob, "完整密钥不许下发到界面")
+        for p in d["providers"]:
+            self.assertIn("key_display", p)
+            self.assertNotIn("api_key", p)
+
+
 class TestDocPage(unittest.TestCase):
     """说明文件 —— 使用者要的六件事，少一件就是没写完。
 

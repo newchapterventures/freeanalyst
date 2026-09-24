@@ -197,9 +197,61 @@
     <li>模型通过 <b>OpenAI 兼容接口</b>接入，<b>不绑定厂商</b>：Ollama、LM Studio、llama.cpp、
         vLLM 或任何兼容网关都可以，换机器不用改代码。</li>
     <li>默认<b>指向本机</b>。没有模型也能跑完整估值 —— 只是不做问答。</li>
-    <li>质量门槛：<code>python3 freeanalyst.py models --gate &lt;模型&gt;</code>。
-        <b>不合格的模型不参与产出</b>（一票否决），本机基线 <code>qwen3:14b</code> 4/4 过关。</li>
+    <li>质量门槛：<code>python3 bench/model_quality.py --models &lt;模型&gt;</code> 或配置页里的按钮。
+        <b>不合格的模型不参与产出</b>（一票否决）。注意区分：<b>「测不了」不是「不合格」</b> ——
+        认证失败/超时是退出码 3，真没达门槛是 2。基线用例集在扩，请以配置页的实测表为准。</li>
   </ul>
+
+  <h3>哪台机器配哪个模型（用商务本的看这段）</h3>
+  <p><b>先记住一件事：估值不吃模型。</b>报表识别、勾稽校验、DCF 与乘数计算全是代码执行的；
+     模型只用在「问答」那一步。所以<b>没有独立显卡的商务本，同样能跑出完整的估值报告</b>。</p>
+  <table>
+    <thead><tr><th>机器内存</th><th>建议档位</th><th>文件大小</th><th>体验</th></tr></thead>
+    <tbody>
+      <tr><td>8 GB</td><td>3B~4B（Q4 量化）</td><td>2~3 GB</td><td>跑得动；<b>问答质量别期待</b>（同档 8B 实测仅 2/5）</td></tr>
+      <tr><td>16 GB</td><td>7B~8B（Q4）</td><td>4~5 GB</td><td>速度最稳（8B 实测 <b>21 tok/s</b>）；但门槛 <b>2/5</b>，只能当辅助</td></tr>
+      <tr><td>24~32 GB</td><td>12B~14B（Q4）</td><td>8~10 GB</td><td>本机最优：<b>4/5</b>；代价是慢（14b 实测 <b>6 tok/s</b>，长答案要等）</td></tr>
+      <tr><td>32 GB+ 或有独显</td><td>30B 级 MoE（Q4）</td><td>18~20 GB</td><td><b>大不等于稳</b>：30b-a3b 实测 <b>3/5</b>（速度 11.6 tok/s 倒是不慢）</td></tr>
+    </tbody>
+  </table>
+  <ul>
+    <li><b>驻留内存实测是文件大小的 1.0~1.14 倍</b>（Q4 量化：qwen3:14b 文件 8.6GB → 驻留 9.4GB），
+        另外要给系统与浏览器留约 4GB。内存不足时系统开始用交换分区，<b>整台机器</b>都会卡，
+        不只是这个工具慢 —— 宁可换小一档。</li>
+    <li><b>速度不靠估，靠量</b>：<code>python3 bench/measure_models.py --json bench/measured-local.json</code>。
+        驻留内存与 tok/s 都取自 ollama 自报的数据；配置页 02 节的「本机实测」表就是它生成的。</li>
+    <li>材料<b>不用整篇喂给模型</b>：工具是按问题检索片段再问，所以 7B~8B 足以应付。</li>
+    <li>实在跑不动本机模型，也可以走云端 —— 但每次调用都要<b>单独授权</b>（绑定 主机 + 用途 + 这次发什么），
+        并写进审计；代价是那一次的内容离开了本机，机密材料要自己拿捏。</li>
+  </ul>
+
+  <h3>先说一句实话：本机模型现在过不了门槛</h3>
+  <p><b>质量门槛是用例集全过才算过（一票否决）。</b>实测（<code>bench/gate-local-6.json</code>）：
+     <b>本机 6 个模型没有一个过</b> —— 最好的是 <code>qwen3:14b</code> 与 <code>gemma3:12b</code> 各 4/5；
+     7B~8B 档（hermes3:8b、qwen2.5-coder:7b）只有 2/5；<b>18GB 的 <code>qwen3:30b-a3b</code> 反而只有 3/5</b>。
+     闭源那边 <code>deepseek-chat</code> 实测 5/5（代价：那一次的内容离开本机）。</p>
+  <p>所以现在本机的定位是<b>辅助</b>：答案必须带出处（工具会逐条给出处），关键结论人工回原文核对。
+     不能把本机模型的答复当成产出依据 —— 尤其"某条款是否已锁定""义务落在谁身上"这类判断，
+     实测正是这些项上翻车。</p>
+
+  <h3>还没有本地模型？</h3>
+  <p><b>默认状态下这个工具不需要模型</b>就能出估值报告。想用"读了材料回答问题"，再挑一条路：</p>
+  <table>
+    <thead><tr><th>路子</th><th>适合</th><th>代价</th></tr></thead>
+    <tbody>
+      <tr><td><b>什么都不装</b>（默认）</td><td>只要估值报告</td>
+          <td>没有「问答」这一步；其它一步不少</td></tr>
+      <tr><td><b>装一个本机模型</b></td><td>要问答，又不让材料出本机</td>
+          <td>下载约 3~5GB，装一次；之后离线可用</td></tr>
+      <tr><td><b>走云端</b></td><td>本机跑不动，或偶尔问一次</td>
+          <td>那一次的内容离开本机；每次调用单独授权并进审计</td></tr>
+    </tbody>
+  </table>
+  <p><b>装本机模型就三步</b>：① 到 <code>ollama.com</code> 下载安装（macOS / Windows / Linux 都有）；
+     ② 终端执行一条 <code>ollama pull</code> —— 16GB 内存建议 <code>ollama pull qwen3:8b</code>（约 5GB），
+     8GB 建议 <code>ollama pull qwen3:4b</code>（约 2.6GB）；
+     ③ 回来确认：<code>python3 freeanalyst.py models</code>，或在模型设置页点「检测」。
+     配置页会按你这台机器的内存给出建议命令。</p>
 
   <h2 id="usage"><span class="idx">05</span>使用方法</h2>
   <h3>网页向导（最省事）</h3>
@@ -353,10 +405,72 @@ python3 freeanalyst.py ask "调整后 EBITDA 是怎么算的？"</pre>
     <li>Models are reached through an <b>OpenAI-compatible endpoint</b> — no vendor lock-in
         (Ollama, LM Studio, llama.cpp, vLLM or any gateway).</li>
     <li>Defaults to <b>local</b>. Valuation runs fully without any model; only Q&amp;A needs one.</li>
-    <li>Quality gate: <code>python3 freeanalyst.py models --gate &lt;model&gt;</code>.
-        A model that fails is <b>not used in production output</b>. Local baseline:
-        <code>qwen3:14b</code> passes 4/4.</li>
+    <li>Quality gate: <code>python3 bench/model_quality.py --models &lt;model&gt;</code>, or the button on
+        the settings page. A model that fails is <b>not used in production output</b>.
+        Note the distinction: <b>&quot;could not run&quot; is not &quot;did not qualify&quot;</b> —
+        an auth failure or timeout exits with code 3, a real miss with 2. The case set keeps
+        growing; trust the measured table on the settings page.</li>
   </ul>
+
+  <h3>Which model fits which machine (read this if you use a business laptop)</h3>
+  <p><b>First, the important part: valuation does not need a model.</b> Statement recognition,
+     articulation checks, DCF and multiples are pure code; models are used for Q&amp;A only.
+     So a <b>business laptop with no GPU can still produce the full valuation report</b>.</p>
+  <table>
+    <thead><tr><th>Machine RAM</th><th>Suggested size</th><th>File size</th><th>Experience</th></tr></thead>
+    <tbody>
+      <tr><td>8 GB</td><td>3B–4B (Q4)</td><td>2–3 GB</td><td>Runs; don't expect much from Q&amp;A (the 8B tier measured just <b>2/5</b>)</td></tr>
+      <tr><td>16 GB</td><td>7B–8B (Q4)</td><td>4–5 GB</td><td>Fastest tier (8B measured <b>21 tok/s</b>) — but the gate score is <b>2/5</b>: assistant only</td></tr>
+      <tr><td>24–32 GB</td><td>12B–14B (Q4)</td><td>8–10 GB</td><td>Best locally: <b>4/5</b>, at a price — 14b measured <b>6 tok/s</b> (long answers make you wait)</td></tr>
+      <tr><td>32 GB+ or a discrete GPU</td><td>30B-class MoE (Q4)</td><td>18–20 GB</td><td><b>Bigger is not steadier</b>: 30b-a3b measured <b>3/5</b> (11.6 tok/s, so it is fast)</td></tr>
+    </tbody>
+  </table>
+  <ul>
+    <li><b>Resident memory measures 1.0–1.14× the file size</b> (Q4: qwen3:14b is 8.6 GB on disk,
+        9.4 GB resident), and the OS still needs ~4 GB. When RAM runs out the machine starts
+        swapping and <b>everything</b> crawls — drop a size rather than thrash.</li>
+    <li><b>Measure speed, don't guess:</b>
+        <code>python3 bench/measure_models.py --json bench/measured-local.json</code>. Resident memory
+        and tok/s both come from ollama's own reporting; the &quot;measured on this machine&quot;
+        table in section 02 of the settings page is generated by it.</li>
+    <li>The model is <b>not fed whole documents</b>: the tool retrieves passages per question, so 7B–8B is enough.</li>
+    <li>If nothing runs locally, cloud models are available — but <b>every single call needs its own
+        consent</b> (host + purpose + what is being sent) and is audited; the price is that this one
+        call's content leaves the machine. Judge that for confidential material yourself.</li>
+  </ul>
+
+  <h3>Straight talk: no local model passes the gate today</h3>
+  <p><b>A model passes only if every case passes (a single miss is fatal).</b> Measured
+     (<code>bench/gate-local-6.json</code>): <b>none of the six local models passes</b> — the best are
+     <code>qwen3:14b</code> and <code>gemma3:12b</code> at 4/5; the 7B–8B tier (hermes3:8b,
+     qwen2.5-coder:7b) sits at 2/5; and the 18 GB <code>qwen3:30b-a3b</code> does <b>worse</b> at 3/5.
+     On the closed-source side <code>deepseek-chat</code> scored 5/5 (at the price of that call's
+     content leaving the machine).</p>
+  <p>So treat local models as <b>assistants</b>: answers must carry citations (the tool provides
+     them per line) and key conclusions need a human check against the source. Do not use a local
+     model's answer as the basis for a figure — the failures land exactly on judgements like
+     &quot;is this clause locked?&quot; and &quot;whose obligation is this?&quot;.</p>
+
+  <h3>No local model yet?</h3>
+  <p><b>By default this tool needs no model at all</b> to produce a valuation report. If you want
+     question-answering over the materials, pick one of three paths:</p>
+  <table>
+    <thead><tr><th>Path</th><th>Fits</th><th>Price</th></tr></thead>
+    <tbody>
+      <tr><td><b>Install nothing</b> (default)</td><td>You only need the report</td>
+          <td>No Q&amp;A — every other step is unaffected</td></tr>
+      <tr><td><b>Install one local model</b></td><td>You want Q&amp;A and materials must stay on this machine</td>
+          <td>A one-off download of roughly 3–5 GB; works offline afterwards</td></tr>
+      <tr><td><b>Use a cloud model</b></td><td>Nothing runs locally, or you only ask occasionally</td>
+          <td>That call's content leaves the machine; per-call consent, audited</td></tr>
+    </tbody>
+  </table>
+  <p><b>Installing a local model is three steps</b>: (1) download Ollama from <code>ollama.com</code>
+     (macOS / Windows / Linux); (2) run one <code>ollama pull</code> — on 16 GB of RAM,
+     <code>ollama pull qwen3:8b</code> (about 5 GB); on 8 GB, <code>ollama pull qwen3:4b</code>
+     (about 2.6 GB); (3) confirm with <code>python3 freeanalyst.py models</code>, or press
+     &quot;detect&quot; on the model settings page. The settings page suggests a command based on
+     your machine's RAM.</p>
 
   <h2 id="usage-en"><span class="idx">05</span>How to use</h2>
   <h3>Web workbench</h3>

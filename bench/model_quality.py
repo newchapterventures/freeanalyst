@@ -65,7 +65,7 @@ sys.path.insert(0, str(ROOT))
 from freeanalyst import (  # noqa: E402
     SYSTEM_PROMPT,
     build_context,
-    call_local_model,
+    call_model,
 )
 from retrieval import BM25, Chunk, chunk_document  # noqa: E402
 
@@ -503,13 +503,45 @@ CASES = [
 
 # ---------------------------------------------------------------- 执行
 
+#: 命令行必须显式加 `--allow-cloud` 才允许跑云端模型。
+#: **这不是一个可以常开的开关** —— 每次运行都要在命令行上重新表态，
+#: 而且每次云端调用都会在 `audits/egress.jsonl` 留一条授权记录。
+ALLOW_CLOUD = False
+
+
+def consent_for(model: str, prompt: str):
+    """云端模型这一次调用的授权；本机模型返回 None。
+
+    评测语料是 `corpus/` 里的**合成材料**（不含任何标的材料），所以这次授权
+    的 what 把这一点写清楚 —— 授权界面上人要看懂"到底发什么出去"。
+    """
+    from llm.cloud import PROVIDERS
+    prov = (model or "").split("/")[0]
+    if prov not in PROVIDERS:
+        return None
+    if not ALLOW_CLOUD:
+        raise SystemExit(
+            f"模型 {model} 属于云端服务商「{PROVIDERS[prov]['label']}」。\n"
+            "要跑它请**显式**加上 --allow-cloud：这会为这一次运行写一条授权记录"
+            "（主机 + 用途 + 发的是合成语料），并且内容会离开本机。\n"
+            "不加就不跑 —— 云端默认关闭是刻意的。")
+    from guard import CloudConsent
+    return CloudConsent(
+        host=PROVIDERS[prov]["host"],
+        purpose="模型质量门槛评测（合成语料）",
+        what=f"合成尽调材料片段与题目，约 {max(1, len(prompt) // 1000)} 千字；"
+             "不含任何标的材料",
+        approved_by="cli:--allow-cloud")
+
+
 def run_case(model: str, engine: BM25, case: dict) -> dict:
     hits = engine.search(case["question"], top_k=6)
     allowed = {c.chunk_id for c, _ in hits}
     user = f"【材料片段】\n{build_context(hits)}\n\n【问题】\n{case['question']}"
 
     try:
-        answer = call_local_model(model, SYSTEM_PROMPT, user)
+        answer = call_model(model, SYSTEM_PROMPT, user,
+                            consent=consent_for(model, user))
     except Exception as exc:  # noqa: BLE001
         return {"id": case["id"], "name": case["name"], "passed": False,
                 "reasons": [f"调用失败：{type(exc).__name__}: {exc}"], "answer": ""}
@@ -585,6 +617,25 @@ def rescore(path: Path) -> int:
     return 0
 
 
+def exit_code(report: dict) -> int:
+    """评测的退出码 —— **"测不了"与"不合格"分开**。
+
+    0 全部通过 ／ 2 有模型没达门槛 ／ 3 有模型压根没测成（认证、网络、地址不对）
+
+    混成一个码，"本次评测没过"这句话就有两种完全不同的处理方式，
+    而脚本（或人）会按最省事的那种理解 —— 把模型否掉。
+    """
+    erred = [m for m, d in report.items() if d.get("error")]
+    missed = [m for m, d in report.items()
+              if not d.get("error") and d["passed"] != d["total"]]
+    if missed:
+        return 2
+    if erred:
+        print(f"\n  测不成的模型：{'、'.join(erred)} —— 先修密钥／网络／服务地址，再重跑。")
+        return 3
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="本地模型尽调质量评测")
     parser.add_argument("--models", default="qwen2.5-coder:7b", help="逗号分隔的模型名")
@@ -594,7 +645,13 @@ def main() -> int:
     parser.add_argument("--repeat", type=int, default=1,
                         help="每个模型跑几轮。temperature 0.1 仍有措辞抖动，"
                              "单轮结果不足以说明稳定；连着跑几轮看判定是否一致。")
+    parser.add_argument("--allow-cloud", action="store_true",
+                        help="允许跑云端（闭源）模型。**默认关闭**：加了它就等于"
+                             "同意把这次评测的合成语料发到外部主机，并会写一条授权审计。")
     args = parser.parse_args()
+
+    global ALLOW_CLOUD
+    ALLOW_CLOUD = bool(args.allow_cloud)
 
     if args.rescore:
         return rescore(Path(args.rescore))
@@ -656,10 +713,23 @@ def main() -> int:
         verdict = ("★ 够格进生产"
                    if min(scores) == len(CASES)
                    else f"未达门槛（最差 {min(scores)}/{len(CASES)}）")
+        # **"测不了"不等于"不合格"。** 全部用例都是"调用失败"（认证失败、超时、
+        # 网络不通）时，正确的话是"这次没测成、原因是 X"—— 说成"未达门槛"是假裁定：
+        # 人会据此把模型否掉，而问题其实在密钥或网络上。
+        all_failed_to_call = all(
+            r["reasons"] and all("调用失败" in x for x in r["reasons"])
+            for rr in rounds for r in rr)
+        call_error = ""
+        if all_failed_to_call and rounds and rounds[0]:
+            call_error = rounds[0][0]["reasons"][0]
+            verdict = f"⚠ 测不了（{call_error}）"
+            print(f"\n  ⚠ **这次没测成**：{call_error}")
+            print("    这不是「模型不行」的结论 —— 先查密钥 / 网络 / 服务地址。")
         print(f"\n  小计：{n_pass}/{len(CASES)} —— {verdict}\n")
         report[model] = {"passed": n_pass, "total": len(CASES),
                          "verdict": verdict, "results": results,
                          "rounds": scores,
+                         "error": call_error,
                          "per_case": {n: f"{h}/{t}" for n, h, t in per_case_rate}}
 
     print("=" * 74)
@@ -674,7 +744,7 @@ def main() -> int:
                                    encoding="utf-8")
         print(f"\n完整结果已写入 {args.json}")
 
-    return 0 if all(d["passed"] == d["total"] for d in report.values()) else 2
+    return exit_code(report)
 
 
 if __name__ == "__main__":
