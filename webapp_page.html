@@ -1,0 +1,750 @@
+<!DOCTYPE html>
+<!--
+  FreeAnalyst 本地估值向导 —— 页面正文。
+  **这个文件既是线上那一页，也是设计稿**：webapp.py 直接读它、不改一个字，
+  所以不存在「稿子和实现长得不一样」。
+
+  ## 文案规范（正式金融用语，不要口语）
+  统一用词：材料（materials）/ 标的（target）/ 报表识别（extraction）/
+  勾稽校验（reconciliation）/ 口径（basis）/ 假设（assumptions）/ 结论（conclusion）。
+  **不要**出现"丢材料""认材料""出报告"这类口语 —— 这是给专业读者看的界面。
+
+  ## 双语
+  静态文案走 `data-i18n` + 词表；JS 动态文案走 `t('key')`。
+  手动切换（右上角），选择记在 localStorage。
+  **已知限制（页面上照实标注）**：服务端产出的文本 —— 报表标签、勾稽项名称、
+  假设清单的条目与报告正文 —— 目前只有中文。要真双语得在引擎层加词表，那是下一步。
+
+  ## 配色
+  青绿 #00E5A0 = 机器已完成并通过的　琥珀 #FFB000 = 需要人决定的　洋红 #FF2E63 = 异常
+-->
+<html lang="zh"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FreeAnalyst · 本地估值向导</title>
+<!-- 标签页图标：极简算盘（28 个方块·上金下银·一颗红），内联成 data URI -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 19 33' shape-rendering='crispEdges'%3E%3Cg fill='%23E9B949'%3E%3Crect x='2' y='2' width='3' height='3'/%3E%3Crect x='6' y='2' width='3' height='3'/%3E%3Crect x='10' y='2' width='3' height='3'/%3E%3Crect x='14' y='2' width='3' height='3'/%3E%3Crect x='6' y='6' width='3' height='3'/%3E%3Crect x='10' y='6' width='3' height='3'/%3E%3Crect x='14' y='6' width='3' height='3'/%3E%3C/g%3E%3Cg fill='%23C9D2DC'%3E%3Crect x='2' y='12' width='3' height='3'/%3E%3Crect x='6' y='12' width='3' height='3'/%3E%3Crect x='10' y='12' width='3' height='3'/%3E%3Crect x='14' y='12' width='3' height='3'/%3E%3Crect x='2' y='16' width='3' height='3'/%3E%3Crect x='6' y='16' width='3' height='3'/%3E%3Crect x='10' y='16' width='3' height='3'/%3E%3Crect x='14' y='16' width='3' height='3'/%3E%3Crect x='2' y='20' width='3' height='3'/%3E%3Crect x='6' y='20' width='3' height='3'/%3E%3Crect x='10' y='20' width='3' height='3'/%3E%3Crect x='14' y='20' width='3' height='3'/%3E%3Crect x='2' y='24' width='3' height='3'/%3E%3Crect x='6' y='24' width='3' height='3'/%3E%3Crect x='10' y='24' width='3' height='3'/%3E%3Crect x='14' y='24' width='3' height='3'/%3E%3Crect x='2' y='28' width='3' height='3'/%3E%3Crect x='6' y='28' width='3' height='3'/%3E%3Crect x='10' y='28' width='3' height='3'/%3E%3Crect x='14' y='28' width='3' height='3'/%3E%3C/g%3E%3Crect fill='%23E5484D' x='2' y='6' width='3' height='3'/%3E%3C/svg%3E">
+<style>
+  :root{
+    --bg:#05070A; --panel:#0A0F16; --panel2:#0D141C; --line:#16212B;
+    --fg:#D7F5E9; --mut:#5F7C77; --pri:#00E5A0; --amber:#FFB000; --mag:#FF2E63;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,"Cascadia Mono","PingFang SC",monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{
+    background:var(--bg); color:var(--fg); font:13px/1.65 var(--mono);
+    -webkit-font-smoothing:antialiased;
+    background-image:
+      radial-gradient(900px 420px at 12% -8%, rgba(0,229,160,.055), transparent 62%),
+      radial-gradient(700px 380px at 96% 4%, rgba(255,176,0,.035), transparent 60%),
+      linear-gradient(rgba(0,229,160,.028) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0,229,160,.028) 1px, transparent 1px);
+    background-size:auto,auto,34px 34px,34px 34px;
+  }
+  body::after{content:"";position:fixed;inset:0;pointer-events:none;z-index:9;
+    background:repeating-linear-gradient(180deg, rgba(255,255,255,.020) 0 1px, transparent 1px 3px);
+    mix-blend-mode:screen}
+  .wrap{max-width:1000px;margin:0 auto;padding:30px 24px 90px}
+
+  /* ── 抬头 ── */
+  .top{display:flex;gap:16px;align-items:center;margin-bottom:8px}
+  .logo{flex:0 0 auto;transition:filter .25s ease, transform .25s ease;
+        filter:drop-shadow(0 0 7px rgba(108,92,231,.40))}
+  .logo:hover{filter:drop-shadow(0 0 15px rgba(255,194,75,.5));transform:translateY(-1px)}
+  .logo .lg-up{fill:#E9B949}
+  .logo .lg-down{fill:#C9D2DC}
+  .logo .lg-acc{fill:#E5484D}
+  .logo:hover .lg-up{fill:#F5CB6E}
+  .logo:hover .lg-down{fill:#DDE5EC}
+  .logo:hover .lg-acc{fill:#FF6A6E}
+  .head-txt{flex:1 1 auto}
+  .word{font-size:23px;font-weight:700;letter-spacing:.30em;margin:0;line-height:1.1}
+  .word em{font-style:normal;color:var(--pri);text-shadow:0 0 12px rgba(0,229,160,.55)}
+  .tag{color:var(--mut);font-size:12px;letter-spacing:.02em}
+
+  /* ── 语言切换 ── */
+  .lang{flex:0 0 auto;display:flex;border:1px solid var(--line);border-radius:2px;overflow:hidden}
+  .lang button{background:transparent;border:0;color:var(--mut);font-family:var(--mono);
+    font-size:11.5px;letter-spacing:.06em;padding:6px 12px;cursor:pointer;transition:all .16s ease}
+  .lang button:hover{color:var(--fg)}
+  .lang button.on{color:var(--pri);background:rgba(0,229,160,.10)}
+
+  .prompt{color:var(--mut);font-size:12px;margin:12px 0 18px}
+  .caret{display:inline-block;width:7px;height:13px;background:var(--pri);
+         vertical-align:-2px;animation:blink 1.05s steps(1) infinite;margin-left:2px}
+  @keyframes blink{50%{opacity:0}}
+  .pills{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:22px}
+  .pill{border:1px solid var(--line);background:var(--panel);border-radius:2px;
+        padding:4px 10px;font-size:11.5px;color:var(--mut);letter-spacing:.03em}
+  .pill.on{color:var(--pri);border-color:rgba(0,229,160,.38)}
+  .dot{display:inline-block;width:6px;height:6px;background:var(--pri);border-radius:50%;
+       margin-right:6px;vertical-align:1px;box-shadow:0 0 8px var(--pri);
+       animation:pulse 2s ease-in-out infinite}
+  @keyframes pulse{50%{opacity:.30}}
+
+  /* ── 步骤条 ── */
+  .steps{display:flex;gap:7px;flex-wrap:wrap;margin:0 0 26px}
+  .step{border:1px solid var(--line);background:var(--panel);border-radius:2px;
+        padding:6px 12px;font-size:12px;color:var(--mut);display:flex;gap:8px;align-items:center;
+        transition:color .18s ease,border-color .18s ease,box-shadow .18s ease}
+  .step .n{opacity:.75;font-weight:700}
+  .step.on{color:var(--pri);border-color:rgba(0,229,160,.42);
+           box-shadow:0 0 0 1px rgba(0,229,160,.10), 0 0 20px rgba(0,229,160,.14)}
+  .step.on .n{opacity:1}
+  .step.off{opacity:.42;border-style:dashed}
+  .step.off .n{text-decoration:line-through}
+
+  /* ── 卡片 ── */
+  .card{position:relative;background:linear-gradient(180deg,var(--panel),var(--panel2));
+        border:1px solid var(--line);border-radius:3px;padding:18px 20px;margin-bottom:14px;
+        transition:border-color .2s ease, box-shadow .2s ease}
+  .card:hover{border-color:rgba(0,229,160,.28);box-shadow:0 0 26px rgba(0,229,160,.07)}
+  .card::before,.card::after{content:"";position:absolute;width:11px;height:11px;
+        border:1px solid var(--pri);opacity:0;transition:opacity .2s ease}
+  .card::before{top:-1px;left:-1px;border-right:0;border-bottom:0}
+  .card::after{bottom:-1px;right:-1px;border-left:0;border-top:0}
+  .card:hover::before,.card:hover::after{opacity:.85}
+  .card h2{font-size:13.5px;margin:0 0 12px;letter-spacing:.04em;display:flex;
+           align-items:baseline;gap:10px;flex-wrap:wrap}
+  .card h2 .idx{color:var(--pri)}
+  .card h2 small{color:var(--mut);font-weight:400;font-size:11.5px;letter-spacing:0}
+  .card.need h2 .idx{color:var(--amber)}
+  .card.bad h2 .idx{color:var(--mag)}
+
+  input[type=text]{width:100%;background:#070C11;color:var(--fg);font-family:var(--mono);
+    font-size:12.5px;padding:10px 12px;border:1px solid var(--line);border-radius:2px;
+    transition:border-color .18s ease,box-shadow .18s ease}
+  input[type=text]::placeholder{color:#3F5450}
+  input[type=text]:focus{outline:none;border-color:var(--pri);box-shadow:0 0 0 3px rgba(0,229,160,.10)}
+  button.act{font-family:var(--mono);font-size:12.5px;font-weight:700;letter-spacing:.05em;
+    padding:10px 20px;border-radius:2px;cursor:pointer;transition:all .18s ease;
+    background:transparent;color:var(--pri);border:1px solid var(--pri)}
+  button.act:hover:not(:disabled){background:rgba(0,229,160,.12);box-shadow:0 0 20px rgba(0,229,160,.25)}
+  button.act:disabled{opacity:.40;cursor:default}
+  button.act.amber{color:var(--amber);border-color:var(--amber)}
+  button.act.amber:hover:not(:disabled){background:rgba(255,176,0,.13);box-shadow:0 0 20px rgba(255,176,0,.25)}
+  button.act.sm{font-size:11.5px;padding:6px 12px;font-weight:400;letter-spacing:.02em}
+  button.act.ghost{color:var(--mut);border-color:var(--line)}
+  button.act.ghost:hover:not(:disabled){color:var(--pri);border-color:var(--pri);
+        background:rgba(0,229,160,.08);box-shadow:none}
+  .pickrow{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:11px;
+        border:1px dashed rgba(0,229,160,.22);border-radius:3px;padding:10px 12px;
+        background:rgba(0,229,160,.035)}
+  .pickrow .label{color:var(--pri);font-size:11px;letter-spacing:.12em;text-transform:uppercase}
+  .pickrow .hint{color:var(--mut);font-size:11.5px;line-height:1.5}
+  button.pick{font-family:var(--mono);font-size:12.5px;letter-spacing:.03em;
+        padding:9px 16px;border-radius:2px;cursor:pointer;
+        background:rgba(0,229,160,.10);color:var(--pri);
+        border:1px solid rgba(0,229,160,.55);transition:all .18s ease}
+  button.pick:hover:not(:disabled){background:rgba(0,229,160,.20);
+        box-shadow:0 0 20px rgba(0,229,160,.28)}
+  button.pick:disabled{opacity:.45;cursor:default;background:transparent;
+        color:var(--mut);border-color:var(--line)}
+  .card.drop{border-color:var(--pri);
+        box-shadow:0 0 0 1px rgba(0,229,160,.25), 0 0 30px rgba(0,229,160,.16)}
+  .grid2{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:start}
+  .grid3{display:grid;grid-template-columns:auto 1fr;gap:12px;align-items:start}
+
+  table{width:100%;border-collapse:collapse;font-size:12.5px}
+  th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line)}
+  tbody tr:nth-child(even){background:rgba(255,255,255,.014)}
+  th{color:var(--mut);font-weight:400;font-size:11px;letter-spacing:.06em;text-transform:uppercase}
+  td.num{text-align:right;font-variant-numeric:tabular-nums}
+  .ok{color:var(--pri)} .warn{color:var(--amber)} .bad{color:var(--mag)} .mut{color:var(--mut)}
+  .kv{color:var(--mut);font-size:12.5px;line-height:1.9}
+  .kv b{color:var(--fg);font-weight:400}
+
+  h3.grp{font-size:11px;color:var(--amber);letter-spacing:.14em;text-transform:uppercase;
+         margin:18px 0 6px;font-weight:400}
+  .q{display:grid;grid-template-columns:minmax(200px,260px) 1fr;gap:12px;
+     align-items:start;padding:9px 0;border-bottom:1px solid var(--line)}
+  .q:last-child{border-bottom:0}
+  .q label{font-size:12.5px}
+  .q .hint{display:block;color:var(--mut);font-size:11px;margin-top:3px;line-height:1.5}
+  .q .hint b{color:var(--amber);font-weight:400}
+  .q input{font-size:12px}
+
+  .term{border:1px solid var(--line);border-radius:3px;overflow:hidden;background:#04070A}
+  .term .bar{display:flex;align-items:center;gap:9px;padding:7px 12px;
+             background:var(--panel);border-bottom:1px solid var(--line);
+             font-size:11px;color:var(--mut);letter-spacing:.05em}
+  .term .bar .dots{display:flex;gap:5px}
+  .term .bar i{width:7px;height:7px;border-radius:50%;background:#1F2A33;display:block}
+  .term pre{margin:0;padding:15px;max-height:540px;overflow:auto;white-space:pre-wrap;
+            font-family:var(--mono);font-size:11.5px;line-height:1.62;color:#BFE9DA}
+
+  .notice{border:1px dashed rgba(255,176,0,.30);border-radius:3px;padding:11px 14px;
+          color:var(--mut);font-size:12px;margin-bottom:14px;background:rgba(255,176,0,.025)}
+  .notice b{color:var(--amber);font-weight:400}
+  .notice.issue{border-color:rgba(255,46,99,.35);background:rgba(255,46,99,.03)}
+  .notice.issue b{color:var(--mag)}
+  .notice.quiet{border-color:var(--line);background:transparent}
+  footer{margin-top:34px;padding-top:18px;border-top:1px solid var(--line);
+         color:var(--mut);font-size:11.5px;line-height:2}
+  footer span{color:var(--pri)}
+  .hide{display:none}
+  code{font-family:var(--mono);color:var(--amber);background:rgba(255,176,0,.07);
+       padding:1px 5px;border-radius:2px}
+</style></head><body><div class="wrap">
+
+  <div class="top">
+    <!-- 极简算盘：28 个方块（4 列 × 上 2 下 5），无轴无梁无框无高光。
+         上金 #E9B949、下银 #C9D2DC，红块 #E5484D 在左起第 1 列 · 上排第 2 颗。 -->
+    <svg class="logo" width="38" height="66" viewBox="0 0 19 33" shape-rendering="crispEdges"
+         role="img" aria-label="算盘">
+      <g class="lg-up">
+        <rect x="2" y="2" width="3" height="3"/>
+        <rect x="6" y="2" width="3" height="3"/>
+        <rect x="10" y="2" width="3" height="3"/>
+        <rect x="14" y="2" width="3" height="3"/>
+        <rect x="6" y="6" width="3" height="3"/>
+        <rect x="10" y="6" width="3" height="3"/>
+        <rect x="14" y="6" width="3" height="3"/>
+      </g>
+      <g class="lg-down">
+        <rect x="2" y="12" width="3" height="3"/>
+        <rect x="6" y="12" width="3" height="3"/>
+        <rect x="10" y="12" width="3" height="3"/>
+        <rect x="14" y="12" width="3" height="3"/>
+        <rect x="2" y="16" width="3" height="3"/>
+        <rect x="6" y="16" width="3" height="3"/>
+        <rect x="10" y="16" width="3" height="3"/>
+        <rect x="14" y="16" width="3" height="3"/>
+        <rect x="2" y="20" width="3" height="3"/>
+        <rect x="6" y="20" width="3" height="3"/>
+        <rect x="10" y="20" width="3" height="3"/>
+        <rect x="14" y="20" width="3" height="3"/>
+        <rect x="2" y="24" width="3" height="3"/>
+        <rect x="6" y="24" width="3" height="3"/>
+        <rect x="10" y="24" width="3" height="3"/>
+        <rect x="14" y="24" width="3" height="3"/>
+        <rect x="2" y="28" width="3" height="3"/>
+        <rect x="6" y="28" width="3" height="3"/>
+        <rect x="10" y="28" width="3" height="3"/>
+        <rect x="14" y="28" width="3" height="3"/>
+      </g>
+      <rect class="lg-acc" x="2" y="6" width="3" height="3"/>
+    </svg>
+    <div class="head-txt">
+      <h1 class="word">FREE<em>ANALYST</em></h1>
+      <div class="tag" data-i18n="tagline"></div>
+    </div>
+    <div class="lang" role="group">
+      <button type="button" data-lang="zh">中文</button>
+      <button type="button" data-lang="en">EN</button>
+    </div>
+  </div>
+
+  <div class="prompt">$ freeanalyst --local --no-egress<span class="caret"></span></div>
+
+  <div class="pills">
+    <span class="pill on"><span class="dot"></span>LOCAL · 127.0.0.1</span>
+    <span class="pill" data-i18n="pill.egress"></span>
+    <span class="pill" data-i18n="pill.arith"></span>
+    <span class="pill" data-i18n="pill.declare"></span>
+  </div>
+
+  <div class="steps">
+    <div class="step on" id="s1"><span class="n">01</span><span data-i18n="step.1"></span></div>
+    <div class="step" id="s2"><span class="n">02</span><span data-i18n="step.2"></span></div>
+    <div class="step off" id="s3"><span class="n">03</span><span data-i18n="step.3"></span></div>
+    <div class="step off" id="s4"><span class="n">04</span><span data-i18n="step.4"></span></div>
+    <div class="step" id="s5"><span class="n">05</span><span data-i18n="step.5"></span></div>
+    <div class="step" id="s6"><span class="n">06</span><span data-i18n="step.6"></span></div>
+  </div>
+
+  <div class="notice" data-i18n-html="notice.scope"></div>
+
+  <div class="notice issue hide" id="stale" data-i18n-html="stale.banner"></div>
+
+  <div class="card">
+    <h2><span class="idx">01</span><span data-i18n="s1.title"></span>
+        <small data-i18n="s1.sub"></small></h2>
+    <div class="grid2">
+      <input type="text" id="path" spellcheck="false" data-i18n-ph="s1.ph">
+      <div><button class="act" id="scanBtn" onclick="scan()" data-i18n="s1.btn"></button></div>
+    </div>
+    <div class="pickrow">
+      <span class="label" data-i18n="s1.picklabel"></span>
+      <button class="pick" id="pickDir" type="button" onclick="pick('dir')" data-i18n="s1.pickdir"></button>
+      <button class="pick" id="pickFile" type="button" onclick="pick('file')" data-i18n="s1.pickfile"></button>
+      <span class="hint" data-i18n="s1.drophint"></span>
+    </div>
+    <div id="scanMsg" class="mut" style="margin-top:10px;font-size:12px"></div>
+  </div>
+
+  <div class="card hide" id="card2">
+    <h2><span class="idx">02</span><span data-i18n="s2.title"></span>
+        <small data-i18n="s2.sub"></small></h2>
+    <div id="tables"></div>
+    <div id="checks" style="margin-top:14px"></div>
+    <div id="meta" style="margin-top:14px"></div>
+    <div id="unitBox" style="margin-top:14px"></div>
+    <div id="srvNote" class="notice quiet hide" style="margin:14px 0 0" data-i18n="s2.srvnote"></div>
+  </div>
+
+  <div class="card need hide" id="card5">
+    <h2><span class="idx">05</span><span data-i18n="s5.title"></span>
+        <small data-i18n="s5.sub"></small></h2>
+    <div class="notice" style="margin-bottom:14px" data-i18n-html="s5.notice"></div>
+    <div id="questions"></div>
+    <div style="margin-top:18px">
+      <button class="act amber" id="goBtn" onclick="go()" data-i18n="s5.btn"></button>
+    </div>
+  </div>
+
+  <div class="card hide" id="card6">
+    <h2><span class="idx">06</span><span data-i18n="s6.title"></span>
+        <small id="outDir"></small></h2>
+    <div id="missing" style="margin-bottom:14px"></div>
+    <div class="term">
+      <div class="bar"><span class="dots"><i></i><i></i><i></i></span>
+        <span data-i18n="s6.termbar"></span></div>
+      <pre id="report"></pre>
+    </div>
+  </div>
+
+  <footer>
+    <span data-i18n="foot.title"></span><br>
+    <span data-i18n="foot.1"></span><br>
+    <span data-i18n="foot.2"></span><br>
+    <span data-i18n="foot.3"></span>
+  </footer>
+
+  <div class="notice hide" id="demoTag" data-i18n-html="demo.tag" style="margin-bottom:0"></div>
+
+<script>
+// ─────────────────────────────  词表  ─────────────────────────────
+// 静态文案走 data-i18n，动态文案走 t('key')。加新文案 = 两处各加一条。
+const I18N = {
+  zh: {
+    "tagline": "本地估值向导 · 尽调材料 → 估值报告 · 全程不出网",
+    "pill.egress": "零出境 · 机密材料仅在本机处理",
+    "pill.arith": "算术由代码执行 · 不交由模型",
+    "pill.declare": "输入缺失即声明 · 不作假设",
+    "step.1": "载入材料", "step.2": "报表识别与勾稽校验",
+    "step.3": "行业建议 · 未接入", "step.4": "可比公司 · 未接入",
+    "step.5": "估值假设", "step.6": "估值结论",
+    "notice.scope": "<b>本期实现第 1、2、5、6 步。</b>第 3、4 步（行业建议、可比公司选取）尚需接入流程层，<b>还没做</b> —— 不呈现为可用功能。可比公司参数可在第 5 步的可选输入中提供，该路径已贯通。",
+    "s1.title": "载入尽调材料", "s1.sub": "标的材料目录，或单一 PDF 文件",
+    "s1.ph": "/path/to/target/materials/　或　目标公司 2024 年度审计报告.pdf",
+    "s1.btn": "解析材料",
+    "s1.pickdir": "▸ 选择文件夹…", "s1.pickfile": "▸ 选择文件…",
+    "s1.picklabel": "载入方式",
+    "stale.banner": "<b>本页比服务新 —— 跑着的服务是旧进程，缺少新接口。</b><br>页面每次请求都是现读磁盘，所以它已经更新了；但 Python 代码不会热加载，那个进程还是旧的 —— 所以点「选择文件夹」只回一句 unknown endpoint。<br><b>请重启服务</b>：到运行它的终端按 <code>Ctrl-C</code>，再执行 <code>python3 freeanalyst.py ui &lt;材料目录&gt;</code>。在此之前这两个按钮不可用。",
+    "s1.drophint": "也可以把文件夹或文件从访达直接拖进本区域 —— 只填入路径，不复制文件",
+    "s1.picking": "请在系统选择框中选定…（窗口可能在后台，注意查看）",
+    "s1.cancelled": "已取消选择",
+    "s1.dropped": "未能从拖入内容中读取路径 —— 请改用「选择文件夹…」",
+    "s1.needpath": "请先填写材料路径",
+    "s1.running": "<span class=\"warn\">正在解析材料…</span>（PDF 需光学识别，可能耗时数分钟；请保持页面开启）",
+    "s1.ok": "<span class=\"ok\">解析完成</span>",
+    "s2.title": "报表识别与勾稽校验",
+    "s2.sub": "三张报表识别结果 · 勾稽校验状态 · 金额单位与会计口径",
+    "s2.srvnote": "服务端产出的文本（报表标签、勾稽项名称、假设条目、报告正文）目前为中文；英文界面仅覆盖界面文案。引擎层词表为后续工作。",
+    "th.statement": "报表", "th.source": "来源", "th.mapped": "映射行数", "th.status": "状态",
+    "st.found": "已识别", "st.missing": "未识别",
+    "unused.head": "未采用的文件（明确列出，不作静默跳过）",
+    "chk.head": "勾稽校验项", "chk.result": "校验结果",
+    "chk.ok": "校验通过", "chk.bad": "勾稽不符 —— 衍生数据不得使用",
+    "chk.na": "无法校验（缺少科目）", "chk.nr": "不适用（该格式无此项）",
+    "chk.dups": "本材料有 {n} 个科目存在多个取值 —— 通常见于同一页面并列合并报表与母公司报表，请确认所取为合并口径。",
+    "meta.basis": "会计口径", "meta.period": "会计期间", "meta.fix": "如有误，可在下方修正",
+    "unit.label": "金额单位", "unit.warn": "（此处有误即为 1,000 倍量级错误）",
+    "unit.basis": "判定依据：", "unit.unknown": "未能判定 —— 必须由您指定",
+    "s5.title": "估值假设", "s5.sub": "仅由您提供的输入 —— 引擎不代为设定",
+    "s5.notice": "每个数值后可附来源，格式 <code>0.10 @管理层规划 p.12</code>；来源前可加 <code>高:</code>/<code>中:</code>/<code>低:</code> 指定置信度。<b>未标注来源视为低置信度</b>，将列示于报告的「结果的软肋」。注释中的「参考」为历史值，<b>不作为建议输入</b>。",
+    "s5.btn": "生成估值报告",
+    "s6.title": "估值结论", "s6.termbar": "估值报告 · 每项结论均附追溯",
+    "out.prefix": "产物：",
+    "miss.head": "以下输入未提供，对应模块未执行（并非执行后无结果）",
+    "demo.tag": "<b>设计预览</b> —— 本页为直接打开（无后端），下方为示例数据，仅用于呈现版式与措辞。实际运行：<code>python3 freeanalyst.py ui &lt;材料目录&gt;</code>",
+    "demo.msg": "<span class=\"warn\">预览模式无后端</span> <span class=\"mut\">—— 解析材料需在服务中运行：python3 freeanalyst.py ui &lt;材料目录&gt;</span>",
+    "demo.go": "<b>设计预览</b> —— 本页无后端，生成报告需在服务中运行。<b>下列为报告示例。</b>",
+    "err.fail": "解析失败",
+    "foot.title": "边界与约束",
+    "foot.1": "① 机密材料仅在本机处理；云端模型调用按次授权，授权记录可审计。",
+    "foot.2": "② 本界面为呈现层：全部计算由同一内核执行（intake / value），界面不重复计算。",
+    "foot.3": "③ 服务仅绑定 127.0.0.1：同一网络内其他设备无法访问本页面。"
+  },
+  en: {
+    "tagline": "Local valuation workbench · Diligence materials → valuation report · Nothing leaves this machine",
+    "pill.egress": "No egress · Confidential materials processed locally only",
+    "pill.arith": "Arithmetic executed in code, never by the model",
+    "pill.declare": "Missing inputs are declared, never assumed",
+    "step.1": "Load materials", "step.2": "Extraction & reconciliation",
+    "step.3": "Industry guidance · not wired", "step.4": "Comparables · not wired",
+    "step.5": "Valuation assumptions", "step.6": "Valuation conclusion",
+    "notice.scope": "<b>Steps 1, 2, 5 and 6 are implemented in this build.</b> Steps 3 and 4 (industry guidance, comparable selection) require the workflow layer and are <b>not built</b> — they are not presented as available. Comparable inputs can be supplied under Step 5; that path is wired.",
+    "s1.title": "Load due diligence materials", "s1.sub": "Target material folder, or a single PDF",
+    "s1.ph": "/path/to/target/materials/　or　Target FY2024 audit report.pdf",
+    "s1.btn": "Parse materials",
+    "s1.pickdir": "▸ Choose folder…", "s1.pickfile": "▸ Choose file…",
+    "s1.picklabel": "Load via",
+    "stale.banner": "<b>This page is newer than the running service — the service process is stale and lacks the new endpoint.</b><br>The page is re-read from disk on every request, so it is current; Python code, however, is not hot-reloaded, and the process still running is the old one — hence unknown endpoint.<br><b>Restart the service</b>: press <code>Ctrl-C</code> in the terminal running it, then run <code>python3 freeanalyst.py ui &lt;materials&gt;</code> again. Until then these two buttons are disabled.",
+    "s1.drophint": "Or drag a folder / file here from Finder — the path is filled in; nothing is copied",
+    "s1.picking": "Select in the system dialog… (it may open behind this window)",
+    "s1.cancelled": "Selection cancelled",
+    "s1.dropped": "No path could be read from the dropped item — please use “Choose folder…”",
+    "s1.needpath": "Please enter a material path first",
+    "s1.running": "<span class=\"warn\">Parsing materials…</span> (PDF requires OCR and may take several minutes; keep this page open)",
+    "s1.ok": "<span class=\"ok\">Parsing complete</span>",
+    "s2.title": "Extraction & reconciliation",
+    "s2.sub": "Statements identified · reconciliation status · reporting unit and accounting basis",
+    "s2.srvnote": "Text produced by the engine (statement labels, reconciliation item names, assumption entries, report body) is currently Chinese only; the English interface covers interface copy. Engine-level translation tables are follow-up work.",
+    "th.statement": "Statement", "th.source": "Source", "th.mapped": "Rows mapped", "th.status": "Status",
+    "st.found": "Identified", "st.missing": "Not identified",
+    "unused.head": "Files not used (listed explicitly, never skipped silently)",
+    "chk.head": "Reconciliation test", "chk.result": "Result",
+    "chk.ok": "Reconciles", "chk.bad": "Does not reconcile — derived figures must not be used",
+    "chk.na": "Not testable (line items missing)", "chk.nr": "Not applicable to this format",
+    "chk.dups": "{n} line items carry more than one value — typically a page holding both consolidated and parent-only statements. Confirm the consolidated column was used.",
+    "meta.basis": "Accounting basis", "meta.period": "Period", "meta.fix": "override below if incorrect",
+    "unit.label": "Reporting unit", "unit.warn": "(an error here is a 1,000× error)",
+    "unit.basis": "Determined from: ", "unit.unknown": "Could not be determined — you must specify",
+    "s5.title": "Valuation assumptions", "s5.sub": "Inputs only you can provide — the engine will not set them for you",
+    "s5.notice": "Append a source to each figure: <code>0.10 @management plan p.12</code>. Prefix the source with <code>高:</code>/<code>中:</code>/<code>低:</code> to set confidence (engine syntax remains Chinese). <b>No source is treated as low confidence</b> and appears under the report's weak points. \"Reference\" shows historical values, <b>not recommended inputs</b>.",
+    "s5.btn": "Generate valuation report",
+    "s6.title": "Valuation conclusion", "s6.termbar": "Valuation report · every conclusion traceable",
+    "out.prefix": "Artifacts: ",
+    "miss.head": "The following inputs were not provided, so the corresponding blocks were not run (they did not run and return nothing)",
+    "demo.tag": "<b>Design preview</b> — this file was opened directly (no backend); the data below is illustrative and only demonstrates layout and wording. To run for real: <code>python3 freeanalyst.py ui &lt;materials&gt;</code>",
+    "demo.msg": "<span class=\"warn\">No backend in preview mode</span> <span class=\"mut\">— parsing requires the local service: python3 freeanalyst.py ui &lt;materials&gt;</span>",
+    "demo.go": "<b>Design preview</b> — no backend here; report generation requires the local service. <b>The report sample below is illustrative.</b>",
+    "err.fail": "Parsing failed",
+    "foot.title": "Boundaries and constraints",
+    "foot.1": "① Confidential materials are processed on this machine only; cloud model calls are authorised per call and the authorisations are auditable.",
+    "foot.2": "② This interface is a presentation layer: all computation runs in the same kernel (intake / value). The interface re-computes nothing.",
+    "foot.3": "③ The service binds 127.0.0.1 only: other devices on the same network cannot reach this page."
+  }
+};
+
+const $ = id => document.getElementById(id);
+let LANG = localStorage.getItem("fa.lang") || "zh";
+const t = k => (I18N[LANG] && I18N[LANG][k]) || (I18N.zh[k] || k);
+
+function applyLang(lang){
+  LANG = lang;
+  localStorage.setItem("fa.lang", lang);
+  document.documentElement.lang = (lang === "en") ? "en" : "zh";
+  document.querySelectorAll("[data-i18n]").forEach(el => { el.textContent = t(el.dataset.i18n); });
+  document.querySelectorAll("[data-i18n-html]").forEach(el => { el.innerHTML = t(el.dataset.i18nHtml); });
+  document.querySelectorAll("[data-i18n-ph]").forEach(el => { el.placeholder = t(el.dataset.i18nPh); });
+  document.querySelectorAll(".lang button").forEach(b => {
+    b.classList.toggle("on", b.dataset.lang === lang);
+  });
+  if (STATE.data) rerender();          // 有数据时，表格/清单跟着换语言
+}
+
+// 直接打开文件（无后端）时用示例数据把六步渲染出来 —— 看设计不必先起服务。
+const DEMO = location.protocol === "file:" || location.search.indexOf("demo") >= 0;
+let DEMO_DONE = false;
+
+const DEMO_DATA = {
+  ok:true, path:"~/deals/target/", label:"Target · Annual report (illustrative)",
+  tables:[
+    {kind:"balance",label:"资产负债表",file:"R2.htm",mapped:31,rows:35,rate:88.6,found:true},
+    {kind:"income",label:"合并利润表",file:"R4.htm",mapped:16,rows:28,rate:57.1,found:true},
+    {kind:"cash_flow",label:"合并现金流量表",file:"R8.htm",mapped:24,rows:61,rate:39.3,found:true}
+  ],
+  unit:"千美元", unit_basis:"R2.htm｜in thousands",
+  gaap:"US GAAP", scope:"合并", audited:"未标注", period:"Dec. 31, 2016",
+  checks:[
+    {name:"资产 = 负债 + 所有者权益", ok:true, applicable:true},
+    {name:"期末现金 = 期初 + 经营 + 投资 + 筹资", ok:true, applicable:true},
+    {name:"净利润 → 经营现金流（间接法）", ok:true, applicable:true}
+  ],
+  unused:["R5.htm（未识别）","R6.htm（未识别）","fitbit1231610k.htm（全文，非报表）"],
+  notes:["金额单位取自报表正文「in thousands」"],
+  warnings:[],
+  questions:[
+    {group:"① 机器推导项（如无异议可直接采用）", key:"unit", label:"金额单位",
+     hint:"此处有误即为 1,000 倍量级错误", default:"千美元", reference:"报表正文"},
+    {group:"① 机器推导项（如无异议可直接采用）", key:"gaap", label:"会计口径",
+     hint:"由标题与科目标签共同判定", default:"US GAAP", reference:""},
+    {group:"② 资本成本参数（WACC）", key:"risk_free", label:"无风险利率",
+     hint:"10 年期国债收益率", default:"", reference:"0.0245"},
+    {group:"② 资本成本参数（WACC）", key:"beta_unlevered", label:"无杠杆 β",
+     hint:"可比公司无杠杆贝塔", default:"", reference:"1.10"},
+    {group:"③ 预测期参数（DCF）", key:"growth", label:"营业收入增长率（逐年，逗号分隔）",
+     hint:"年数须与配置中的年份标签一致", default:"", reference:"0.05, 0.05, 0.05"},
+    {group:"③ 预测期参数（DCF）", key:"ebitda_margin", label:"EBITDA 率（逐年）",
+     hint:"仅填一项时自动展开至各年", default:"", reference:"0.06"},
+    {group:"③ 预测期参数（DCF）", key:"terminal_growth", label:"永续增长率",
+     hint:"不建议显著高于长期通胀", default:"", reference:"0.025"}
+  ],
+  out_dir:"out/target"
+};
+const DEMO_REPORT =
+"【设计预览 · 示例数据，非真实结论】\n" +
+"════════════════════════════════════════════════════════\n" +
+" 估值报告 · Target（示例）                基准日 Dec. 31, 2016\n" +
+" 金额单位 千美元　｜　US GAAP · 合并\n" +
+"════════════════════════════════════════════════════════\n" +
+"\n一、结论区间（Football Field）\n" +
+"  DCF          1,131,325 ── 1,372,061      中枢 1,251,693\n" +
+"  乘数法       1,090,000 ── 1,330,000\n" +
+"  可比交易     ——（未提供可比交易）\n" +
+"\n二、DCF 假设与来源\n" +
+"  营业收入增长率   5.0% ×3 年     @管理层规划 p.12（中）\n" +
+"  EBITDA 率        6.0%           @近三年均值（中）\n" +
+"  WACC             8.50%          无风险 2.45% + β 1.10 × ERP 5.5%\n" +
+"  永续增长率       2.5%           @长期通胀（低）\n" +
+"\n三、结果的软肋（低置信度项）\n" +
+"  · 永续增长率仅填数值、未附来源 → 低置信度，且对终值影响最大\n" +
+"  · 债务成本取自历史数据，未经市场校准\n" +
+"\n四、未执行的模块（未执行 ≠ 无结果）\n" +
+"  · 未提供可比公司 → 乘数法仅采用行业默认倍数\n";
+
+function post(url, body){
+  return fetch(url, {method:"POST", headers:{"Content-Type":"application/json"},
+                     body: JSON.stringify(body)}).then(r => r.json());
+}
+function esc(s){
+  return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+}
+
+function demo(){
+  if(DEMO_DONE) return;
+  DEMO_DONE = true;
+  const d = DEMO_DATA;
+  STATE.data = d;
+  $("path").value = d.path;
+  $("scanMsg").innerHTML = '<span class="mut">' + t("demo.msg") + '</span>';
+  rerender();
+  $("s2").className = "step on";
+  $("s5").className = "step need on";
+  $("s6").className = "step on";
+  $("card2").classList.remove("hide");
+  $("card5").classList.remove("hide");
+  $("outDir").textContent = t("out.prefix") + "out/target/";
+  $("report").textContent = DEMO_REPORT;
+  $("card6").classList.remove("hide");
+  $("srvNote").classList.remove("hide");
+  $("demoTag").classList.remove("hide");
+}
+
+// 让服务去调系统原生选择框，拿真实路径 —— **不上传、不复制**（材料留在原地）
+function pick(kind){
+  if(DEMO_DONE){ $("scanMsg").innerHTML = t("demo.msg"); return; }
+  $("scanMsg").innerHTML = '<span class="warn">' + t("s1.picking") + '</span>';
+  post("/api/pick", {kind:kind}).then(d => {
+    if(d.ok){
+      $("path").value = d.path;
+      $("scanMsg").innerHTML = '<span class="ok">' + esc(d.path) + '</span>';
+    } else if(d.cancelled){
+      $("scanMsg").innerHTML = '<span class="mut">' + t("s1.cancelled") + '</span>';
+    } else {
+      $("scanMsg").innerHTML = '<span class="bad">' + esc(d.error || t("err.fail")) + '</span>';
+    }
+  }).catch(e => {
+    $("scanMsg").innerHTML = '<span class="bad">' + esc(String(e)) + '</span>';
+  });
+}
+
+// 从访达拖进来：浏览器会在 dataTransfer 里给 file:/// 开头的 URL，那就是真实路径，
+// 所以这条路同样**不上传、不复制**。取不到路径就明说，不假装成功。
+function wireDrop(){
+  const card = $("path").closest(".card");
+  if(!card) return;
+  ["dragenter", "dragover"].forEach(ev => card.addEventListener(ev, e => {
+    e.preventDefault();
+    if(e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+    card.classList.add("drop");
+  }));
+  ["dragleave", "dragend"].forEach(ev =>
+    card.addEventListener(ev, () => card.classList.remove("drop")));
+  card.addEventListener("drop", e => {
+    e.preventDefault();
+    card.classList.remove("drop");
+    const dt = e.dataTransfer;
+    if(!dt) return;
+    let p = dt.getData("text/uri-list") || dt.getData("text/plain") || "";
+    p = p.split("\n").map(s => s.trim()).filter(s => s && s.charAt(0) !== "#")[0] || "";
+    if(p.indexOf("file://") === 0){
+      try { p = decodeURIComponent(p.replace(/^file:\/\/(localhost)?/, "")); } catch(_){}
+    }
+    p = p.replace(/\/+$/, "") || "/";
+    if(p.charAt(0) === "/"){
+      $("path").value = p;
+      $("scanMsg").innerHTML = '<span class="ok">' + esc(p) + '</span>';
+    } else {
+      $("scanMsg").innerHTML = '<span class="bad">' + t("s1.dropped") + '</span>';
+    }
+  });
+}
+
+function scan(){
+  if(DEMO_DONE){
+    $("scanMsg").innerHTML = t("demo.msg");
+    return;
+  }
+  const p = $("path").value.trim();
+  if(!p){ $("scanMsg").textContent = t("s1.needpath"); return; }
+  $("scanBtn").disabled = true;
+  $("scanMsg").innerHTML = t("s1.running");
+  post("/api/scan", {path:p, unit:STATE.unit}).then(d => {
+    $("scanBtn").disabled = false;
+    if(!d.ok){
+      $("scanMsg").innerHTML = '<span class="bad">' + esc(d.error || t("err.fail")) + '</span>';
+      if(d.tables){ renderTables(d); renderMeta(d); $("card2").classList.remove("hide"); }
+      return;
+    }
+    STATE.path = d.path;
+    STATE.data = d;
+    $("scanMsg").innerHTML = t("s1.ok") + ' <span class="mut">· ' + esc(d.label) + '</span>';
+    rerender();
+    $("s2").className = "step on";
+    $("s5").className = "step need on";
+    $("s6").className = "step on";
+    $("card2").classList.remove("hide");
+    $("card5").classList.remove("hide");
+    $("srvNote").classList.remove("hide");
+    $("card2").scrollIntoView({behavior:"smooth", block:"start"});
+  }).catch(e => {
+    $("scanBtn").disabled = false;
+    $("scanMsg").innerHTML = '<span class="bad">' + esc(String(e)) + '</span>';
+  });
+}
+
+// 有数据时按当前语言重绘（切语言也走这里）
+function rerender(){
+  const d = STATE.data;
+  if(!d) return;
+  renderTables(d); renderChecks(d); renderMeta(d); renderUnit(d); renderQuestions(d);
+}
+
+function renderTables(d){
+  let h = '<table><thead><tr><th>' + t("th.statement") + '</th><th>' + t("th.source") +
+          '</th><th class="num">' + t("th.mapped") + '</th><th>' + t("th.status") +
+          '</th></tr></thead><tbody>';
+  for(const x of d.tables){
+    h += '<tr><td>' + esc(x.label) + '</td><td class="mut">' + esc(x.file || "—") + '</td>' +
+         '<td class="num mut">' + (x.rows ? x.mapped + " / " + x.rows : "—") + '</td>' +
+         '<td>' + (x.found ? '<span class="ok">■ ' + t("st.found") + '</span>'
+                           : '<span class="bad">■ ' + t("st.missing") + '</span>') + '</td></tr>';
+  }
+  h += '</tbody></table>';
+  if(d.unused && d.unused.length){
+    h += '<div class="notice" style="margin:12px 0 0"><b>' + t("unused.head") + '</b><br>' +
+         d.unused.map(u => "· " + esc(u)).join("<br>") + '</div>';
+  }
+  $("tables").innerHTML = h;
+}
+
+function renderChecks(d){
+  let h = '<table><thead><tr><th>' + t("chk.head") + '</th><th>' + t("chk.result") +
+          '</th></tr></thead><tbody>';
+  for(const c of d.checks){
+    const v = c.ok === true ? '<span class="ok">■ ' + t("chk.ok") + '</span>'
+            : c.ok === false ? '<span class="bad">■ ' + t("chk.bad") + '</span>'
+            : c.applicable ? '<span class="warn">■ ' + t("chk.na") + '</span>'
+            : '<span class="mut">■ ' + t("chk.nr") + '</span>';
+    h += '<tr><td>' + esc(c.name) + '</td><td>' + v + '</td></tr>';
+  }
+  h += '</tbody></table>';
+  const dups = (d.warnings || []).filter(w => w.indexOf("个取值") >= 0).length;
+  if(dups) h += '<div class="notice issue" style="margin-top:12px">' +
+                esc(t("chk.dups").replace("{n}", dups)) + '</div>';
+  $("checks").innerHTML = h;
+}
+
+function renderMeta(d){
+  $("meta").innerHTML =
+    '<div class="kv">' + t("meta.basis") + '：<b>' + esc(d.gaap || "—") + '</b> · <b>' +
+    esc(d.scope || "—") + '</b> · <b>' + esc(d.audited || "—") + '</b>　｜　' +
+    t("meta.period") + ' <b>' + esc(d.period || "—") + '</b> <span class="mut">（' +
+    t("meta.fix") + '）</span></div>' +
+    (d.notes && d.notes.length
+      ? '<div class="kv mut" style="margin-top:8px">' +
+        d.notes.map(n => "· " + esc(n)).join("<br>") + '</div>' : '');
+}
+
+function renderUnit(d){
+  $("unitBox").innerHTML =
+    '<div class="grid3"><div><label class="kv">' + t("unit.label") +
+    ' <b class="warn">' + t("unit.warn") + '</b></label>' +
+    '<input type="text" id="unit" value="' + esc(d.unit || "") +
+    '" placeholder="元 / 千元 / 万元 / 千美元 / RMB / RMB thous. / USD thous."></div>' +
+    '<div class="kv" style="align-self:end">' +
+    (d.unit ? t("unit.basis") + esc(d.unit_basis || "")
+            : '<span class="bad">■ ' + t("unit.unknown") + '</span>') +
+    '</div></div>';
+}
+
+function renderQuestions(d){
+  let g = "", h = "";
+  for(const q of d.questions){
+    if(q.group !== g){ g = q.group; h += '<h3 class="grp">' + esc(g) + '</h3>'; }
+    const ref = q.reference ? '　｜ <b>参考 / ref</b>：' + esc(q.reference) : "";
+    h += '<div class="q"><label>' + esc(q.label) + '<span class="hint">' + esc(q.hint || "") +
+         ref + '</span></label><input type="text" spellcheck="false" data-key="' +
+         esc(q.key) + '" value="' + esc(q.default || "") + '"></div>';
+  }
+  $("questions").innerHTML = h;
+}
+
+function go(){
+  if(DEMO_DONE){
+    $("missing").innerHTML = '<div class="notice">' + t("demo.go") + '</div>';
+    $("card6").classList.remove("hide");
+    $("card6").scrollIntoView({behavior:"smooth", block:"start"});
+    return;
+  }
+  $("goBtn").disabled = true;
+  const answers = {};
+  document.querySelectorAll("#questions input").forEach(i => {
+    if(i.value.trim()) answers[i.dataset.key] = i.value.trim();
+  });
+  const u = $("unit") ? $("unit").value.trim() : "";
+  post("/api/appraise", {path:STATE.path, unit:u, answers:answers}).then(d => {
+    $("goBtn").disabled = false;
+    $("card6").classList.remove("hide");
+    if(!d.ok){
+      $("missing").innerHTML = '<div class="notice issue"><b>' + esc(d.error || t("err.fail")) +
+                               '</b></div>';
+      $("report").textContent = "";
+      $("card6").scrollIntoView({behavior:"smooth"});
+      return;
+    }
+    $("outDir").textContent = t("out.prefix") + d.out_dir;
+    $("missing").innerHTML = d.missing.length
+      ? '<div class="notice"><b>' + t("miss.head") + '</b><br>' +
+        d.missing.map(x => "· " + esc(x)).join("<br>") + '</div>' : "";
+    $("report").textContent = d.report;
+    $("card6").scrollIntoView({behavior:"smooth", block:"start"});
+  }).catch(e => {
+    $("goBtn").disabled = false;
+    $("missing").innerHTML = '<div class="notice issue">' + esc(String(e)) + '</div>';
+  });
+}
+
+// 服务是旧进程时，说清楚「为什么」和「怎么办」——
+// 不让用户对着 `unknown endpoint` 猜（这个坑真踩过：页面更新了、服务没重启）。
+function showStale(){
+  $("stale").classList.remove("hide");
+  ["pickDir", "pickFile"].forEach(id => {
+    const el = $(id);
+    if(el) el.disabled = true;
+  });
+}
+
+// ── 启动：有后端就等人操作；没后端（双击打开、聊天里预览）自动进设计预览 ──
+function boot(){
+  applyLang(LANG);
+  wireDrop();
+  document.querySelectorAll(".lang button").forEach(b => {
+    b.addEventListener("click", () => applyLang(b.dataset.lang));
+  });
+  if(DEMO){ demo(); return; }
+  const timer = setTimeout(() => demo(), 1800);
+  fetch("/api/health", {cache:"no-store"}).then(r => r.json()).then(h => {
+    const eps = (h && h.endpoints) || [];
+    if(eps.indexOf("pick") < 0) showStale();
+  }).catch(() => demo()).finally(() => clearTimeout(timer));
+}
+const STATE = { path:"", unit:"", data:null };
+boot();
+</script>
+</div>
+</body></html>

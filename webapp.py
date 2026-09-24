@@ -39,6 +39,7 @@ from __future__ import annotations
 import argparse
 import json
 import socket
+import subprocess
 import sys
 import threading
 import urllib.request
@@ -52,9 +53,70 @@ from intake import Answer, Materials, parse_answer
 HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
 
+#: 接口清单与版本 —— 页面拿它跟自己对表。
+#: **真踩过**：页面加了「选择文件夹…」，但跑着的服务还是旧进程（Python 代码不会热加载），
+#: 于是点下去只回一句 `unknown endpoint`。现在页面能自己发现这件事并说清楚。
+VERSION = "0.33"
+ENDPOINTS = ("health", "scan", "appraise", "pick")
+
+#: 项目根目录 —— 页面正文和默认输出都相对它。
+ROOT = Path(__file__).resolve().parent
+
+#: 页面正文放在单独文件里 —— **线上那一页和设计稿是同一个文件**。
+#: 好处不只是省事：不存在「稿子改好看了、实现没跟上」这种分岔。
+#: `webapp_page.html` 可以直接双击打开看样式（没有后端时它自己进设计预览模式）。
+PAGE_PATH = ROOT / "webapp_page.html"
+
+
+def page_html() -> str:
+    """要发出去的页面。**优先读 `webapp_page.html`**，没有就退回内置那份。
+
+    在页面上改动频繁的时候，单独一个 html 文件比在 Python 字符串里改要好得多：
+    能直接双击看、能用编辑器的语法高亮、diff 也看得清。
+    """
+    if PAGE_PATH.exists():
+        return PAGE_PATH.read_text(encoding="utf-8")
+    return PAGE
+
 #: 这次会话扫过的材料（`path → Materials`）。**扫一次就够** ——
 #: PDF 走一遍 OCR 可能要几分钟，点一下重扫一遍没人受得了。
 _CACHE: dict[str, Materials] = {}
+
+
+def pick_path(kind: str = "dir") -> dict:
+    """让**操作系统**弹一个原生选择框，把真实路径返回给页面。
+
+    ## 为什么不是浏览器的文件选择框（`<input type=file>`）
+
+    浏览器出于沙箱，`<input type=file>` 只给文件名，**拿不到真实路径**；
+    想拿到内容就只能把文件**上传**一份 —— 那等于把机密材料复制到别处去，
+    对一个「材料不出本机」的工具是不能接受的。
+
+    而我们的服务本来就跑在这台机器上，所以让它去调系统的选择框：
+    用户选完，直接拿到真实路径，**一个字节都不复制**，材料还在原地。
+
+    只做 macOS（`osascript`）。其他系统返回一句人话，让人手工填路径 ——
+    不做「看起来能用」的假按钮。
+    """
+    if sys.platform != "darwin":
+        return {"ok": False,
+                "error": f"原生选择框只做了 macOS（当前系统 {sys.platform}）—— "
+                         "请直接填路径，或把文件夹从访达拖进页面"}
+    prompt = "选择尽调材料目录" if kind == "dir" else "选择材料文件"
+    script = (f'POSIX path of (choose folder with prompt "{prompt}")' if kind == "dir"
+              else f'POSIX path of (choose file with prompt "{prompt}")')
+    try:
+        out = subprocess.run(["osascript", "-e", script], capture_output=True,
+                             text=True, timeout=600)
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "error": "选择框等待超时"}
+    except OSError as exc:
+        return {"ok": False, "error": f"调不起系统选择框：{exc}"}
+    if out.returncode != 0:
+        # 用户按了取消。**取消不是错误** —— 界面上不该弹红字。
+        return {"ok": False, "cancelled": True}
+    path = out.stdout.strip().rstrip("/") or "/"
+    return {"ok": True, "path": path}
 
 
 # ─────────────────────── 接口层：把现有函数包成 JSON ───────────────────────
@@ -196,9 +258,10 @@ class Handler(BaseHTTPRequestHandler):
     # ---------- 路由 ----------
     def do_GET(self):                                  # noqa: N802
         if self.path in ("/", "/index.html"):
-            self._send(200, PAGE.encode(), "text/html; charset=utf-8")
+            self._send(200, page_html().encode(), "text/html; charset=utf-8")
         elif self.path == "/api/health":
-            self._json({"ok": True})
+            self._json({"ok": True, "version": VERSION,
+                        "endpoints": list(ENDPOINTS)})
         else:
             self._send(404, b"not found", "text/plain; charset=utf-8")
 
@@ -214,6 +277,9 @@ class Handler(BaseHTTPRequestHandler):
                     self._json({"ok": False, "error": f"这个路径不存在：{p}"}, 400)
                     return
                 self._json(api_scan(p, body.get("unit") or ""))
+            elif self.path == "/api/pick":
+                # 弹系统原生选择框，把真实路径回给页面（不复制任何文件）
+                self._json(pick_path(body.get("kind") or "dir"))
             elif self.path == "/api/appraise":
                 self._json(api_appraise(body.get("path") or "",
                                         body.get("unit") or "",
