@@ -876,6 +876,34 @@ def _facts_number(mat: Materials, key: str) -> float | None:
 
 # ─────────────────────────── 编排 ───────────────────────────
 
+#: 项目根目录 —— 默认输出落在它下面的 `out/`（已在 .gitignore 里）。
+ROOT = Path(__file__).resolve().parent
+
+
+def _slug(text: str) -> str:
+    """把标的/材料名变成一个能当目录名的短串。"""
+    s = re.sub(r"[^\w\u4e00-\u9fff-]+", "_", str(text)).strip("_")
+    return s or "估值"
+
+
+def out_dir_for(mat: Materials, override: str | Path | None = None) -> Path:
+    """这次运行的产物目录。
+
+    ## 默认不放在材料旁边（实测踩到）
+
+    第一版把「估值问答.txt」写在**材料所在目录**里 —— 一跑就把文件丢进了
+    用户的私有材料库（实测往三个真实项目的目录里各扔了一份）。
+    **工具不该往用户的材料库里写东西**，那条库是只读的输入。
+
+    默认改成 `<项目根>/out/<标的>/`：一个标的一个目录，配置、问答清单、
+    报告都在里面，而 `out/` 本来就是这个项目放"本地生成的报告产物"的地方
+    （也已经在 .gitignore 里）。
+    """
+    if override:
+        return Path(override)
+    return ROOT / "out" / _slug(mat.label)
+
+
 def appraise(directory: str | Path, answers: str | Path | None = None,
              *, unit: str = "", out_dir: str | Path | None = None,
              no_trace: bool = False, growth_years: int = 5) -> int:
@@ -929,9 +957,10 @@ def appraise(directory: str | Path, answers: str | Path | None = None,
         print()
 
     qs = questions(mat, growth_years=growth_years)
-    # 单文件时清单放在它旁边，**带上文件名前缀** ——
-    # 不带的话，同一个目录里放两份材料就会互相覆盖。
-    tpl = (d.parent / f"{d.stem}-估值问答.txt") if mat.is_file else (d / "估值问答.txt")
+    # 产物统一放 `out/<标的>/`，**不往材料目录里写**（材料库是只读输入）。
+    out = out_dir_for(mat, out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    tpl = out / "估值问答.txt"
     tpl.write_text(render_template(qs, mat), encoding="utf-8")
 
     if answers is None:
@@ -961,11 +990,9 @@ def appraise(directory: str | Path, answers: str | Path | None = None,
 
     from value import run_report
 
-    out_dir = Path(out_dir) if out_dir else (d.parent if mat.is_file else d)
-    stem = re.sub(r"[^\w\u4e00-\u9fff-]+", "_", str(cfg.get("target") or "估值"))
-    cfg_path = out_dir / f"{stem}.config.json"
-    report_path = out_dir / f"{stem}.报告.txt"
-    out_dir.mkdir(parents=True, exist_ok=True)
+    stem = _slug(cfg.get("target") or "估值")
+    cfg_path = out / f"{stem}.config.json"
+    report_path = out / f"{stem}.报告.txt"
     cfg_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
 
     report = run_report(cfg, cfg_path.parent, statements=mat.statements,
