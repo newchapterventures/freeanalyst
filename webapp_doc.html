@@ -173,6 +173,10 @@
         但<b>报出的不一定穷尽</b>。任何结论必须经<b>人工复核</b>后才可用于决策。</li>
     <li>材料来源的<b>合法性、使用授权与保密义务</b>由使用者自行负责；估值结论的对外使用
         （如报送投资决策委员会、披露给交易对方）由使用者自行承担责任。</li>
+    <li><b>关于「材料不出本机」这个说法</b>：它指材料<b>不离开你这台电脑</b> —— 不出到局域网内的
+        另一台机器，也不出到任何外部主机。<b>这与法律上的「数据出境」（跨境传输）不是一回事</b>，
+        本工具的承诺严格得多。要核对这一点，看 <code>audits/egress.jsonl</code>：
+        「外部主机」一栏为空，就是从未发出过。云端模型是<b>唯一</b>的例外，且必须按次授权。</li>
     <li>本软件按「现状」提供，不附带任何明示或默示担保；作者不对因使用本工具产生的
         任何直接或间接损失负责。</li>
   </ul>
@@ -328,7 +332,7 @@ python3 freeanalyst.py ask "调整后 EBITDA 是怎么算的？"</pre>
     <li><b>不做「一键全局放行」。</b>没有 <code>ALLOW_CLOUD=1</code> 这种粗暴开关 ——
         每一次云端调用都要 <b>按次授权</b>（绑定主机 + 用途 + 内容描述），授权本身进审计。</li>
     <li><code>privacy.py</code> 是<b>唯一的跨域出口</b>：机密域只放行回环地址，
-        出境的值与本地语料逐字比对。</li>
+        外发的值与本地语料逐字比对。</li>
     <li><b>可查</b>：<code>python3 freeanalyst.py audit</code> 会告诉你这一次到底有没有东西出网。</li>
   </ul>
   <p><b>建议的做法</b>：机密标的只用本地模型；闭源模型用在公开材料（如上市公司年报）
@@ -383,6 +387,12 @@ python3 freeanalyst.py ask "调整后 EBITDA 是怎么算的？"</pre>
         be <b>reviewed by a human</b> before use.</li>
     <li>Legality, authorisation and confidentiality obligations attached to the materials are the
         user's responsibility, as is any onward use of the output.</li>
+    <li><b>On the phrase &quot;nothing leaves this machine&quot;:</b> it means the materials do not
+        leave <b>this computer</b> — not to another machine on the same network, and not to any
+        external host. <b>This is not the legal concept of a &quot;cross-border data transfer&quot;</b>;
+        the commitment here is stricter. To verify it, read
+        <code>audits/egress.jsonl</code>: an empty &quot;external hosts&quot; column means nothing was
+        ever sent. Cloud models are the <b>only</b> exception, and require per-call consent.</li>
     <li>The software is provided "as is", without warranty of any kind. The author accepts no
         liability for any loss arising from its use.</li>
   </ul>
