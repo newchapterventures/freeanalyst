@@ -166,6 +166,7 @@ def recommend(ram_gb: float = 0.0) -> dict:
 # ─────────────── 质量门槛的实测成绩（不猜：没有文件就说没有） ───────────────
 #: `bench/gate-*.json` —— 由 `bench/model_quality.py --json <路径>` 生成
 GATE_FILES: tuple[Path, ...] = (ROOT / "bench" / "gate-local-6.json",
+                                ROOT / "bench" / "gate-qwen35.json",
                                 ROOT / "bench" / "gate-cloud-2.json")
 
 

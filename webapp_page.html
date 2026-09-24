@@ -240,7 +240,36 @@
   .hide{display:none}
   code{font-family:var(--mono);color:var(--amber);background:rgba(255,176,0,.07);
        padding:1px 5px;border-radius:2px}
+
+  /* ── 首次引导：铺满屏，三屏，看完记住（localStorage）。给不看文档的人。 ── */
+  .onb{position:fixed;inset:0;background:rgba(3,5,8,.93);z-index:50;
+       display:flex;align-items:center;justify-content:center;padding:24px}
+  .onb-box{max-width:640px;width:100%;background:var(--panel);border:1px solid var(--line);
+           border-radius:10px;padding:26px 28px}
+  .onb-box h2{font-size:19px;margin:0 0 14px;color:var(--fg);letter-spacing:.02em}
+  .onb-box p{font-size:13px;line-height:1.75;color:#B6CFC9;margin:0 0 10px}
+  .onb-box ul{margin:8px 0 0 18px;padding:0;font-size:13px;line-height:1.8;color:#B6CFC9}
+  .onb-foot{display:flex;align-items:center;gap:10px;margin-top:20px;
+            border-top:1px solid var(--line);padding-top:14px}
+  .onb-dots{display:flex;gap:6px;margin-right:auto}
+  .onb-dots i{width:22px;height:3px;background:var(--line);border-radius:2px}
+  .onb-dots i.on{background:var(--pri)}
+  .onb b{color:var(--pri)}
 </style></head><body><div class="wrap">
+
+  <!-- 首次引导（三屏）。**不写术语**：用的人是不写代码的 associate。
+       内容只讲三件事：这是什么 / 材料怎么进来 / 要不要装模型。 -->
+  <div class="onb hide" id="onb">
+    <div class="onb-box">
+      <h2 id="onbTitle"></h2>
+      <div id="onbBody"></div>
+      <div class="onb-foot">
+        <span class="onb-dots" id="onbDots"><i></i><i></i><i></i></span>
+        <button class="ghost" id="onbSkip" onclick="onbSkip()"></button>
+        <button id="onbNext" onclick="onbNext()"></button>
+      </div>
+    </div>
+  </div>
 
   <div class="top">
     <!-- 极简算盘：28 个方块（4 列 × 上 2 下 5），无轴无梁无框无高光。
@@ -378,6 +407,9 @@
     <span data-i18n="foot.1"></span><br>
     <span data-i18n="foot.2"></span><br>
     <span data-i18n="foot.3"></span>
+    <!-- 看完引导还能找回来 —— 新手最容易的诉求是"刚才那段再说一遍" -->
+    <div style="margin-top:6px"><a href="#" id="onbReplay" style="color:var(--mut)"
+       onclick="onbShow(0);return false" data-i18n="onb.replay"></a></div>
     <!-- 版本号取自服务端（webapp.VERSION 是唯一来源）——
          不让页面自己写一个可能与服务对不上的号 -->
     <div class="verline"><b id="ver"></b></div>
@@ -398,6 +430,13 @@ const I18N = {
     "nav.docstale": "服务是旧进程，可能还没有说明文件页 —— 先重启服务再打开",
     "pill.egress": "零出境 · 机密材料仅在本机处理",
     "pill.nomodel": "无需安装模型 · 估值全流程可用",
+    "onb.skip": "跳过", "onb.next": "下一步", "onb.start": "开始使用", "onb.replay": "重看引导",
+    "onb.1.t": "这是什么",
+    "onb.1.b": "<p>把一份标的的材料（CIM、年报、审计报告、扫描件都行）变成<b>可追溯的估值数据</b>：三张表认出来、勾稽校验跑一遍、再按你给的假设算 DCF 与乘数。</p><p>它<b>不做什么</b>：不下投资结论、不替你定假设。每个假设都要你自己填，工具只在旁边给本期数据作参考。</p>",
+    "onb.2.t": "材料怎么进来（都不会被复制）",
+    "onb.2.b": "<p>三种方式：点「选择文件夹…」调系统选择框；把文件夹从访达拖进卡片；或直接填路径。</p><ul><li>材料<b>始终留在你原来的位置</b>，工具只读不写。</li><li>默认<b>零出境</b>：全部计算在本机完成。</li><li>万一要用云端模型，每一次调用都会先问你、并记进出网审计。</li></ul>",
+    "onb.3.t": "需要装模型吗？不需要",
+    "onb.3.b": "<p>估值这一步<b>一行代码也不靠模型</b> —— 识别、勾稽、DCF、乘数全是程序算的。所以这台机器不装任何模型，也能拿到完整报告。</p><p>只有想「读了材料回答问题」才需要模型。要装的话，在右上角 ⚙ 模型设置里点一下就下载，按你的内存给建议；<b>目前本机模型还没达到我们的质量门槛，只能当辅助</b>（答案要对着原文核）。</p>",
     "pill.arith": "算术由代码执行 · 不交由模型",
     "pill.declare": "输入缺失即声明 · 不作假设",
     "step.1": "载入材料", "step.2": "报表识别与勾稽校验",
@@ -457,6 +496,13 @@ const I18N = {
     "nav.docstale": "The service process is stale and may not serve the documentation page yet — restart the service first",
     "pill.egress": "No egress · Confidential materials processed locally only",
     "pill.nomodel": "No model required · full valuation works without one",
+    "onb.skip": "Skip", "onb.next": "Next", "onb.start": "Start", "onb.replay": "Show intro again",
+    "onb.1.t": "What this is",
+    "onb.1.b": "<p>Turns a target's materials (CIM, annual report, audit report, scans) into <b>traceable valuation data</b>: statements recognised, articulation checked, then DCF and multiples on the assumptions you supply.</p><p>What it does <b>not</b> do: it draws no investment conclusion and sets no assumption for you. Every assumption is yours to enter; the tool only shows this period's figures alongside as reference.</p>",
+    "onb.2.t": "How materials get in (nothing is copied)",
+    "onb.2.b": "<p>Three ways: click &quot;Choose folder…&quot; for the native picker; drag a folder from Finder onto the card; or type the path.</p><ul><li>Materials <b>stay where they are</b> — the tool reads, never writes.</li><li><b>No egress by default</b>: all computation happens on this machine.</li><li>If a cloud model is ever used, every call asks you first and is recorded in the egress audit.</li></ul>",
+    "onb.3.t": "Do you need a model? No",
+    "onb.3.b": "<p>Valuation uses <b>no model at all</b> — recognition, articulation, DCF and multiples are all computed in code. So this machine can produce the full report with nothing installed.</p><p>A model is only needed for &quot;answer questions over the materials&quot;. To install one, open ⚙ Model settings (top right) and click download — it suggests a size for your RAM. <b>Local models do not yet pass our quality gate and are assistant-only</b> (check answers against the source).</p>",
     "pill.arith": "Arithmetic executed in code, never by the model",
     "pill.declare": "Missing inputs are declared, never assumed",
     "step.1": "Load materials", "step.2": "Extraction & reconciliation",
@@ -511,6 +557,10 @@ const I18N = {
 
 const $ = id => document.getElementById(id);
 let LANG = localStorage.getItem("fa.lang") || "zh";
+// 首次引导只在**第一次**打开时铺满屏；看完记住了（localStorage），
+// 以后想再看，页脚有「重看引导」。
+const ONB_KEY = "fa.onboarded";
+let ONB_I = 0;
 //: 服务端报的版本号（/api/health）。**空 = 没连上服务**（预览模式）——
 //: 页面不自己写死版本号，免得写的是一个跟服务对不上的号。
 let VER = "";
@@ -532,6 +582,7 @@ function applyLang(lang){
   document.querySelectorAll(".lang button").forEach(b => {
     b.classList.toggle("on", b.dataset.lang === lang);
   });
+  onbRelang();                        // 引导若正开着，跟着换语言
   if(STATE.data) rerender();          // 有数据时，表格/清单跟着换语言
   setVer();                           // 版本号那行也是文案，跟着换
 }
@@ -927,6 +978,7 @@ function boot(){
     const feats = (h && h.features) || [];
     VER = (h && h.version) || "";
     setVer();
+    onbMaybeStart();     // 第一次打开：先讲三句（服务通了才讲）
     // 接口、页面、**能力标记**逐条核对：少任何一条都说明跑着的是旧进程。
     // 能力标记这一类是后补的 —— 百分比字段加进来但没重启时，
     // 页面上那些框会**静默地没有 %**，用户根本不知道填 5 还是 0.05。
@@ -935,6 +987,47 @@ function boot(){
   }).catch(() => demo()).finally(() => clearTimeout(timer));
 }
 const STATE = { path:"", unit:"", data:null };
+
+// ── 首次引导 ──
+// 三屏，铺满屏，看完记住。**只在第一次打开时跳出来** ——
+// 天天用的功能不该每次都被一段介绍挡着（那是骚扰，不是引导）。
+function onbShow(i){
+  ONB_I = i;
+  const n = 3;
+  $("onbTitle").innerHTML = t("onb." + (i+1) + ".t");
+  $("onbBody").innerHTML = t("onb." + (i+1) + ".b");
+  $("onbNext").textContent = (i === n-1) ? t("onb.start") : t("onb.next");
+  $("onbSkip").textContent = t("onb.skip");
+  document.querySelectorAll("#onbDots i").forEach((el, k) =>
+    el.classList.toggle("on", k <= i));
+  $("onb").classList.remove("hide");
+}
+
+function onbNext(){
+  if(ONB_I >= 2){ onbDone(); return; }
+  onbShow(ONB_I + 1);
+}
+
+function onbSkip(){ onbDone(); }
+
+function onbDone(){
+  $("onb").classList.add("hide");
+  try { localStorage.setItem(ONB_KEY, "1"); } catch(e){ /* 私密模式：不强求 */ }
+}
+
+//: 切语言时引导若正开着，把它也换成对应语言（否则中英混在同一屏里）
+function onbRelang(){
+  const el = $("onb");
+  if(el && !el.classList.contains("hide")) onbShow(ONB_I);
+}
+
+//: 只在"服务在跑"时弹（DEMO 预览模式不弹 —— 那是在改设计稿，不是真在用）
+function onbMaybeStart(){
+  let seen = "1";
+  try { seen = localStorage.getItem(ONB_KEY) || ""; } catch(e){ seen = ""; }
+  if(!seen) onbShow(0);
+}
+
 boot();
 </script>
 </div>

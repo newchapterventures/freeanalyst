@@ -489,6 +489,44 @@ class TestHttpLayer(unittest.TestCase):
             self.assertTrue(Path(r["files"]["report"]).exists())
 
 
+class TestOnboarding(unittest.TestCase):
+    """首次引导（三屏）—— 给不看文档的人看的那一段。
+
+    盯住三件事：
+
+    1. **它必须是"默认藏着"的**：万一 JS 没跑起来（旧服务、脚本报错），
+       整页不能被一层遮罩挡住 —— 宁可没有引导，也不能用不了。
+    2. **三屏的中英文都在**（少一条，切到英文就露出 key 名）。
+    3. 看完**记住**（localStorage），并且**能重看**（页脚有入口）——
+       不然第一次手快点掉，就永远找不回来了。
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.html = webapp.page_html()
+
+    def test_overlay_starts_hidden(self):
+        self.assertIn('<div class="onb hide" id="onb">', self.html,
+                      "引导层不是默认隐藏的 —— JS 出问题时整页会被挡住")
+
+    def test_all_three_screens_exist(self):
+        for i in (1, 2, 3):
+            for suffix in ("t", "b"):
+                self.assertIn(f'"onb.{i}.{suffix}":', self.html, f"onb.{i}.{suffix}")
+
+    def test_screens_are_bilingual(self):
+        """中英各一套 —— 数一数每个 key 出现两次（zh 一次、en 一次）。"""
+        for i in (1, 2, 3):
+            for suffix in ("t", "b"):
+                key = f'"onb.{i}.{suffix}":'
+                self.assertEqual(self.html.count(key), 2, f"{key} 中英不成对")
+
+    def test_buttons_and_replay(self):
+        for token in ("onbNext", "onbSkip", "onbDots", "onb.replay", "ONB_KEY"):
+            self.assertIn(token, self.html, token)
+        self.assertIn("onbMaybeStart()", self.html, "boot 里没调起来，引导永远不会出现")
+
+
 class TestConfigPage(unittest.TestCase):
     """模型配置页 —— 关键不是"页面好看"，是四件事不许出错：
 
