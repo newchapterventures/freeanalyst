@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 19 33" width="76" height="132"
+     shape-rendering="crispEdges" role="img" aria-label="算盘">
+  <title>算盘</title>
+  <!-- 极简版：**只有方块**。
+       4 列 × （上 2 + 下 5）= 28 个方块，没有纵轴、没有横梁、没有外框、没有高光。
+       上下档靠 3 格空档分开；方块之间横竖各留 1 格缝（不留缝就会连成一条 —— 真错过一次）。
+
+       配色：上珠 #E9B949（金）· 下珠 #C9D2DC（银）· 点缀 #E5484D（红）。
+       红色的那一颗在**左起第 1 列、上排第 2 颗**（紧贴空档的那一颗）——
+       算盘上真正算数的，是被拨到贴住空档的那些珠子。 -->
+  <g fill="#E9B949">
+    <rect x="2" y="2" width="3" height="3"/>
+    <rect x="6" y="2" width="3" height="3"/>
+    <rect x="10" y="2" width="3" height="3"/>
+    <rect x="14" y="2" width="3" height="3"/>
+    <rect x="6" y="6" width="3" height="3"/>
+    <rect x="10" y="6" width="3" height="3"/>
+    <rect x="14" y="6" width="3" height="3"/>
+  </g>
+
+  <!-- 空档 y=9..11 -->
+  <g fill="#C9D2DC">
+    <rect x="2" y="12" width="3" height="3"/>
+    <rect x="6" y="12" width="3" height="3"/>
+    <rect x="10" y="12" width="3" height="3"/>
+    <rect x="14" y="12" width="3" height="3"/>
+    <rect x="2" y="16" width="3" height="3"/>
+    <rect x="6" y="16" width="3" height="3"/>
+    <rect x="10" y="16" width="3" height="3"/>
+    <rect x="14" y="16" width="3" height="3"/>
+    <rect x="2" y="20" width="3" height="3"/>
+    <rect x="6" y="20" width="3" height="3"/>
+    <rect x="10" y="20" width="3" height="3"/>
+    <rect x="14" y="20" width="3" height="3"/>
+    <rect x="2" y="24" width="3" height="3"/>
+    <rect x="6" y="24" width="3" height="3"/>
+    <rect x="10" y="24" width="3" height="3"/>
+    <rect x="14" y="24" width="3" height="3"/>
+    <rect x="2" y="28" width="3" height="3"/>
+    <rect x="6" y="28" width="3" height="3"/>
+    <rect x="10" y="28" width="3" height="3"/>
+    <rect x="14" y="28" width="3" height="3"/>
+  </g>
+
+  <!-- 左起第 1 列 · 上排第 2 颗 -->
+  <rect fill="#E5484D" x="2" y="6" width="3" height="3"/>
+</svg>

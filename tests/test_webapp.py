@@ -18,6 +18,7 @@ import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -33,12 +34,49 @@ class TestBindAddress(unittest.TestCase):
 
     def test_page_has_six_steps(self):
         for n in ("1", "2", "5", "6"):
-            self.assertIn(f'id="s{n}"', webapp.PAGE)
+            self.assertIn(f'id="s{n}"', webapp.page_html())
 
     def test_page_says_what_is_not_done(self):
         """第 3、4 步没做，页面上必须照实说 —— 不做成"看起来能用"。"""
-        self.assertIn("未接", webapp.PAGE)
-        self.assertIn("还没做", webapp.PAGE)
+        page = webapp.page_html()
+        self.assertIn("未接", page)
+        self.assertIn("还没做", page)
+
+    def test_page_is_bilingual_with_a_manual_switch(self):
+        """中英双语 + 手动切换 —— 选择记在 localStorage。"""
+        page = webapp.page_html()
+        self.assertIn('data-lang="zh"', page)
+        self.assertIn('data-lang="en"', page)
+        self.assertIn("fa.lang", page)                    # 记住选的语言
+        self.assertIn("const I18N", page)
+
+    def test_copy_is_formal_not_colloquial(self):
+        """界面文案用正式金融用语 —— 不要「丢材料 / 认材料 / 出报告」这类口语。
+
+        规则：注释里可以举反例（说明为什么不要用），所以先把 HTML 注释剥掉再查。
+        """
+        import re
+        page = re.sub(r"<!--.*?-->", "", webapp.page_html(), flags=re.S)
+        for word in ("丢材料", "认材料", "出报告", "认出来了", "没认出来"):
+            self.assertNotIn(word, page, f"界面文案里不该出现口语：{word}")
+
+    def test_every_i18n_key_exists_in_both_languages(self):
+        """缺一条译文 = 界面上多一块空白，所以两边必须一一对应。"""
+        import re
+        page = webapp.page_html()
+        used = set(re.findall(r'data-i18n(?:-html|-ph)?="([^"]+)"', page))
+        # 词边界不能少：closest(".card")、split("\n") 都含 t(" ，会被误当成 t("key")。
+        used |= set(re.findall(r'(?<![\w.])t\("([^"]+)"\)', page))
+        zh = set(re.findall(r'"([\w.]+)":', page.split("zh: {", 1)[1].split("\n  },", 1)[0]))
+        en = set(re.findall(r'"([\w.]+)":', page.split("en: {", 1)[1].split("\n  }", 1)[0]))
+        self.assertEqual(sorted(zh), sorted(en), "中英词表条数/键名不一致")
+        self.assertFalse(used - zh, f"有 key 没写进词表：{sorted(used - zh)}")
+
+    def test_served_page_is_the_design_file(self):
+        """线上那一页就是 `webapp_page.html` 本身 —— 不存在"稿子和实现不一样"。"""
+        page = webapp.page_html()
+        self.assertIn('aria-label="算盘"', page)       # 像素算盘 logo
+        self.assertIn("FREE<em>ANALYST</em>", page)     # 字标
 
 
 class TestApiScan(unittest.TestCase):
@@ -167,6 +205,59 @@ class TestPortFallback(unittest.TestCase):
             webapp.find_port("127.0.0.1", 1, tries=1)   # 1 号端口跑不了（特权）
 
 
+class TestPickPath(unittest.TestCase):
+    """选择路径 —— **不上传、不复制**。
+
+    浏览器拿不到真实路径，上传就等于把机密材料复制一份到别处；
+    所以改成让服务去调系统原生选择框，只回一个路径字符串。
+    测试里把 subprocess 换掉，否则跑测试会弹一个选择框出来。
+    """
+
+    @staticmethod
+    def _fake(returncode=0, stdout="", stderr=""):
+        return mock.patch.object(webapp.subprocess, "run",
+                                 return_value=mock.Mock(returncode=returncode,
+                                                        stdout=stdout, stderr=stderr))
+
+    def test_macos_returns_the_real_path(self):
+        with mock.patch.object(webapp.sys, "platform", "darwin"), \
+             self._fake(stdout="/Users/x/deals/target/\n"):
+            r = webapp.pick_path("dir")
+        self.assertTrue(r["ok"])
+        self.assertEqual(r["path"], "/Users/x/deals/target")   # 去掉尾部斜杠
+
+    def test_only_returns_a_path_nothing_else(self):
+        """返回体里只有 ok / path —— 没有内容、没有副本，材料一个字都没动。"""
+        with mock.patch.object(webapp.sys, "platform", "darwin"), \
+             self._fake(stdout="/tmp/t\n"):
+            r = webapp.pick_path("dir")
+        self.assertEqual(sorted(r.keys()), ["ok", "path"])
+
+    def test_cancel_is_not_an_error(self):
+        """用户按取消 → 不是错误，界面上不该弹红字。"""
+        with mock.patch.object(webapp.sys, "platform", "darwin"), \
+             self._fake(returncode=1, stderr="User canceled."):
+            r = webapp.pick_path("dir")
+        self.assertFalse(r["ok"])
+        self.assertTrue(r.get("cancelled"))
+        self.assertNotIn("error", r)
+
+    def test_non_macos_says_so_instead_of_pretending(self):
+        with mock.patch.object(webapp.sys, "platform", "linux"):
+            r = webapp.pick_path("dir")
+        self.assertFalse(r["ok"])
+        self.assertIn("macOS", r["error"])
+
+    def test_timeout_is_reported(self):
+        import subprocess as sp
+        with mock.patch.object(webapp.sys, "platform", "darwin"), \
+             mock.patch.object(webapp.subprocess, "run",
+                               side_effect=sp.TimeoutExpired("osascript", 600)):
+            r = webapp.pick_path("dir")
+        self.assertFalse(r["ok"])
+        self.assertIn("超时", r["error"])
+
+
 class TestHttpLayer(unittest.TestCase):
     """HTTP 那一层也测 —— **只测函数的话，路由写错发现不了。**
 
@@ -207,6 +298,21 @@ class TestHttpLayer(unittest.TestCase):
             self.assertIn("本地估值向导", body)
             self.assertEqual(r.headers.get("X-Frame-Options"), "DENY")
 
+    def test_health_advertises_endpoints(self):
+        """健康检查要自报家门 —— 页面据此发现「服务是旧进程」。"""
+        with urllib.request.urlopen(self._url("/api/health"), timeout=10) as r:
+            d = json.loads(r.read().decode())
+        self.assertTrue(d["ok"])
+        self.assertIn("pick", d["endpoints"])
+        self.assertIn("version", d)
+
+    def test_page_has_a_banner_for_a_stale_service(self):
+        """服务是旧进程时要明说 —— 实测点按钮只回 unknown endpoint 过。"""
+        page = webapp.page_html()
+        self.assertIn('id="stale"', page)
+        self.assertIn("stale.banner", page)
+        self.assertIn("showStale", page)
+
     def test_scan_endpoint(self):
         d = self._post("/api/scan", {"path": str(FITBIT)})
         self.assertTrue(d["ok"])
@@ -229,6 +335,18 @@ class TestHttpLayer(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError) as ctx:
             self._post("/api/nope", {})
         self.assertEqual(ctx.exception.code, 404)
+
+    def test_pick_endpoint_returns_a_path(self):
+        """走 HTTP 的选择路径：只回路径字符串，**没有任何文件内容**。"""
+        with mock.patch.object(webapp.sys, "platform", "darwin"), \
+             mock.patch.object(webapp.subprocess, "run",
+                               return_value=mock.Mock(returncode=0,
+                                                      stdout="/Users/x/deals/t/\n",
+                                                      stderr="")):
+            d = self._post("/api/pick", {"kind": "dir"})
+        self.assertTrue(d["ok"])
+        self.assertEqual(d["path"], "/Users/x/deals/t")
+        self.assertNotIn("files", d)
 
     def test_appraise_endpoint_end_to_end(self):
         """走 HTTP 出的报告，和直接调函数出来的必须一样（同一条路）。"""
