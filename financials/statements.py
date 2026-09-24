@@ -79,6 +79,12 @@ class Statements:
     scope: str = ""
     audited: str = ""
     period: str = ""
+    #: 金额单位。**空字符串 = 没认出来**，下游必须停下来问人。
+    #:
+    #: 放在这里是因为装载器**读过正文**（PDF 的文字层、HTML 的表格），
+    #: 单位提示就在它读过的那些页里；而调用方拿不到那些页的文本。
+    #: 认错单位是 1000 倍级的静默错误，所以宁可留空也不给默认值「元」。
+    unit: str = ""
     warnings: list[str] = field(default_factory=list)
     #: 附注里抽出来的折旧摊销（`financials/notes.py`）。
     #: **估值要它** —— 没有 D&A 就算不出 EBITDA，倍数法整条路走不通。

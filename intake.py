@@ -91,7 +91,7 @@ class Candidate:
 
 @dataclass
 class Materials:
-    """一个材料目录里认出来的东西。"""
+    """一个材料目录（**或单独一份文件**）里认出来的东西。"""
 
     directory: Path
     statements: "stm.Statements | None" = None    # financials.statements.Statements
@@ -106,8 +106,23 @@ class Materials:
     def ok(self) -> bool:
         return self.statements is not None and bool(self.detected)
 
+    @property
+    def is_file(self) -> bool:
+        return self.directory.is_file()
+
+    @property
+    def label(self) -> str:
+        """给这份材料起个名字 —— 目录名，或者（单文件时）文件名去后缀。
+
+        **真实材料常常就是一份 PDF**，不是整整齐齐一个目录。
+        这时候拿整个文件名当标的名，报告封面会变成
+        「某公司2024年审计报告.pdf」，所以去掉后缀。
+        """
+        return self.directory.stem if self.is_file else self.directory.name
+
     def render(self) -> str:
-        out = [f"材料目录　{self.directory}"]
+        head = "材料文件" if self.is_file else "材料目录"
+        out = [f"{head}　{self.directory}"]
         if self.source:
             out.append(f"  采用的来源　{self.source}")
         for kind in ("balance", "income", "cash_flow"):
@@ -133,40 +148,20 @@ class Materials:
         return "\n".join(out)
 
 
-# 单位提示：「单位：万元」「(In thousands)」「人民币千元」
-_UNIT_CN = re.compile(
-    r"单位[:：]\s*(?:人民币)?\s*(亿元|万元|千元|百万元|元"
-    r"|千美元|百万美元|万美元|美元)")
-_UNIT_WORD = (
-    ("人民币千元", "千元"), ("人民币百万元", "百万元"), ("人民币万元", "万元"),
-    ("人民币元", "元"), ("千美元", "千美元"), ("百万美元", "百万美元"),
-    ("万美元", "万美元"), ("美元", "美元"), ("万元", "万元"), ("千元", "千元"),
-)
-_UNIT_EN = (
-    (r"in\s+thousands", "千美元"), (r"in\s+millions", "百万美元"),
-    (r"\(in\s+thousands\s+of\s+u\.?s\.?\s*dollars\)", "千美元"),
-)
+# 单位提示的判据在 `financials/meta.py`（`detect_unit`）—— 那边装载器也在用，
+# 全项目只有一份，免得两边认出来的单位不一样。
 
 
 def detect_unit(text: str) -> tuple[str, str]:
     """从材料文本里认金额单位。返回 `(单位, 依据)`，认不出返回 `("", "")`。
 
-    **认不出就返回空** —— 让调用方停下来问用户，不猜。
-    猜错的代价是 1000 倍级的静默错误（千美元被当成万元）。
+    **判据只有一份**，在 `financials/meta.py`：装载器（`from_pdf`）也在用同一份。
+    两边各判一次是最坏的结果 —— 一边认出「千美元」、另一边认成「元」，
+    差了 1000 倍而且看不出来。
     """
-    if not text:
-        return "", ""
-    m = _UNIT_CN.search(text)
-    if m:
-        return m.group(1), f"正文里的「{m.group(0).strip()}」"
-    low = text[:200_000].lower()
-    for pat, unit in _UNIT_EN:
-        if re.search(pat, low):
-            return unit, f"英文材料里的「{pat}」"
-    for word, unit in _UNIT_WORD:
-        if word in text[:200_000]:
-            return unit, f"正文里的「{word}」"
-    return "", ""
+    from financials import meta
+
+    return meta.detect_unit(text)
 
 
 def _read_text(path: Path, limit: int = 400_000) -> str:
@@ -188,14 +183,6 @@ def _read_text(path: Path, limit: int = 400_000) -> str:
         t = re.sub(r"(?s)<[^>]+>", " ", t)
         t = re.sub(r"&nbsp;?", " ", t)
     return t
-
-
-#: 期间：中文材料用「2024年12月31日」，英文材料用「December 31, 2016」。
-_PERIOD_CN = re.compile(r"(19|20)\d{2}\s*[-/年]\s*\d{1,2}(?:\s*[-/月]\s*\d{1,2})?")
-_PERIOD_EN = re.compile(
-    r"(?:January|February|March|April|May|June|July|August|September|October"
-    r"|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)"
-    r"\.?\s+\d{1,2},\s*(?:19|20)\d{2}")
 
 
 #: 从文本里抓一个四位年份 —— 估值基准日/期间都可能带。
@@ -320,14 +307,14 @@ def _scan_html(paths: list[Path], unit: str,
         st = stm.load_one(win.path, LABEL[kind], unit)
         setattr(S, kind, st)
         if not S.period:
-            m = _PERIOD_CN.search(raw) or _PERIOD_EN.search(raw)
-            if m:
-                S.period = m.group(0)
+            from financials import meta
+            S.period = meta.detect_period(raw)
     from financials import meta
     text = raw + " " + " ".join(
         _labels(st) for st in (S.balance, S.income, S.cash_flow) if st)
     S.gaap = meta.detect_gaap(text)
     S.scope = meta.detect_scope(text)
+    S.unit = unit
     return S, cands, detected, unused
 
 
@@ -342,20 +329,28 @@ def _scan_excel(paths: list[Path], unit: str,
     return S, []
 
 
-def scan(directory: str | Path, unit: str = "") -> Materials:
-    """扫一个材料目录，认出三张表。
+def scan(materials: str | Path, unit: str = "") -> Materials:
+    """扫一份材料 —— **一个目录，或者单独一份文件** —— 认出三张表。
 
     `unit` 显式给了就用它；没给就自己认，认不出返回空 —— 不猜。
-    """
-    d = Path(directory).expanduser()
-    if not d.is_dir():
-        raise NotADirectoryError(f"不是一个目录：{d}")
 
-    files = sorted(
-        p for p in d.rglob("*")
-        if p.is_file() and not p.name.startswith(".")
-        and p.suffix.lower() in EXT_KIND
-    )
+    ## 为什么单文件也要支持（实测踩到）
+
+    真实材料常常就是一份 PDF（拿到的是一份审计报告，不是一个整理好的目录），
+    只吃目录的话第一句话就把人挡在门外了。单文件时把它当成"只有一份材料的
+    集合"处理，其余逻辑完全一样。
+    """
+    d = Path(materials).expanduser()
+    if d.is_file():
+        files = [d]
+    elif d.is_dir():
+        files = sorted(
+            p for p in d.rglob("*")
+            if p.is_file() and not p.name.startswith(".")
+            and p.suffix.lower() in EXT_KIND
+        )
+    else:
+        raise FileNotFoundError(f"既不是文件也不是目录：{d}")
     mat = Materials(directory=d)
     pdfs = [p for p in files if EXT_KIND[p.suffix.lower()] == "pdf"]
     excels = [p for p in files if EXT_KIND[p.suffix.lower()] == "excel"]
@@ -376,10 +371,6 @@ def scan(directory: str | Path, unit: str = "") -> Materials:
                 sniff, sniff_name = t, p.name
         u, basis = detect_unit(sniff)
         mat.unit, mat.unit_basis = u, (f"{sniff_name}｜{basis}" if u else "")
-        if not u and pdfs:
-            mat.notes.append("单位没从文件名/正文里认出来 —— "
-                             "PDF 的文字层在压缩流里，认不出是正常的，"
-                             "请用 --unit 或问答清单里的 unit 声明")
 
     # ---------- 三张表：PDF 优先，其次 Excel，最后 HTML ----------
     if pdfs:
@@ -387,6 +378,14 @@ def scan(directory: str | Path, unit: str = "") -> Materials:
         mat.unused.extend(unused)
         if S is not None:
             mat.statements, mat.source = S, "PDF"
+            # 单位／期间：装载器读正文时已经判过 —— 比从文件字节 sniff 可靠得多。
+            # 实测三份真实 PDF（H 股年报、非上市审计报告、A 股扫描件）
+            # 全都只能靠这一条认出来。
+            if not mat.unit:
+                u = getattr(S, "unit", "")
+                if u:
+                    mat.unit = u
+                    mat.unit_basis = "报表正文（装载器判定）"
             mat.candidates = [c] if c else []
             for kind in ("balance", "income", "cash_flow"):
                 st = getattr(S, kind)
@@ -418,6 +417,14 @@ def scan(directory: str | Path, unit: str = "") -> Materials:
         if S is not None:
             mat.statements, mat.source = S, "HTML"
             mat.detected = detected
+
+    # **单位：所有检测都走完了还没有，才说要用户自己声明。**
+    # 这一条放在最后（PDF 那条路要等装载器读过正文才可能认出来）——
+    # 早放会出现「注释说没认出来、上面一行却显示已认出千元」的自相矛盾。
+    if not mat.unit:
+        mat.notes.append("金额单位没认出来 —— 报表可能是千元/千美元，"
+                         "引擎默认万元，差 1000 倍。请用 --unit 声明，"
+                         "或在问答清单里把 unit 填上")
 
     if texts:
         mat.notes.append(f"{len(texts)} 份文本材料（CIM／纪要）不进三张表，"
@@ -488,7 +495,7 @@ def questions(mat: Materials, *, growth_years: int = 5) -> list[Q]:
     return [
         # ── 场景：六项不定，方法无从选 ──
         Q("target", "标的名称（报告封面上那个）", group="场景",
-          default=mat.directory.name),
+          default=mat.label),
         Q("unit", "金额单位（**错 1000 倍就是这里错**）", group="场景",
           default=mat.unit, hint="元 / 千元 / 万元 / 百万美元 / 千美元"),
         Q("purpose", "估值目的", group="场景", default="并购定价",
@@ -703,7 +710,7 @@ def build_config(mat: Materials, ans: dict[str, Answer],
     unit = raw("unit", mat.unit) or ""
     missing: list[str] = []
     cfg: dict = {
-        "target": raw("target", mat.directory.name),
+        "target": raw("target", mat.label),
         "unit": unit,
         "scenario": {
             "purpose": raw("purpose", "并购定价"),
@@ -876,7 +883,7 @@ def appraise(directory: str | Path, answers: str | Path | None = None,
     d = Path(directory).expanduser().resolve()
     try:
         mat = scan(d, unit=unit)
-    except NotADirectoryError as exc:
+    except (NotADirectoryError, FileNotFoundError) as exc:
         print(f"✗ {exc}", file=sys.stderr)
         return 1
 
@@ -901,6 +908,16 @@ def appraise(directory: str | Path, answers: str | Path | None = None,
         if bad:
             print(f"⚠ 勾稽不平 {len(bad)} 条 —— 下面的推算结果先别用，"
                   "先看是哪一行归属错了")
+            # 把最可能的原因直接指出来。实测一份 A 股审计报告：**同一页上
+            # 既有合并表又有母公司表**，OCR 抽出来的科目出现多个取值，
+            # 取值取串了 → 勾稽不平。这条提示让"不平"变成可动手的事，
+            # 而不是让人对着一个差额发呆。
+            dups = [w for w in mat.statements.warnings
+                    if "个取值" in w or "出现 2 个" in w]
+            if dups:
+                print(f"  这份材料有 {len(dups)} 个科目**出现多个取值** —— "
+                      "很可能是同一页上既有合并表又有母公司表，取值取串了。")
+                print("  先确认取的是合并那一列（合并表通常排在母公司表前面）。")
         elif unknown:
             print(f"⚠ 有 {len(unknown)} 条勾稽判不了（缺科目），"
                   "那些口径按缺口处理")
@@ -912,7 +929,9 @@ def appraise(directory: str | Path, answers: str | Path | None = None,
         print()
 
     qs = questions(mat, growth_years=growth_years)
-    tpl = d / "估值问答.txt"
+    # 单文件时清单放在它旁边，**带上文件名前缀** ——
+    # 不带的话，同一个目录里放两份材料就会互相覆盖。
+    tpl = (d.parent / f"{d.stem}-估值问答.txt") if mat.is_file else (d / "估值问答.txt")
     tpl.write_text(render_template(qs, mat), encoding="utf-8")
 
     if answers is None:
@@ -942,7 +961,7 @@ def appraise(directory: str | Path, answers: str | Path | None = None,
 
     from value import run_report
 
-    out_dir = Path(out_dir) if out_dir else d
+    out_dir = Path(out_dir) if out_dir else (d.parent if mat.is_file else d)
     stem = re.sub(r"[^\w\u4e00-\u9fff-]+", "_", str(cfg.get("target") or "估值"))
     cfg_path = out_dir / f"{stem}.config.json"
     report_path = out_dir / f"{stem}.报告.txt"

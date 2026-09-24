@@ -138,3 +138,61 @@ def detect_scope(text: str) -> str:
     if any(_flat(m) in t for m in _PARENT_ONLY):
         return "母公司报表"
     return "单体"
+
+
+#: 金额单位。中文是「单位：万元」/「人民币千元」，英文是「(In thousands)」。
+#:
+#: ## 为什么单位要单独判（实测踩到）
+#:
+#: 报表是**千美元**、引擎默认**万元** —— 认错是 1000 倍级的**静默**错误：
+#: 数看着正常，只是全部错了三个数量级。所以这层的纪律是
+#: **认不出就返回空**，让调用方停下来问人，不许猜。
+_UNIT_CN = re.compile(
+    r"单位[:：]\s*(?:人民币)?\s*(亿元|万元|千元|百万元|元"
+    r"|千美元|百万美元|万美元|美元)")
+_UNIT_WORD = (
+    ("人民币千元", "千元"), ("人民币百万元", "百万元"), ("人民币万元", "万元"),
+    ("人民币元", "元"), ("千美元", "千美元"), ("百万美元", "百万美元"),
+    ("万美元", "万美元"), ("美元", "美元"), ("万元", "万元"), ("千元", "千元"),
+)
+_UNIT_EN = (
+    (r"in\s+thousands", "千美元"), (r"in\s+millions", "百万美元"),
+)
+
+
+def detect_unit(text: str) -> tuple[str, str]:
+    """从材料正文里认金额单位。返回 `(单位, 依据)`；**认不出返回空**。"""
+    if not text:
+        return "", ""
+    m = _UNIT_CN.search(text)
+    if m:
+        return m.group(1), f"正文里的「{m.group(0).strip()}」"
+    head = text[:200_000]
+    low = head.lower()
+    for pat, unit in _UNIT_EN:
+        if re.search(pat, low):
+            return unit, f"英文材料里的「{pat}」"
+    for word, unit in _UNIT_WORD:
+        if word in head:
+            return unit, f"正文里的「{word}」"
+    return "", ""
+
+
+#: 期间：中文「2024年12月31日」，英文两种写法 ——
+#: **「December 31, 2020」和「31 December 2020」都要认。**
+#: 港股/英式报表用后者，第一版只写前者，于是某 H 股年报的期间一直判不出来。
+_PERIOD_CN = re.compile(r"(19|20)\d{2}\s*[-/年]\s*\d{1,2}(?:\s*[-/月]\s*\d{1,2}\s*日?)?")
+_PERIOD_MONTH = (r"(?:January|February|March|April|May|June|July|August|September"
+                 r"|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep"
+                 r"|Sept|Oct|Nov|Dec)")
+_PERIOD_EN = re.compile(
+    rf"(?:{_PERIOD_MONTH}\.?\s+\d{{1,2}},\s*(?:19|20)\d{{2}}"
+    rf"|\d{{1,2}}\s+{_PERIOD_MONTH}\.?,?\s+(?:19|20)\d{{2}})")
+
+
+def detect_period(text: str) -> str:
+    """从材料正文里认报表期间（资产负债表日）。**认不出返回空。**"""
+    if not text:
+        return ""
+    m = _PERIOD_CN.search(text) or _PERIOD_EN.search(text)
+    return m.group(0) if m else ""

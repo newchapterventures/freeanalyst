@@ -301,5 +301,41 @@ class TestAppraiseFlow(unittest.TestCase):
             self.assertIn("materials", cfg)
 
 
+class TestSingleFile(unittest.TestCase):
+    """**真实材料常常就是一份 PDF，不是一个整理好的目录。**
+
+    拿真实标的跑第一遍时踩到的第一个坑：只吃目录的话，第一句话就把人挡在门外。
+    """
+
+    def test_scan_accepts_a_single_file(self):
+        mat = intake.scan(FITBIT / "R2.htm")
+        self.assertTrue(mat.is_file)
+        self.assertEqual(mat.detected.get("balance"), "R2.htm")
+
+    def test_label_drops_the_suffix(self):
+        mat = intake.scan(FITBIT / "R2.htm")
+        self.assertEqual(mat.label, "R2")
+
+    def test_template_lands_next_to_the_file(self):
+        """清单放在材料旁边，**带上文件名前缀** —— 否则同目录两份材料会互相覆盖。"""
+        with tempfile.TemporaryDirectory() as d:
+            src = Path(d) / "某标的年报.htm"
+            src.write_text(
+                "<table>"
+                "<tr><td>货币资金</td><td>100</td></tr>"
+                "<tr><td>应收账款</td><td>200</td></tr>"
+                "<tr><td>存货</td><td>50</td></tr>"
+                "<tr><td>资产总计</td><td>1000</td></tr>"
+                "<tr><td>负债合计</td><td>400</td></tr>"
+                "<tr><td>所有者权益合计</td><td>600</td></tr>"
+                "</table>", encoding="utf-8")
+            self.assertEqual(intake.appraise(src), 0)
+            self.assertTrue((Path(d) / "某标的年报-估值问答.txt").exists())
+
+    def test_missing_path_says_so(self):
+        with self.assertRaises(FileNotFoundError):
+            intake.scan("/tmp/根本没有这个文件.pdf")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

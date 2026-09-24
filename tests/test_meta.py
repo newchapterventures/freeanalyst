@@ -105,5 +105,47 @@ class TestScope(unittest.TestCase):
         self.assertEqual(meta.detect_scope(""), "未判定")
 
 
+class TestDetectUnit(unittest.TestCase):
+    """单位认错是 1000 倍级的**静默**错误 —— 认不出必须返回空，不许猜。"""
+
+    def test_chinese_declaration(self):
+        self.assertEqual(meta.detect_unit("编制单位：某公司　单位：万元")[0], "万元")
+
+    def test_chinese_word(self):
+        self.assertEqual(meta.detect_unit("人民币千元")[0], "千元")
+
+    def test_english_in_thousands(self):
+        self.assertEqual(meta.detect_unit("(In thousands, except share data)")[0],
+                         "千美元")
+
+    def test_english_in_millions(self):
+        self.assertEqual(meta.detect_unit("(In millions)")[0], "百万美元")
+
+    def test_nothing_found_returns_empty(self):
+        self.assertEqual(meta.detect_unit("一段没有任何单位提示的话")[0], "")
+
+    def test_empty(self):
+        self.assertEqual(meta.detect_unit(""), ("", ""))
+
+
+class TestDetectPeriod(unittest.TestCase):
+    def test_chinese(self):
+        self.assertEqual(meta.detect_period("2022年12月31日"), "2022年12月31日")
+
+    def test_chinese_numeric(self):
+        self.assertEqual(meta.detect_period("2024-12-31"), "2024-12-31")
+
+    def test_english_month_first(self):
+        self.assertEqual(meta.detect_period("December 31, 2016"), "December 31, 2016")
+
+    def test_english_day_first(self):
+        """港股/英式报表写「31 December 2020」——
+        只认「December 31, 2020」时，某 H 股年报的期间一直判不出来。"""
+        self.assertEqual(meta.detect_period("31 December 2020"), "31 December 2020")
+
+    def test_empty(self):
+        self.assertEqual(meta.detect_period(""), "")
+
+
 if __name__ == "__main__":
     unittest.main()
