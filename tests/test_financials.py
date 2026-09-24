@@ -184,5 +184,54 @@ class TestIndirectMethodRules(unittest.TestCase):
         self.assertTrue(r.ok)
 
 
+class TestScopeEvidence(unittest.TestCase):
+    """判口径的证据必须包含**表标题** —— 标题印在页面正文里，不在行标签里。
+
+    实测踩到：一份 176 页的上市公司年报，`from_pdf` 只把行标签当证据，
+    行标签里有「资产总计」「短期借款」却没有「合并资产负债表」，
+    于是被兜底判成「单体」—— 而它的三张表其实是**合并**口径。
+    口径错比数字错危险：数字错了勾稽会不平，口径错了无声无息。
+    """
+
+    @staticmethod
+    def _st(*labels: str):
+        from types import SimpleNamespace
+        return SimpleNamespace(rows=[SimpleNamespace(label=x) for x in labels])
+
+    def test_title_in_page_text_decides_the_scope(self):
+        from financials import meta
+        from financials.from_pdf import evidence_text
+        text = evidence_text("合并资产负债表　编制单位：某公司　单位：百万元",
+                             (self._st("资产总计", "短期借款"),))
+        self.assertEqual(meta.detect_scope(text), "合并")
+
+    def test_parent_titles_are_not_mistaken_for_consolidated(self):
+        from financials import meta
+        from financials.from_pdf import evidence_text
+        text = evidence_text("母公司资产负债表", (self._st("资产总计"),))
+        self.assertEqual(meta.detect_scope(text), "母公司报表")
+
+    def test_toc_decides_when_the_header_text_is_scrambled(self):
+        """正文表头被抽乱时，靠**目录**判口径。
+
+        实测：同一份报告里「中期合并资产负债表」被抽成「中期公司资产负债表」，
+        「四、财务报表」被抽成「表报务财四、」；而目录里写的是规范的
+        「中期合并资产负债表109」。
+        """
+        from financials import meta
+        from financials.from_pdf import evidence_text
+        text = evidence_text("中期公司资产负债表　表报务财四、",
+                             (self._st("资产总计"),),
+                             toc_text="中期合并资产负债表109 中期合并利润表112")
+        self.assertEqual(meta.detect_scope(text), "合并")
+
+    def test_labels_alone_would_miss_it(self):
+        """反证：只给行标签就判不出 —— 这正是原来那条路的病根。"""
+        from financials import meta
+        from financials.from_pdf import evidence_text
+        self.assertEqual(meta.detect_scope(evidence_text("", (self._st("资产总计"),))),
+                         "单体")
+
+
 if __name__ == "__main__":
     unittest.main()

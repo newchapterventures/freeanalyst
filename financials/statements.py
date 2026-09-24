@@ -67,6 +67,27 @@ class StatementSet:
     conflicts: list[str] = field(default_factory=list)
 
 
+#: **利润表**的映射率低于这个值，就认为这张表没被读懂。
+#:
+#: 只对利润表用"映射率"这个判据，另外两张表各有更准的判据：
+#:   * 资产负债表 —— 勾稽（资产 = 负债 + 权益）盯着，那比映射率更能说明问题；
+#:   * 现金流量表 —— 它的行大多是明细小项，我们不映射也不影响用。
+#:     实测 Fitbit 的现金流量表是 24/61（**39%**），但折旧摊销与经营现金流都取到了、
+#:     三条勾稽全平 —— 按 50% 一刀切会**误报**。
+#:     **一个会喊狼来了的检查，比没有检查更坏。**
+MIN_MAPPING_RATE = 0.5
+
+#: 引擎离不了的科目（缺了就算不出估值）—— 这才是"表没读懂"的主判据。
+#: 用**科目**判比用**比率**判准：比率低不一定是问题（明细行多而已），
+#: 而少一个关键科目，对应的估值方法就是真的跑不起来。
+KEY_FIELDS: tuple[tuple[Field, str], ...] = (
+    (Field.REVENUE, "营业收入"),
+    (Field.OPERATING_INCOME, "营业利润"),
+    (Field.DEPRECIATION_AMORTIZATION, "折旧与摊销"),
+    (Field.CFO, "经营活动产生的现金流量净额"),
+)
+
+
 @dataclass
 class Statements:
     """三张表 + 口径声明。"""
@@ -89,6 +110,69 @@ class Statements:
     #: 附注里抽出来的折旧摊销（`financials/notes.py`）。
     #: **估值要它** —— 没有 D&A 就算不出 EBITDA，倍数法整条路走不通。
     da: object | None = None
+
+    def mapping_rates(self) -> list[tuple[str, int, int]]:
+        """每张表的映射情况：`[(表名, 映射行数, 总行数)]`。"""
+        out: list[tuple[str, int, int]] = []
+        for name, st in (("资产负债表", self.balance), ("利润表", self.income),
+                         ("现金流量表", self.cash_flow)):
+            if st is not None:
+                out.append((name, sum(1 for r in st.rows if r.field is not None),
+                            len(st.rows)))
+        return out
+
+    def missing_key_fields(self) -> list[str]:
+        """引擎离不了的科目里，哪些**没映射上**。"""
+        inc = self.income.fields if self.income else {}
+        cf = self.cash_flow.fields if self.cash_flow else {}
+        da = self.da_total()
+        out = []
+        for f, name in KEY_FIELDS:
+            if f is Field.DEPRECIATION_AMORTIZATION:
+                # D&A 可以在利润表、现金流量表或附注里 —— 口径就一个：`da_total()`
+                if da is None:
+                    out.append(name)
+            elif f is Field.CFO:
+                if cf.get(f) is None:
+                    out.append(name)
+            elif f not in inc:
+                out.append(name)
+        return out
+
+    def mapping_warnings(self) -> list[str]:
+        """「这张表没读懂」的**显式警告** —— 任何行业都用得上。
+
+        ## 为什么必须显式
+
+        实测一份 176 页的保险公司中期报告：利润表 8/76、现金流量表 7/35，
+        收入 / 营业利润 / 折旧摊销**全都没映射上**。这时引擎的表现是**安静**的：
+        预测参考全是「数据不足」、乘数四个指标全是「推不出」、EBITDA 算不出来 ——
+        报告照样出得来，只是没有估值结论。人会以为"这份材料本来就缺数"。
+
+        缺就缺，但要说出来：这是**这张表没被读懂**，不是报表里没有。
+
+        ## 判据用"缺科目"而不是"看比率"（实测纠正过）
+
+        一开始两条都用了，结果 **Fitbit 被误报**：它的现金流量表 24/61（39%）
+        低于 50%，可折旧摊销与经营现金流都取到了、三条勾稽全平 —— 那份材料是健康的。
+        明细行多不等于没读懂。所以现在：比率只对**利润表**看（它的行都该有科目），
+        其余靠"关键科目缺没缺"这个准得多的判据。
+        """
+        warns: list[str] = []
+        for name, mapped, total in self.mapping_rates():
+            if name != "利润表" or not total:
+                continue
+            if mapped / total < MIN_MAPPING_RATE:
+                warns.append(
+                    f"⚠ 利润表只映射上 {mapped}/{total} 行（{mapped / total:.0%}）"
+                    f" —— 低于 {MIN_MAPPING_RATE:.0%}，**这张表很可能没被读懂**"
+                    "（科目体系不在覆盖范围内，例如金融业报表）")
+        missing = self.missing_key_fields()
+        if missing:
+            warns.append("→ 关键科目没映射上：" + "、".join(missing) +
+                         " —— EBITDA、乘数法基数与预测参考都会缺，"
+                         "**报告里的估值结论不可用**")
+        return warns
 
     def checks(self) -> list[art.Articulation]:
         out: list[art.Articulation] = []
@@ -172,6 +256,15 @@ class Statements:
             self.cash_flow.fields.get(Field.NET_INCOME),
             self.cash_flow.fields.get(Field.CFO),
         )
+
+    def da_total(self) -> float | None:
+        """折旧摊销合计 —— **全项目唯一取数口径**（公开入口）。
+
+        `history()`（历史比率）、`intake`（EBITDA）、`datasources`（可比公司）
+        都该从这里取。三处各写一遍的代价实测过：`intake` 那处只看了利润表，
+        于是"折旧摊销在现金流量表里"的材料 EBITDA 直接算不出来，乘数法跟着空掉。
+        """
+        return self._da_total()
 
     def _da_total(self) -> float | None:
         """折旧摊销合计。

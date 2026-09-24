@@ -331,6 +331,30 @@ def _resolve_conflicts(st: stm.StatementSet,
             f"—— 年报里合并表排在母公司表前面。其余：{others}")
 
 
+def evidence_text(page_text: str, statements, toc_text: str = "") -> str:
+    """判会计准则 / 口径用的证据文本。
+
+    ## 一、标题在**页面正文**里，不在行标签里（实测踩到）
+
+    以前这里只用 `r.label`（行标签）：行标签里有「资产总计」「短期借款」，
+    却没有「合并资产负债表」这个**表标题** —— 而口径恰恰是标题说了算。
+    于是 176 页的上市公司年报因为标题读不到，被兜底判成「单体」，
+    而它的三张表其实是**合并**口径。
+
+    ## 二、正文表头本身也可能是乱的，所以还要带**目录**（实测踩到）
+
+    同一份报告里，正文表头的文字层抽出来是错的：
+
+        真标题「中期合并资产负债表」  →  抽出来「中期公司资产负债表」（少了「合并」）
+        「四、财务报表」                →  抽成「表报务财四、」（字符顺序乱了）
+
+    目录里的写法却是规范的（`中期合并资产负债表109`）。所以证据要三层：
+    目录 + 表所在页正文 + 行标签 —— 少一层就可能判错，而**口径错是无声的**。
+    """
+    labels = " ".join(r.label for st in statements if st for r in st.rows)
+    return f"{toc_text} {page_text} {labels}"
+
+
 def load_pdf_statements(path: str | Path, unit: str = "元") -> stm.Statements:
     """从一份 PDF（年报 / 审计报告）装载三张表。"""
     p = Path(path)
@@ -391,10 +415,12 @@ def load_pdf_statements(path: str | Path, unit: str = "元") -> stm.Statements:
     # 写死 scope="合并" 的时候：某非上市公司那份**非上市单体审计报告**被报成合并。
     from . import meta
 
-    # **把三张表的标签并起来判一次** —— 逐表判会让第一张判出的
-    # 「未判定」挡住后面几张表的信息。
-    text = " ".join(r.label for st in (S.balance, S.income, S.cash_flow)
-                    if st for r in st.rows)
+    # **把三层证据并起来判一次**：目录 + 表所在页正文 + 行标签。
+    # 逐表判会让第一张判出的「未判定」挡住后面几张表的信息；
+    # 只给标签会漏掉表标题；只给表页正文又会被乱掉的文字层带偏（见 evidence_text）。
+    toc_text = " ".join(pg.text for pg in doc.pages[:8])
+    text = evidence_text(page_text, (S.balance, S.income, S.cash_flow),
+                         toc_text=toc_text)
     if not S.gaap:
         S.gaap = meta.detect_gaap(text)
     if not S.scope:

@@ -143,6 +143,10 @@ class Materials:
             out.append("  没用上的文件（**不是静默跳过**）：")
             for u in self.unused:
                 out.append(f"    · {u}")
+        # 映射率过低：把"表没读懂"顶到扫描结果里，别让人以为材料本来就缺数。
+        if self.statements is not None:
+            for w in self.statements.mapping_warnings():
+                out.append("  " + w)
         for n in self.notes:
             out.append(f"  注：{n}")
         return "\n".join(out)
@@ -165,7 +169,28 @@ def detect_unit(text: str) -> tuple[str, str]:
 
 
 def _read_text(path: Path, limit: int = 400_000) -> str:
-    """尽量读出文件的纯文本（HTML 去标签）。读不出就返回空串。"""
+    """尽量读出文件的纯文本（HTML 去标签、PDF 取文字层）。读不出就返回空串。
+
+    ## PDF 不能当字节解码（实测踩到）
+
+    这条以前只做「读字节 → 试几种编码」，对 PDF 就是一堆
+    `%PDF-1.6 /Filter/FlateDecode ... stream` 二进制乱码。
+    而**口径判定（合并 / 单体、准则）就跑在这堆乱码上**：
+    实测一份 176 页的上市公司年报，因为读不到「合并资产负债表」这个标题，
+    被兜底判成「单体」—— 而它的三张表其实是合并口径。
+
+    口径错比数字错危险：数字错了勾稽会不平，口径错了无声无息。
+
+    读不出来时**返回空串**，不要返回乱码：空串会让口径判成「未判定」，
+    乱码会让它判出一个看起来很具体的错结论。
+    """
+    if path.suffix.lower() == ".pdf":
+        try:
+            from ingest import pdf as ip
+            doc = ip.extract_pdf(path)
+            return " ".join((pg.text or "") for pg in doc.pages)[:limit]
+        except Exception:                              # noqa: BLE001
+            return ""
     try:
         raw = path.read_bytes()[:limit]
     except OSError:
@@ -177,6 +202,9 @@ def _read_text(path: Path, limit: int = 400_000) -> str:
         except (UnicodeDecodeError, LookupError):
             continue
     else:
+        return ""
+    # 二进制伪装成文本（比如后缀写错、或没走的 PDF 分支）：宁可当"读不出"
+    if t.count("\x00") > 40 or t.lstrip()[:5] == "%PDF-":
         return ""
     if path.suffix.lower() in (".htm", ".html"):
         t = re.sub(r"(?is)<(script|style).*?</\1>", " ", t)
@@ -312,9 +340,15 @@ def _scan_html(paths: list[Path], unit: str,
     from financials import meta
     text = raw + " " + " ".join(
         _labels(st) for st in (S.balance, S.income, S.cash_flow) if st)
-    S.gaap = meta.detect_gaap(text)
-    S.scope = meta.detect_scope(text)
-    S.unit = unit
+    # **装载器判出来的口径不覆盖**：`from_pdf` 手里有"三张表所在页的正文"，
+    # 那里才有「合并资产负债表」这个标题；这里只有文件前 2 万字（封面/目录）。
+    # 以前这里无条件覆盖，于是好端端的「合并」被这层的兜底值改成「单体」。
+    if not S.gaap:
+        S.gaap = meta.detect_gaap(text)
+    if not S.scope:
+        S.scope = meta.detect_scope(text)
+    if not S.unit:
+        S.unit = unit
     return S, cands, detected, unused
 
 
@@ -436,7 +470,17 @@ def scan(materials: str | Path, unit: str = "") -> Materials:
 
 @dataclass
 class Q:
-    """一个必须由人回答的问题。"""
+    """一个必须由人回答的问题。
+
+    ## options 与 suggest：**能确定的就不要人打字**
+
+    `options` 是**封闭集合**（买方/卖方/中立、合并/单体……）→ 界面上做成下拉，只能选。
+    `suggest` 是**建议值**（元/千元/万元……、CNY/USD/HKD……）→ 做成可编辑下拉：
+    能点选，也能写清单里没有的那个。
+
+    判断标准很简单：**这个答案是不是从有限几种里挑一个**。是就用 options；
+    若有限但不封闭（单位、货币会冒出新的），用 suggest。两者都不用，才留给手打。
+    """
 
     key: str
     label: str
@@ -444,6 +488,16 @@ class Q:
     default: str = ""
     reference: str = ""
     group: str = "假设"
+    #: 封闭选项：界面上必须做成下拉，不许手打
+    options: tuple[str, ...] = ()
+    #: 建议值：界面上做成"可编辑下拉"，能点选也能自行填写
+    suggest: tuple[str, ...] = ()
+    #: 写法/单位：`"%"` = 界面上以百分数显示（框里带 %，人只填数值）。
+    #: 引擎拿到的字符串**必须自带单位** —— 光一个 `8.5` 会被当成 850%（100 倍级静默错误）。
+    unit: str = ""
+    #: 这个数**从哪来**（见 ORIGINS）。界面上会标出来，txt 清单里也会写。
+    #: 不标来源的字段，等于让人分不清"报表里有的"和"公司之外要我自己找的"。
+    origin: str = ""
 
     def line(self) -> str:
         pad = " " * max(1, 24 - len(self.key))
@@ -452,7 +506,120 @@ class Q:
             tail += f"　｜ 参考：{self.reference}"
         if self.hint:
             tail += f"　｜ {self.hint}"
+        if self.options:
+            tail += f"　｜ 可选：{' / '.join(self.options)}"
+        if self.unit == "%":
+            # 这句会写进 txt 清单，所以必须说**txt 那条路的**规矩：
+            # 那边没有"只填数值就补 %"的规则（那是网页向导的便利），
+            # 照网页的说法写 `8.5` 会变成 850%。
+            tail += "　｜ 按百分数填：写 8.5% 或 0.085（不要只写 8.5）"
+        elif self.unit:
+            tail += f"　｜ 单位：{self.unit}"
+        if self.origin:
+            tail += f"　｜ 【{self.origin}】"
         return f"{self.key}{pad}= {self.default}{tail}"
+
+
+#: 字段的**来源类别** —— 界面上要标出来。
+#: 不标，人就分不清"报表里有的"（工具必须给）与"公司之外要我自己找的"（工具不该编）。
+ORIGIN_FILING = "财报"        # 报表里直接有的数
+ORIGIN_DERIVED = "财报推算"    # 按报表推出来的，口径要人确认
+ORIGIN_EXTERNAL = "外部"       # 公司之外的市场信息，由用户提供
+ORIGIN_JUDGMENT = "判断"       # 用户对未来的判断，报表不涉及
+ORIGINS = (ORIGIN_FILING, ORIGIN_DERIVED, ORIGIN_EXTERNAL, ORIGIN_JUDGMENT)
+
+
+#: 比率的合理上界 —— 超过就当"取到的行不对"，不给参考值。
+#: 有息债务成本超过 50%、有效税率超过 60%，都说明**取到的科目错行了**。
+#: 给一个荒谬的数（还带"请确认"）比不给更坏：它看起来可用，会被直接抄进假设。
+_MAX_DEBT_COST = 0.50
+_MAX_TAX_RATE = 0.60
+
+
+def _tax_reference(mat: Materials) -> tuple[str, str]:
+    """所得税率的参考 —— 报表里"可能有"：有的年报直接给，有的要推。
+
+    返回 `(参考文字, 来源类别)`。四种情况都照实说，**不编一个看起来合理的税率**：
+      * 所得税费用与利润总额都在、且算出来合理 → 有效税率（**请确认**）
+      * 利润总额为负 → 有效税率不适用（两个负数相除出来的比率没有意义）
+      * 算出来超过 60% → 不合理，说明取到的行不对
+      * 缺行 → 材料里没有所得税费用/利润总额
+    """
+    from financials.canonical import Field
+    st = mat.statements
+    inc = st.income.fields if (st and st.income) else {}
+    tax = inc.get(Field.INCOME_TAX)
+    pre = inc.get(Field.PRETAX_INCOME)
+    if tax is None or pre is None:
+        return "材料里没有所得税费用/利润总额 —— 请按法定税率填", ORIGIN_EXTERNAL
+    if pre <= 0:
+        return ("本期利润总额为负，有效税率不适用 —— 请按法定税率填",
+                ORIGIN_EXTERNAL)
+    rate = tax / pre
+    if not (0 < rate <= _MAX_TAX_RATE):
+        return (f"所得税费用 {tax:,.0f} ÷ 利润总额 {pre:,.0f} = {rate:.2%} —— "
+                "这个税率**不合理**（多半取到了别的行），不给出有效税率；"
+                "请按法定税率填", ORIGIN_EXTERNAL)
+    return (f"有效税率 = 所得税费用 {tax:,.0f} ÷ 利润总额 {pre:,.0f} "
+            f"= {rate:.2%}（**请确认**）", ORIGIN_DERIVED)
+
+
+def _debt_cost_reference(mat: Materials) -> tuple[str, str]:
+    """债务成本的参考 —— **多数利润表不单列利息费用**，所以常常是"没有数据"。
+
+    有就按隐含利率给（利息费用 ÷ 有息负债，请确认）；没有就说没有，
+    让用户填实际借款利率或 LPR+利差。**不拿行业平均利率顶上。**
+
+    ## 荒谬的数不给（实测踩到）
+
+    一份上市公司年报里「利息费用」有 `-74` 与 `214` 两个取值（合并表 / 母公司表），
+    取到 `-74` 时算出来的债务成本是 **−0.41%**。负的债务成本是无意义的，
+    但它挂着"请确认"的标签，看起来就像一个可以直接用的参考值 —— 最坏的那类错。
+    """
+    from financials.canonical import Field
+    st = mat.statements
+    inc = st.income.fields if (st and st.income) else {}
+    bal = st.balance.fields if (st and st.balance) else {}
+    ie = inc.get(Field.INTEREST_EXPENSE)
+    debt = sum(v for v in (bal.get(Field.SHORT_TERM_DEBT),
+                           bal.get(Field.LONG_TERM_DEBT)) if v)
+    if ie is None:
+        return ("材料里没有利息费用（报表未单列）—— "
+                "请按实际借款利率或 LPR+利差填", ORIGIN_EXTERNAL)
+    if not debt:
+        return ("材料里没有有息负债（或为 0），算不出隐含利率 —— "
+                "请按实际借款利率或 LPR+利差填", ORIGIN_EXTERNAL)
+    rate = ie / debt
+    if not (0 < rate <= _MAX_DEBT_COST):
+        return (f"利息费用 {ie:,.0f} ÷ 有息负债 {debt:,.0f} = {rate:.2%} —— "
+                "这个数**不合理**（利息费用为负、或取到了别的行），"
+                "不给出隐含利率；请按实际借款利率或 LPR+利差填", ORIGIN_EXTERNAL)
+    return (f"隐含利率 = 利息费用 {ie:,.0f} ÷ 有息负债 {debt:,.0f} "
+            f"= {rate:.2%}（**请确认**）", ORIGIN_DERIVED)
+
+
+def _debt_reference(mat: Materials) -> str:
+    """有息负债的参考 —— 这是**财报里有的数**，工具必须给出来（不是让人去翻表）。"""
+    from financials.canonical import Field
+    st = mat.statements
+    bal = st.balance.fields if (st and st.balance) else {}
+    got = [(f.value, bal[f]) for f in (Field.SHORT_TERM_DEBT, Field.LONG_TERM_DEBT)
+           if bal.get(f) is not None]
+    if not got:
+        return "材料里没有有息负债（本期无借款，或报表未单列）"
+    return "财报：" + " ＋ ".join(f"{n} {v:,.0f}" for n, v in got)
+
+
+def _choices(detected: str, *known: str) -> tuple[str, ...]:
+    """下拉选项：**把材料里推出来的那个值放第一个**，后面跟常见取值。
+
+    这样引擎认出来的口径永远选得中 —— 下拉框不会出现"当前值不在选项里、
+    于是显示成空白"这种哑巴状态（哪怕它是个不常见的写法）。
+    """
+    d = (detected or "").strip()
+    out = [d] if d and d not in known else []
+    out += [k for k in known if k not in out]
+    return tuple(out)
 
 
 #: 这些键不填，对应的方法就整块不跑 —— 在报告里明说，不假装跑过了。
@@ -485,6 +652,18 @@ def questions(mat: Materials, *, growth_years: int = 5) -> list[Q]:
         return str(getattr(mat.statements, attr, "") or "") if mat.statements else ""
 
     rev = hist.get("历史实际收入")
+    # 预测参数的参考值 —— **必须有"现在是多少"垫底**，否则等于让人凭空填。
+    # 收入增长率推不出来（材料只给了一期，没有第二个年度可比）：
+    # 那就是数据不足，说清楚，别拿"行业增速"之类的猜测顶上。
+    growth_ref = (f"本期 {rev:,.0f} {mat.unit or ''} · 材料只有一期，"
+                  "历史增长率推不出" if rev is not None else
+                  "本期收入未取到；且材料只有一期，历史增长率推不出")
+    # 折现率那两栏：**报表里可能有、也可能没有** —— 有就给数（标明"请确认"），
+    # 没有就说没有，让人按法定税率 / LPR+利差 填。不编一个看起来合理的数。
+    tax_ref, tax_origin = _tax_reference(mat)
+    debt_cost_ref, debt_cost_origin = _debt_cost_reference(mat)
+    debt_ref = _debt_reference(mat)
+
     # **默认值不能是「，，，，」**：那不是"空"，会被读成一个值，
     # 后面按年数对不上报错，用户看到的是个莫名其妙的提示。
     blank = ""
@@ -492,75 +671,118 @@ def questions(mat: Materials, *, growth_years: int = 5) -> list[Q]:
     # 给错了用户看得见（在问答清单里明写着），不给他就得自己想起来。
     cur_default = "USD" if "US GAAP" in (cur("gaap") or "") else "CNY"
 
-    return [
+    qs = [
         # ── 场景：六项不定，方法无从选 ──
         Q("target", "标的名称（报告封面上那个）", group="场景",
           default=mat.label),
         Q("unit", "金额单位（**错 1000 倍就是这里错**）", group="场景",
-          default=mat.unit, hint="元 / 千元 / 万元 / 百万美元 / 千美元"),
+          default=mat.unit, hint="点选一个；清单里没有的单位可以自己写",
+          suggest=("元", "千元", "万元", "百万元", "千美元", "百万美元")),
         Q("purpose", "估值目的", group="场景", default="并购定价",
-          hint="融资定价 / 并购定价 / 投后NAV / 税务合规"),
-        Q("stance", "立场", group="场景", default="买方", hint="买方 / 卖方 / 中立"),
+          options=("并购定价", "融资定价", "投后NAV", "税务合规")),
+        Q("stance", "立场", group="场景", default="买方",
+          options=("买方", "卖方", "中立")),
         Q("stage", "发展阶段", group="场景", default="成熟企业",
-          hint="早期项目 / 成长企业 / 成熟企业 / 业主经营"),
+          options=("成熟企业", "早期项目", "成长企业", "业主经营")),
         Q("valuation_date", "估值基准日", group="场景",
           default=cur("period") or str(getattr(mat.statements, "period", "") or ""),
-          hint="多期数据按这个日期对齐"),
+          hint="多期数据按这个日期对齐", suggest=(cur("period"),) if cur("period") else ()),
         Q("currency", "货币", group="场景", default=cur_default,
-          hint="CNY / USD / HKD"),
-        Q("equity_scope", "权益范围", group="场景", default="100%"),
+          hint="点选一个，或自己写", suggest=("CNY", "USD", "HKD", "EUR", "SGD")),
+        Q("equity_scope", "权益范围", group="场景", default="100%", unit="%"),
 
-        # ── 口径：材料里推出来的，**可以覆盖** ──
+        # ── 口径：材料里推出来的，**可以覆盖**（下拉里第一个就是推出来的那个值）──
         Q("gaap", "会计准则（材料推出来的，不对就改）", group="口径",
-          default=cur("gaap"), hint="CAS / US GAAP / IFRS"),
+          default=cur("gaap"), options=_choices(cur("gaap"), "CAS", "US GAAP", "IFRS")),
         Q("scope", "合并 or 单体（不对就改）", group="口径",
-          default=cur("scope"), hint="合并 / 单体 / 母公司报表"),
+          default=cur("scope"), options=_choices(cur("scope"), "合并", "单体", "母公司报表")),
         Q("audited", "审计状态（材料推出来的，不对就改）", group="口径",
-          default=cur("audited"), hint="已审计 / 未审计"),
+          default=cur("audited"), options=_choices(cur("audited"), "已审计", "未审计")),
 
         # ── 折现率：WACC 的每一项都要来源 ──
-        Q("risk_free", "无风险利率", group="折现率", hint="对应货币的长期国债"),
-        Q("equity_risk_premium", "股权风险溢价", group="折现率"),
+        # **公司之外的参数由人给，工具只写清该给什么**：
+        # 无风险利率 / 股权风险溢价 / beta 来自市场，尽调材料里不会有。
+        # 硬从报表凑一个，就是编数据。
+        Q("risk_free", "无风险利率", group="折现率", unit="%",
+          hint="对应货币的长期国债",
+          reference="由你提供 —— 对应货币的长期国债收益率（公司之外，工具不提供）"),
+        Q("equity_risk_premium", "股权风险溢价", group="折现率", unit="%",
+          reference="由你提供 —— 成熟市场股权风险溢价 / 国别风险溢价（公司之外）"),
         Q("beta_unlevered", "去杠杆 beta", group="折现率",
-          hint="上市可比公司的无杠杆 beta"),
-        Q("cost_of_debt", "债务成本", group="折现率", hint="实际借款利率或 LPR+利差"),
-        Q("tax_rate", "所得税率", group="折现率", reference="按材料口径"),
-        Q("debt", "有息负债（**市值口径**，WACC 用）", group="折现率"),
-        Q("equity", "股权价值（市值口径，WACC 用）", group="折现率"),
+          hint="上市可比公司的无杠杆 beta",
+          reference="由你提供 —— 可比上市公司去杠杆 beta（第 4 步可比公司未接入）"),
+        Q("cost_of_debt", "债务成本", group="折现率", unit="%",
+          hint="实际借款利率或 LPR+利差",
+          reference=debt_cost_ref, origin=debt_cost_origin),
+        Q("tax_rate", "所得税率", group="折现率", unit="%",
+          reference=tax_ref, origin=tax_origin),
+        Q("debt", "有息负债（**市值口径**，WACC 用）", group="折现率",
+          reference=debt_ref),
+        Q("equity", "股权价值（市值口径，WACC 用）", group="折现率",
+          reference="由你提供 —— 市值口径，材料里没有（未上市更没有）"),
 
         # ── 预测：这里是判断，不是算 ──
         Q("growth", f"{growth_years} 年收入增长率（逗号分隔）", group="预测",
-          default=blank, hint="逐年给。只给一个数 = 全期沿用同一个"),
+          default=blank, hint="逐年给。只给一个数 = 全期沿用同一个", unit="%",
+          reference=growth_ref),
         Q("ebitda_margin", f"{growth_years} 年 EBITDA 率（逗号分隔）", group="预测",
-          reference=ref("历史 EBITDA 率")),
+          reference=ref("历史 EBITDA 率"), unit="%"),
         Q("da_pct_revenue", "折旧摊销占收入比", group="预测",
-          reference=ref("历史折旧摊销占收入比")),
+          reference=ref("历史折旧摊销占收入比"), unit="%"),
         Q("capex_pct_revenue", "资本开支占收入比", group="预测",
-          reference=ref("历史资本开支占收入比")),
+          reference=ref("历史资本开支占收入比"), unit="%"),
         Q("nwc_pct_revenue", "净营运资本占收入比", group="预测",
-          reference=ref("历史净营运资本占收入比")),
+          reference=ref("历史净营运资本占收入比"), unit="%"),
         Q("terminal_growth", "永续增长率", group="预测",
-          hint="上界是长期名义 GDP 增速，引擎会拦"),
+          hint="上界是长期名义 GDP 增速，引擎会拦", unit="%",
+          reference="材料里推不出（需长期名义 GDP 增速，属外部数据）"),
 
         # ── 乘数法 ──
         Q("metric_name", "乘数用的指标", group="乘数法", default="EBITDA",
-          hint="EBITDA / EBIT / 收入 / SDE"),
+          options=("EBITDA", "EBIT", "收入", "SDE"),
+          reference=metric_reference(mat, mat.unit)),
         Q("multiple_low", "倍数下沿", group="乘数法", hint="来自可比公司分位数"),
         Q("multiple_mid", "倍数中枢", group="乘数法"),
         Q("multiple_high", "倍数上沿", group="乘数法"),
 
         # ── 可选：不填就整块不跑，报告里会说 ──
-        Q("sens_wacc", "敏感性网格 · WACC 各档（逗号分隔）", group="可选"),
-        Q("sens_growth", "敏感性网格 · 永续增长率各档（逗号分隔）", group="可选"),
+        Q("sens_wacc", "敏感性网格 · WACC 各档（逗号分隔）", group="可选", unit="%"),
+        Q("sens_growth", "敏感性网格 · 永续增长率各档（逗号分隔）", group="可选", unit="%"),
         Q("exit_multiple", "退出倍数交叉验证（如 12）", group="可选"),
         Q("ask_price", "对方要价（填了就出反向估值）", group="可选"),
         Q("advisor_tickers", "可比公司代码（逗号分隔，做假设参谋）", group="可选",
           hint="如 LEA, MGA, BWA —— 走公开域取 EDGAR 数据"),
         Q("advisor_market", "可比公司市场", group="可选", default="us",
-          hint="us / sh / sz / hk"),
+          options=("us", "sh", "sz", "hk")),
+        # 这三个就是引擎支持的全部（valuation/advisor.py 的 METRIC_FUNCS），
+        # 有测试盯着它们一致 —— 免得下拉里给出引擎不认的指标。
         Q("advisor_metric", "参谋对照的指标", group="可选", default="revenue_cagr",
-          hint="revenue_cagr / ebitda_margin 等"),
+          options=("revenue_cagr", "ebitda_margin", "revenue_scale"),
+          hint="引擎只支持这三项"),
     ]
+
+    # 每个字段都要回答"这个数从哪来"。放在这里而不是散在每个 Q(...) 里，
+    # 是为了让这张表**一眼能看完**：谁是报表里有的、谁是公司之外的、谁是你的判断。
+    # `tax_rate` / `cost_of_debt` 已在上面按材料实际情况定过
+    # （有数据=财报推算、没数据=外部），这里用 `or` 不覆盖它们。
+    origins = {
+        ORIGIN_FILING: ("target", "unit", "valuation_date", "currency",
+                        "gaap", "scope", "audited", "debt"),
+        ORIGIN_EXTERNAL: ("risk_free", "equity_risk_premium", "beta_unlevered",
+                          "equity", "terminal_growth", "ask_price",
+                          "advisor_tickers"),
+        ORIGIN_JUDGMENT: ("purpose", "stance", "stage", "equity_scope", "growth",
+                          "ebitda_margin", "da_pct_revenue", "capex_pct_revenue",
+                          "nwc_pct_revenue", "metric_name", "multiple_low",
+                          "multiple_mid", "multiple_high", "sens_wacc",
+                          "sens_growth", "exit_multiple", "advisor_market",
+                          "advisor_metric"),
+    }
+    for origin, keys in origins.items():
+        for q in qs:
+            if q.key in keys:
+                q.origin = q.origin or origin
+    return qs
 
 
 def render_template(qs: list[Q], mat: Materials) -> str:
@@ -661,6 +883,76 @@ def _num(a: Answer) -> float | None:
 
 def _lst(val: str) -> list[str]:
     return [x.strip() for x in re.split(r"[,，\s]+", val.strip()) if x.strip()]
+
+
+def _num_text(x: str) -> float | None:
+    """一个可能带 % 的字符串 → 数。**与 `_num` 同一条规则**（`8.5%` = 0.085）。
+
+    列表字段（逐年增长率、敏感性各档）过去用的是裸 `float(x)`，
+    于是 `10%` 这种写法直接把引擎崩掉、`10` 又静默变成 1000%。
+    「带 % 就按百分数」这条规则必须**处处一致** —— 只在一个地方生效，
+    就等于把不一致留给了另一个入口。
+    """
+    return _num(Answer(value=x))
+
+
+def _nums_of(text: str) -> list[float | None]:
+    """逗号/空格分隔的一串值 → 一串数（认不出的位置是 None，**不猜**）。"""
+    return [_num_text(x) for x in _lst(text)]
+
+
+#: 「看起来就是一个数字」——只补这种，别把 `数据不足`、`待定` 变成 `待定%`。
+_PLAIN_NUM = re.compile(r"^[-+]?(?:\d+(?:\.\d*)?|\.\d+)$")
+
+
+def as_percent_text(raw: str) -> str:
+    """把「人只填了数值」的百分数补成带 % 的写法 —— **每个逗号分隔的元素都补**。
+
+    网页向导里百分比字段把 `%` 显示在框里，人只填数值（填 `8.5` 就是 8.5%）。
+    但引擎拿到的字符串**必须自带单位**：光一个 `8.5` 会被读成 850% ——
+    那是 100 倍级的静默错误，正是这个项目最怕的一类错。
+
+    规则：
+      * 只补「看起来是纯数字」的元素：`8.5` → `8.5%`；`10,9,8` → `10%,9%,8%`
+      * 已经带 % 的不重复补：`8.5%` 原样
+      * 补在 `@来源` 之前：`8.5 @管理层 p.12` → `8.5% @管理层 p.12`
+      * 非数字（`数据不足`）原样放过 —— 交给下游判成缺失，不在这里编造
+    """
+    s = (raw or "").strip()
+    if not s:
+        return s
+    head, at, tail = s.partition("@")
+    items = [x for x in re.split(r"[,，\s]+", head.strip()) if x]
+    if not items:
+        return s
+    out = [x if x.endswith("%") or not _PLAIN_NUM.match(x) else f"{x}%" for x in items]
+    body = ",".join(out)
+    return f"{body} @{tail}" if at else body
+
+
+def percent_keys(mat: Materials, *, growth_years: int = 5) -> set[str]:
+    """哪些键在界面上是以百分数显示的（`Q.unit == "%"`）。"""
+    return {q.key for q in questions(mat, growth_years=growth_years) if q.unit == "%"}
+
+
+def normalize_percents(mat: Materials, ans: dict[str, Answer], *,
+                       growth_years: int = 5) -> list[str]:
+    """把**网页收上来的**百分数补上 %（就地改 `ans`），返回被补过的键。
+
+    **只走网页这条路。** txt 清单那条路保持小数写法：那份清单里人写的是
+    `0.085`（= 8.5%），若在那边也补 % 就变成 0.085%（差 100 倍）——
+    同一条规则在两个入口会产生相反的错误，所以规则只加在显示着 % 的那一边。
+    """
+    fixed: list[str] = []
+    for k in sorted(percent_keys(mat, growth_years=growth_years)):
+        a = ans.get(k)
+        if a is None or not (a.value or "").strip():
+            continue
+        new = as_percent_text(a.value)
+        if new != a.value:
+            a.value = new
+            fixed.append(k)
+    return fixed
 
 
 def _spec(a: Answer, *, unit: str = "") -> dict:
@@ -769,9 +1061,16 @@ def build_config(mat: Materials, ans: dict[str, Answer],
         missing.append(f"预测 · ebitda_margin 给了 {len(gm)} 个，"
                        f"增长率给了 {years} 个（年数对不上）")
         dcf_ready = False
+    # 逐年增长率：**逐项走 `_num` 的规则**（`8.5%` 与 `0.085` 都认）。
+    # 以前这里是裸 `float(x)` —— 同一个「带 % 就按百分数」的规则，
+    # 只在一个地方生效就等于把不一致留给另一个入口（实测 `10%` 会崩、`10` 会变 1000%）。
+    growth_vals = _nums_of(ans["growth"].value) if has("growth") else []
+    if growth_vals and any(g is None for g in growth_vals):
+        missing.append("预测 · growth（有认不出的数：写成 8.5% 或 0.085 都可以）")
+        dcf_ready = False
     if dcf_ready:
         base = _facts_number(mat, "base_revenue")
-        growth = [float(x) for x in _lst(ans["growth"].value)]
+        growth = [g for g in growth_vals if g is not None]   # 上面已拦过认不出的数
         gsrc = ans["growth"].source or "未注明"
         revs, r = [], float(base or 0.0)
         for g in growth:
@@ -804,12 +1103,18 @@ def build_config(mat: Materials, ans: dict[str, Answer],
             "terminal_growth": _spec(ans["terminal_growth"]),
         }
         if has("exit_multiple"):
-            cfg["dcf"]["exit_multiple"] = float(ans["exit_multiple"].value)
+            em = _num_text(ans["exit_multiple"].value)
+            if em is None:
+                missing.append("可选 · exit_multiple（认不出这个数，未采用）")
+            else:
+                cfg["dcf"]["exit_multiple"] = em
         if has("sens_wacc") and has("sens_growth"):
-            cfg["dcf"]["sensitivity"] = {
-                "wacc": [float(x) for x in _lst(ans["sens_wacc"].value)],
-                "growth": [float(x) for x in _lst(ans["sens_growth"].value)],
-            }
+            sw = _nums_of(ans["sens_wacc"].value)
+            sg = _nums_of(ans["sens_growth"].value)
+            if any(x is None for x in sw + sg):
+                missing.append("可选 · 敏感性网格（有认不出的数，整块未生成）")
+            else:
+                cfg["dcf"]["sensitivity"] = {"wacc": sw, "growth": sg}
         else:
             missing.append("可选 · 敏感性网格（sens_wacc / sens_growth）"
                            "—— 没有它 Football Field 的区间只能取点值")
@@ -817,11 +1122,13 @@ def build_config(mat: Materials, ans: dict[str, Answer],
     # ---------- 乘数法 ----------
     mult_miss = require(("multiple_low", "multiple_mid", "multiple_high"), "乘数法")
     metric = (raw("metric_name", "EBITDA") or "EBITDA").strip()
-    mv = _facts_number(mat, "ebitda") if metric.upper() == "EBITDA" else None
+    # 下拉里的每个指标都要真的接通：以前只有 EBITDA 与收入接了，
+    # 选 EBIT 会得到一句"材料里推不出这个指标" —— 而下拉里明明有它。
+    mkey = METRIC_KEYS.get(metric, "ebitda")
+    mv = _facts_number(mat, mkey)
     if mv is None:
-        mv = _facts_number(mat, "base_revenue") if metric == "收入" else None
-    if mv is None:
-        missing.append(f"乘数法 · 指标值（{metric}）—— 材料里推不出这个指标，"
+        missing.append(f"乘数法 · 指标值（{metric}）—— "
+                       f"{_METRIC_WHY.get(mkey, '材料里推不出')}；"
                        "要么在材料里补，要么把 metric_name 换成别的")
     if not mult_miss and mv is not None:
         cfg["multiples"] = {
@@ -835,7 +1142,11 @@ def build_config(mat: Materials, ans: dict[str, Answer],
 
     # ---------- 反向估值 ----------
     if has("ask_price"):
-        cfg["ask_price"] = float(ans["ask_price"].value)
+        ap = _num_text(ans["ask_price"].value)
+        if ap is None:
+            missing.append("可选 · ask_price（认不出这个数，未做反向估值）")
+        else:
+            cfg["ask_price"] = ap
 
     # ---------- 假设参谋（可选，走公开域） ----------
     if has("advisor_tickers"):
@@ -850,6 +1161,41 @@ def build_config(mat: Materials, ans: dict[str, Answer],
     return cfg, missing
 
 
+#: 「乘数用的指标」四个选项 → 从材料里取哪个数（`_facts_number` 的键）。
+#: **下拉里给的每个指标都必须真的接通** —— 给引擎不认的选项就是骗人。
+METRIC_KEYS: dict[str, str] = {
+    "EBITDA": "ebitda",
+    "EBIT": "ebit",
+    "收入": "base_revenue",
+    "SDE": "sde",
+}
+
+#: 取不到时**为什么**（照实说，不省略 —— 省略会让人以为那个选项也能用）。
+_METRIC_WHY: dict[str, str] = {
+    "ebitda": "缺折旧摊销（通常在现金流量表间接法段或附注）",
+    "ebit": "缺营业利润",
+    "base_revenue": "缺营业收入",
+    "sde": "需所有者薪酬与一次性项目，材料里没有",
+}
+
+
+def metric_reference(mat: Materials, unit: str = "") -> str:
+    """「乘数用的指标」那一栏的参考：**四个指标各自的本期数值**。
+
+    选之前先看见基数 —— 否则 EBITDA / EBIT / 收入 / SDE 只是四个词，
+    选完才知道引擎拿哪个数去乘倍数。
+    """
+    parts = []
+    for name, key in METRIC_KEYS.items():
+        v = _facts_number(mat, key)
+        if v is None:
+            parts.append(f"{name} 推不出（{_METRIC_WHY[key]}）")
+        else:
+            parts.append(f"{name} {v:,.0f}")
+    tail = f"（{unit}）" if unit else ""
+    return "本期：" + " ／ ".join(parts) + tail
+
+
 def _facts_keys(mat: Materials) -> dict:
     if mat.statements is None:
         return {}
@@ -860,13 +1206,38 @@ def _facts_keys(mat: Materials) -> dict:
 
 
 def _facts_number(mat: Materials, key: str) -> float | None:
+    if key == "sde":
+        # SDE = EBITDA + 所有者薪酬调整 + 一次性项目 —— 后两项材料里没有，
+        # 硬算会得到一个"看起来对"的数（还带着一个来源标签，最坏的那种错）。
+        # 所以这里**永远返回 None**，由 metric_reference 说明为什么。
+        return None
+    if key == "ebit":
+        st = mat.statements
+        if st is None or st.income is None:
+            return None
+        from financials.canonical import Field
+        # 营业利润就是 EBIT 的口径（不再减利息/税：那两项在它下面）。
+        return st.income.fields.get(Field.OPERATING_INCOME)
     if key == "ebitda":
-        inc = getattr(mat.statements, "income", None) if mat.statements else None
+        st = mat.statements
+        if st is None:
+            return None
+        inc = getattr(st, "income", None)
         if inc is None:
             return None
         from financials import derive as dv
+        # **三张表合起来取数**：折旧摊销在现金流量表的间接法段里，不在利润表。
+        # 只喂利润表的话 EBITDA 会是 None（乘数法跟着整块空掉）—— 实测 Fitbit
+        # 这类 10-K 正是这样。取数口径与 history() 同一个（`da_total()`）。
+        fields = dict(inc.fields)
+        cf = getattr(st, "cash_flow", None)
+        if cf is not None:
+            fields.update(cf.fields)
+        da = st.da_total()
+        if da is not None:
+            fields.setdefault(dv.Field.DEPRECIATION_AMORTIZATION, da)
         try:
-            d = dv.ebitda(inc.fields)
+            d = dv.ebitda(fields)
         except Exception:                              # noqa: BLE001
             return None
         return getattr(d, "value", None)
