@@ -977,6 +977,30 @@ Apple 的 `Revenues` 标签数据**停在 2018 年** —— 它后来换用了
 
 ## 快速开始
 
+**主路始终是 git clone + 命令。** 这套工具要能被审计 —— 你 clone 下来的每一行都可读、可改、
+可验证，脚本里没有隐藏的安装动作。
+
+```bash
+git clone git@github.com:newchapterventures/freeanalyst.git
+cd freeanalyst
+python3 freeanalyst.py ui          # 只绑 127.0.0.1，浏览器打开 http://127.0.0.1:8765/
+```
+
+**不想碰命令行的话**：clone 下来之后，双击对应文件即可 ——
+
+| 系统 | 双击 |
+|---|---|
+| macOS | `start.command`（首次可能要右键 → 打开；系统会问一次"确定要打开吗"） |
+| Windows | `start-windows.bat` |
+
+它会找 Python（要 3.10+）、起本地向导、自动打开浏览器；关掉那个窗口就是停止服务。
+**它不替你安装任何东西**：缺 Python 就说明缺、给官方下载页（"不改系统、不出网"是这个工具的
+基本承诺，启动脚本自己先破坏它就荒唐了）。
+
+**没有本地模型也不影响使用** —— 报表识别、勾稽校验、DCF 与乘数计算全是纯代码，
+模型只用在「问答」那一步。想装模型请看模型设置页（`/config`）里的指引，那里会按你这台机器的
+内存给出建议命令。
+
 两条路：**要估值就走第一条**，要问答就走第二条。
 
 ```bash
@@ -998,7 +1022,11 @@ python3 freeanalyst.py appraise ~/deals/某个标的/ --answers 估值问答.txt
 #    → DCF + 敏感性 + 乘数法 + Football Field 的数据，带完整追溯
 
 # ── 路二：问答（材料 → 本地索引 → 带出处的回答）──
-ollama pull qwen2.5-coder:7b            # 没模型也能跑估值，只是不做问答
+# 模型可选：不装照样跑估值，只是没有问答这一步
+# 8~16GB 的内存档当前一代是 qwen3.5 小档（官方库里 4b 约 3.2GB / 9b 约 6.1GB）：
+ollama pull qwen3.5:9b          # 16GB 内存；8GB 用 qwen3.5:4b
+# **换模型后先跑质量门槛再信它**：python3 bench/model_quality.py --models qwen3.5:9b
+#   （已实测的基线：本机 6 个模型没有一个过门槛，最好 4/5 —— 见 bench/gate-local-6.json）
 python3 freeanalyst.py ingest ~/deals/某个标的/
 python3 freeanalyst.py ask "调整后 EBITDA 是怎么算的？回购条款对投资方有利吗？"
 python3 freeanalyst.py audit            # 查这次到底有没有东西出网
