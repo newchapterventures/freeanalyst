@@ -56,13 +56,14 @@ DEFAULT_PORT = 8765
 #: 接口清单与版本 —— 页面拿它跟自己对表。
 #: **真踩过**：页面加了「选择文件夹…」，但跑着的服务还是旧进程（Python 代码不会热加载），
 #: 于是点下去只回一句 `unknown endpoint`。现在页面能自己发现这件事并说清楚。
-VERSION = "0.36"
-ENDPOINTS = ("health", "scan", "appraise", "pick", "config", "gate", "cloud-check")
+VERSION = "0.38"
+ENDPOINTS = ("health", "scan", "appraise", "pick", "config", "gate", "cloud-check",
+             "pull", "pull-status", "model-check")
 #: 页面依赖的**能力**标记（比接口更细一层：同一个接口也可能少字段）。
 #: 页面会逐条核对，缺哪条就提示"服务是旧进程"。
 #: 真踩过：百分比字段加进引擎后没重启服务，页面上那些框**静默地没有 %** ——
 #: 用户于是不知道填 5、0.05 还是 5%。
-FEATURES = ("percent-unit", "llm-config")
+FEATURES = ("percent-unit", "llm-config", "install-model")
 
 #: 项目根目录 —— 页面正文和默认输出都相对它。
 ROOT = Path(__file__).resolve().parent
@@ -448,6 +449,81 @@ def api_cloud_check(provider: str, model: str, what: str) -> dict:
             "sent_bytes": len(prompt.encode("utf-8"))}
 
 
+# ─────────────────── 装模型：服务端拉取，不用开终端 ───────────────────
+#
+# 为什么放在服务端做：让**本机的 ollama**自己去下载，界面只读进度。
+# 用户点一下按钮就行 —— 不用开终端、不用记 `ollama pull` 怎么写。
+# 拉的是回环地址（127.0.0.1:11434），不是外部主机。
+
+_PULLS: dict[str, dict] = {}
+_PULL_LOCK = threading.Lock()
+
+
+def api_pull_start(model: str) -> dict:
+    """开始拉一个模型（后台线程），立刻返回 —— 界面轮询进度。"""
+    from llm import registry
+
+    model = (model or "").strip()
+    if not model:
+        return {"ok": False, "error": "先填一个模型名，例如 qwen3.5:9b"}
+    # **按形状校验，不是只列字符白名单。** 只列白名单时会漏掉 `../../etc/passwd`
+    # 这种"字符合法但形状荒唐"的名字（实测被测试抓出来过）。
+    import re as _re
+
+    if not _re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*(:[A-Za-z0-9._-]+)?", model) \
+            or ".." in model or len(model) > 80:
+        return {"ok": False,
+                "error": "模型名形状不对 —— 应该是 `家族:档位`（如 qwen3.5:9b）："
+                         "以字母数字开头，只含字母数字与 . _ - ，不含 `..`"}
+
+    with _PULL_LOCK:
+        cur = _PULLS.get("current") or {}
+        if cur.get("running"):
+            return {"ok": False, "error": f"已经在拉 {cur.get('model')}，等它跑完"}
+        _PULLS["current"] = {"model": model, "running": True, "status": "开始…",
+                             "completed": 0, "total": 0, "error": "", "ok": None}
+
+    def _run() -> None:
+        def on_progress(status: str, done: int, total: int) -> None:
+            with _PULL_LOCK:
+                _PULLS["current"].update({"status": status, "completed": done,
+                                          "total": total})
+
+        r = registry.pull_via_ollama(model, on_progress=on_progress)
+        with _PULL_LOCK:
+            _PULLS["current"].update({"running": False, "ok": bool(r.get("ok")),
+                                      "error": r.get("error", ""),
+                                      "status": r.get("status", "")})
+
+    threading.Thread(target=_run, daemon=True).start()
+    return {"ok": True, "model": model}
+
+
+def api_pull_status() -> dict:
+    with _PULL_LOCK:
+        return dict(_PULLS.get("current") or {"model": "", "running": False})
+
+
+def api_model_check(ram_gb: float = 0, consent_ok: bool = False) -> dict:
+    """查"当前该装哪个"。
+
+    `consent_ok` = 用户在界面上确认过这次联网（界面会把 **主机 / 用途 / 这次发什么**
+    原样写出来）。没有它就不联网，回退本地清单并**说明是回退**。
+    """
+    from guard import CloudConsent
+    from llm import registry
+
+    consent = None
+    if consent_ok:
+        consent = CloudConsent(
+            host=registry.HOST,
+            purpose="查模型体积与当前代次（只发模型名，不含材料）",
+            what="模型家族名（如 qwen3.5）—— 不含任何材料内容、公司名、文件名",
+            approved_by="user:配置页确认")
+    return {"ok": True, **registry.check_candidates(ram_gb, consent=consent,
+                                                    refresh=bool(consent_ok))}
+
+
 # ─────────────────────────── HTTP 层 ───────────────────────────
 
 class Handler(BaseHTTPRequestHandler):
@@ -496,6 +572,8 @@ class Handler(BaseHTTPRequestHandler):
             self._json(api_config())
         elif self.path == "/api/audit":
             self._json({"ok": True, "lines": api_audit(20)})
+        elif self.path == "/api/pull-status":
+            self._json(api_pull_status())
         else:
             self._send(404, b"not found", "text/plain; charset=utf-8")
 
@@ -526,6 +604,11 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(api_cloud_check(body.get("provider") or "",
                                            body.get("model") or "",
                                            body.get("what") or ""))
+            elif self.path == "/api/pull":
+                self._json(api_pull_start(body.get("model") or ""))
+            elif self.path == "/api/model-check":
+                self._json(api_model_check(float(body.get("ram_gb") or 0),
+                                           bool(body.get("consent_ok"))))
             else:
                 self._json({"ok": False, "error": "unknown endpoint"}, 404)
         except Exception as exc:                       # noqa: BLE001

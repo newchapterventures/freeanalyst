@@ -138,6 +138,9 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="量本机模型的驻留内存与速度")
     ap.add_argument("--models", default="", help="逗号分隔；默认量全部本机模型")
     ap.add_argument("--json", default="", help="结果写到这里")
+    ap.add_argument("--merge", action="store_true",
+                    help="与已有结果**合并**（按模型名覆盖同名条目，其余保留）—— "
+                         "新装一个模型时不必把整机重测一遍")
     args = ap.parse_args()
 
     info = machine()
@@ -176,9 +179,22 @@ def main() -> int:
               f"{r.get('tok_s',0):>8} tok/s")
 
     if args.json:
+        out = {"machine": info, "models": rows}
+        if args.merge:
+            p = Path(args.json)
+            try:
+                old = json.loads(p.read_text(encoding="utf-8"))
+            except Exception:                               # noqa: BLE001
+                old = {}
+            by_name = {m.get("name"): m for m in (old.get("models") or [])}
+            for r in rows:                                  # 新的覆盖同名的
+                by_name[r["name"]] = r
+            out["models"] = sorted(by_name.values(),
+                                   key=lambda m: m.get("file_gb") or 0)
+            print(f"　（合并：原有 {len(old.get('models') or [])} 条，"
+                  f"现共 {len(out['models'])} 条）")
         Path(args.json).write_text(
-            json.dumps({"machine": info, "models": rows}, ensure_ascii=False, indent=2),
-            encoding="utf-8")
+            json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8")
         print(f"\n已写入 {args.json}")
     return 0
 
