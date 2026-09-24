@@ -27,6 +27,12 @@ INDEX_DIR = ROOT / "index"
 DEFAULT_MODEL = "qwen2.5-coder:7b"
 OLLAMA_URL = "http://127.0.0.1:11434/v1/chat/completions"
 
+#: **本机模型走原生接口，不走 /v1。** 实测：思考型模型（qwen3.5 等）在 /v1 上传
+#: `think:false` 会被忽略 —— 答案全被挤进 reasoning，content 是空的（0 字 / reasoning
+#: 3098 字 / finish_reason=length）；换成原生 /api/chat 就正常（content 63 字 /
+#: thinking 0 字 / 37 tokens）。本机推理只在这里改，云端仍走各自的服务商接口。
+NATIVE_CHAT_URL = "http://127.0.0.1:11434/api/chat"
+
 SYSTEM_PROMPT = """你是一名投资尽调助手。你只能依据用户提供的【材料片段】回答。
 
 铁律：
@@ -222,30 +228,57 @@ def call_model(model: str, system: str, user: str, *, consent=None,
                             timeout=timeout, consent=consent)
         return r.text
 
+    # **本机走 ollama 的原生 /api/chat，不走 /v1。**
+    # 原因（实测，不是猜）：思考型模型（qwen3.5 等）在 /v1 上**关不掉思考** ——
+    # 传 think:false 会被忽略，答案全被挤进 reasoning 字段，content 是空的：
+    #     /v1 + think:false → content 0 字 / reasoning 3098 字 / finish_reason=length
+    #     原生 + think:false → content 63 字 / thinking 0 字 / eval_count 37 ✓
+    # 后果很隐蔽：五道评测题四道"回答为空"，而裁定写成"未达门槛 1/5" ——
+    # 拿空回答判质量等于没测（这是同一类假裁定的第三次）。
+    msgs = [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user},
+    ]
     payload = json.dumps(
         {
             "model": real,
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-            "temperature": 0.1,
+            "messages": msgs,
             "stream": False,
-            # **必须给足 token 预算。** 不给的时候，思考型模型（qwen3 系、qwen3.5 系）
-            # 会把预算全烧在思考上，答案一个字都出不来 —— 实测 qwen3.5:9b 五道评测题
-            # 四道返回空字符串，而裁定写成"未达门槛 1/5"（拿空回答判质量，等于没测）。
-            "max_tokens": 4096,
+            # 有思考能力的模型一律关掉：这个工具的活是"照材料答"，不需要它想，
+            # 而它想的时候会把预算烧完、答案出不来。
+            "think": False,
+            "options": {"temperature": 0.1, "num_predict": 4096},
         }
     ).encode("utf-8")
 
-    raw = guarded_request(
-        OLLAMA_URL,
-        data=payload,
-        headers={"Content-Type": "application/json"},
-        purpose=f"local LLM inference ({real})",
-    )
+    try:
+        raw = guarded_request(
+            NATIVE_CHAT_URL,
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            purpose=f"local LLM inference ({real})",
+        )
+    except Exception as exc:                                # noqa: BLE001
+        # 老版本 ollama 或不吃 think 参数的模型 → 去掉它重试一次（不让它变成"用不了"）
+        if "400" not in str(exc) and "think" not in str(exc).lower():
+            raise
+        body = {"model": real, "messages": msgs, "stream": False,
+                "options": {"temperature": 0.1, "num_predict": 4096}}
+        raw = guarded_request(NATIVE_CHAT_URL, data=json.dumps(body).encode("utf-8"),
+                              headers={"Content-Type": "application/json"},
+                              purpose=f"local LLM inference ({real})")
+
     body = json.loads(raw.decode("utf-8"))
-    return body["choices"][0]["message"]["content"]
+    msg = body.get("message") or {}
+    text = (msg.get("content") or "").strip()
+    if not text:
+        # **宁可说清楚，也不返回空字符串。** 空回答会让上游把"没测成"当成"答错了"。
+        thinking = (msg.get("thinking") or "").strip()
+        raise RuntimeError(
+            "本机模型返回了空回答"
+            + (f"（思考 {len(thinking)} 字，答案一个字没出）" if thinking else "")
+            + " —— 这通常是思考模式没关掉或 token 预算不够，不是模型答不出。")
+    return text
 
 
 def build_context(hits: list[tuple[Chunk, float]]) -> str:
