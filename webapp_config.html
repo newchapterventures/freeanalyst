@@ -1,0 +1,500 @@
+<!DOCTYPE html>
+<html lang="zh"><head><meta charset="utf-8">
+<title>FreeAnalyst · 模型配置</title>
+<style>
+  :root{
+    --bg:#05070A; --panel:#0A0F16; --line:#16212B; --fg:#D7F5E9; --mut:#5F7C77;
+    --pri:#00E5A0; --amber:#FFB000; --mag:#FF2E63;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,"Cascadia Mono","PingFang SC",monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{background:var(--bg);color:var(--fg);font:13px/1.65 var(--mono);
+       -webkit-font-smoothing:antialiased}
+  .wrap{max-width:1080px;margin:0 auto;padding:30px 24px 90px}
+  a{color:var(--pri);text-decoration:none;border-bottom:1px dotted rgba(0,229,160,.4)}
+  .top{display:flex;gap:var(--head-gap,16px);align-items:center;margin-bottom:8px}
+  .logo{height:48px;width:28px;flex:0 0 auto}
+  .head-txt{flex:1 1 auto;align-self:stretch;display:flex;flex-direction:column;
+            justify-content:space-between}
+  .word{font-size:30px;font-weight:700;letter-spacing:.24em;margin:0;line-height:1}
+  .word em{font-style:normal;color:var(--pri);text-shadow:0 0 12px rgba(0,229,160,.55)}
+  .byline{color:#42565A;font-size:11px;letter-spacing:.14em}
+  .nav{display:flex;gap:14px;align-items:center;margin:2px 0 20px;font-size:12px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:3px;
+        padding:18px;margin:0 0 18px}
+  .card h2{font-size:13.5px;margin:0 0 12px;letter-spacing:.04em;display:flex;
+           align-items:baseline;gap:10px;flex-wrap:wrap}
+  .card h2 .idx{color:var(--pri)}
+  .card h2 small{color:var(--mut);font-weight:400;font-size:11.5px}
+  .note{border-left:2px solid var(--line);padding:8px 12px;color:var(--mut);
+        font-size:11.5px;margin:10px 0}
+  .warn{background:rgba(255,46,99,.08);border:1px solid rgba(255,46,99,.45);
+        border-radius:3px;padding:12px 14px;color:#FFD9E1;font-size:12px;margin:10px 0}
+  .warn b{color:var(--mag)}
+  .ok{color:var(--pri)} .mut{color:var(--mut)} .amb{color:var(--amber)}
+  .bad{color:var(--mag)}
+  table{width:100%;border-collapse:collapse;font-size:12px}
+  th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line);
+        vertical-align:top}
+  th{color:var(--mut);font-weight:400;font-size:11px;letter-spacing:.06em}
+  input[type=text]{width:100%;background:#070C11;color:var(--fg);font-family:var(--mono);
+    font-size:12px;padding:7px 9px;border:1px solid var(--line);border-radius:2px}
+  input[type=text]:focus{outline:none;border-color:var(--pri)}
+  select{background:#070C11;color:var(--fg);font-family:var(--mono);font-size:12px;
+    padding:7px 9px;border:1px solid var(--line);border-radius:2px;min-width:220px}
+  button{font-family:var(--mono);font-size:12px;font-weight:700;letter-spacing:.04em;
+    padding:8px 14px;border-radius:2px;cursor:pointer;background:transparent;
+    color:var(--pri);border:1px solid var(--pri);transition:all .18s ease}
+  button:hover:not(:disabled){background:rgba(0,229,160,.12)}
+  button:disabled{opacity:.4;cursor:default}
+  button.ghost{color:var(--mut);border-color:var(--line)}
+  button.amber{color:var(--amber);border-color:var(--amber)}
+  .pill{display:inline-block;font-size:10px;padding:1px 6px;border-radius:2px;
+        border:1px solid;letter-spacing:.04em}
+  .pill.on{color:var(--pri);border-color:rgba(0,229,160,.5)}
+  .pill.off{color:var(--mut);border-color:var(--line)}
+  .pill.adapter{color:var(--mag);border-color:rgba(255,46,99,.5)}
+  .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  .rt{border:1px solid var(--line);border-radius:3px;padding:12px;margin:0 0 10px}
+  .rt h3{margin:0 0 6px;font-size:12.5px;font-weight:700}
+  .models{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+  .models span{border:1px solid var(--line);border-radius:2px;padding:1px 6px;
+               font-size:11px;color:var(--fg);cursor:pointer}
+  .models span:hover{border-color:var(--pri);color:var(--pri)}
+  .term{border:1px solid var(--line);border-radius:3px;background:#04070A;padding:10px 12px;
+        font-size:11.5px;white-space:pre-wrap;color:var(--fg);margin-top:10px;
+        max-height:320px;overflow:auto}
+  .lang button{border:0;color:var(--mut);padding:2px 6px;font-weight:400}
+  .lang button.on{color:var(--pri)}
+  .hide{display:none}
+  /* 「还没有模型」块：三条路 + 能直接粘的命令 */
+  .path{border-left:2px solid var(--line);padding:8px 0 8px 12px;margin:10px 0}
+  .path .pt{margin-bottom:4px}
+  .cmd{color:#BFE9DA;font-size:11.5px;background:#070C12;border:1px solid var(--line);
+       padding:8px 10px;border-radius:6px;margin:6px 0;white-space:pre-wrap;overflow-x:auto}
+  .rec{border:1px solid var(--pri);background:rgba(0,229,160,.05);border-radius:8px;
+       padding:10px 12px;margin-top:12px}
+</style></head><body><div class="wrap">
+
+  <div class="top">
+    <svg class="logo" viewBox="0 0 19 33" shape-rendering="crispEdges" role="img" aria-label="算盘">
+      <g fill="#E9B949"><rect x="2" y="2" width="3" height="3"/><rect x="6" y="2" width="3" height="3"/>
+      <rect x="10" y="2" width="3" height="3"/><rect x="14" y="2" width="3" height="3"/>
+      <rect x="6" y="6" width="3" height="3"/><rect x="10" y="6" width="3" height="3"/>
+      <rect x="14" y="6" width="3" height="3"/></g>
+      <g fill="#C9D2DC"><rect x="2" y="12" width="3" height="3"/><rect x="6" y="12" width="3" height="3"/>
+      <rect x="10" y="12" width="3" height="3"/><rect x="14" y="12" width="3" height="3"/>
+      <rect x="2" y="16" width="3" height="3"/><rect x="6" y="16" width="3" height="3"/>
+      <rect x="10" y="16" width="3" height="3"/><rect x="14" y="16" width="3" height="3"/>
+      <rect x="2" y="20" width="3" height="3"/><rect x="6" y="20" width="3" height="3"/>
+      <rect x="10" y="20" width="3" height="3"/><rect x="14" y="20" width="3" height="3"/>
+      <rect x="2" y="24" width="3" height="3"/><rect x="6" y="24" width="3" height="3"/>
+      <rect x="10" y="24" width="3" height="3"/><rect x="14" y="24" width="3" height="3"/>
+      <rect x="2" y="28" width="3" height="3"/><rect x="6" y="28" width="3" height="3"/>
+      <rect x="10" y="28" width="3" height="3"/><rect x="14" y="28" width="3" height="3"/></g>
+      <rect fill="#E5484D" x="2" y="6" width="3" height="3"/>
+    </svg>
+    <div class="head-txt">
+      <h1 class="word">FREE<em>ANALYST</em></h1>
+      <div class="byline">by New Chapter Ventures</div>
+    </div>
+    <div class="lang">
+      <button data-lang="zh" onclick="setLang('zh')">中文</button>
+      <button data-lang="en" onclick="setLang('en')">EN</button>
+    </div>
+  </div>
+
+  <div class="nav">
+    <a href="/" data-zh="← 返回估值向导" data-en="← Back to the workbench"></a>
+    <a href="/doc" data-zh="说明文件" data-en="Documentation"></a>
+    <span class="mut" id="cfgPath"></span>
+  </div>
+
+  <!-- 01 本机模型 -->
+  <div class="card">
+    <h2><span class="idx">01</span><span data-zh="本机模型（默认，数据不出网）" data-en="Local models (default — nothing leaves this machine)"></span></h2>
+    <div id="runtimes"></div>
+    <div id="noModel"></div>
+    <div class="note" data-zh="本机走的都是回环地址（127.0.0.1），代码里挡着：只有回环才放行。没装模型不是错误 —— 提取、勾稽、估值全是纯代码，模型只用在「问答」这一处。"
+         data-en="Local runtimes all sit on the loopback address and the code only allows loopback. No model installed is not an error: extraction, articulation checks and valuation are pure code — models are used for Q&amp;A only."></div>
+    <div class="row" style="margin-top:12px">
+      <select id="gateModel"></select>
+      <button id="gateBtn" onclick="runGate()" data-zh="跑质量门槛" data-en="Run the quality gate"></button>
+      <span class="mut" data-zh="（本地模型约 1–3 分钟）" data-en="(1–3 minutes for a local model)"></span>
+    </div>
+    <div id="gateOut"></div>
+  </div>
+
+  <!-- 02 哪台机器配哪个模型 -->
+  <div class="card">
+    <h2><span class="idx">02</span><span data-zh="哪台机器配哪个模型（没有独立显卡也看这里）"
+        data-en="Which model fits your machine (read this even if you have no GPU)"></span></h2>
+    <div id="truth"></div>
+    <div id="quality"></div>
+    <div class="note" data-zh="**估值这一步不吃模型。**报表识别、勾稽校验、DCF 与乘数计算全是代码执行的；模型只用在「问答」那一步。所以没有独立显卡的商务本，同样能跑出完整的估值报告 —— 模型只决定问答顺不顺。"
+         data-en="**Valuation itself does not need a model.** Statement recognition, articulation checks, DCF and multiples are pure code; models are used for Q&amp;A only. A business laptop with no GPU can still produce the full valuation report — the model only affects how pleasant Q&amp;A feels."></div>
+    <table id="tierTable">
+      <thead><tr>
+        <th data-zh="机器内存" data-en="Machine RAM"></th>
+        <th data-zh="建议模型档位" data-en="Suggested size"></th>
+        <th data-zh="文件大小" data-en="File size"></th>
+        <th data-zh="例子" data-en="Examples"></th>
+        <th data-zh="体验" data-en="Experience"></th>
+      </tr></thead>
+      <tbody></tbody>
+    </table>
+    <div class="note" data-zh="「驻留内存」实测是文件大小的 **1.0~1.14 倍**（Q4 量化：qwen3:14b 文件 8.6GB → 驻留 9.4GB，见下「本机实测」），另外要给系统与浏览器留约 4GB —— 内存不足时系统开始用交换分区，**整台机器**都会卡，不只是这个工具慢。"
+         data-en="Resident memory measures **1.0–1.14× the file size** (Q4: qwen3:14b is 8.6 GB on disk, 9.4 GB resident — see the measurements below), and you still want ~4 GB for the OS and browser — when RAM runs out the OS starts swapping and the whole machine crawls, not just this tool."></div>
+
+    <h3 style="margin:16px 0 6px" data-zh="本机实测（这台机器上的真实数字）"
+        data-en="Measured on this machine (real numbers)"></h3>
+    <div id="measured"></div>
+    <div class="note" data-zh="怎么选：① 先过质量门槛（写得快但答得错的模型只会添乱）；② 再看速度；③ 内存不够宁可换小一档。量一次：`python3 bench/measure_models.py --json bench/measured-local.json`。"
+         data-en="How to choose: (1) pass the quality gate first (a fast model that answers wrongly only adds noise); (2) then look at speed; (3) if RAM is short, drop a size rather than thrash. Re-measure with `python3 bench/measure_models.py --json bench/measured-local.json`."></div>
+    <div id="howto"></div>
+  </div>
+
+  <!-- 03 云端模型 -->
+  <div class="card">
+    <h2><span class="idx">03</span><span data-zh="云端模型（闭源 · 默认全关）" data-en="Cloud models (closed-source · off by default)"></span></h2>
+    <div class="warn">
+      <b data-zh="闭源模型有数据风险，必须知情。" data-en="Closed-source models carry a data risk — you must know it."></b>
+      <span data-zh="启用之后，你让云端模型处理的内容就**离开了本机**，发到了对方服务器。这可能与你对材料来源方承担的保密义务、以及个人信息保护要求冲突。"
+            data-en="Once enabled, whatever you send leaves this machine and goes to the provider's servers — potentially conflicting with confidentiality duties and personal-data rules."></span><br>
+      <span data-zh="所以这里**没有一个"总开关"**：启用只是"允许你在界面上选它"，真正发出去的每一次调用都要单独授权（绑定 主机 + 用途 + 这次发什么），而且授权本身写进审计。"
+            data-en="So there is deliberately **no master switch**: enabling only lets you pick it; every single call still needs its own consent (host + purpose + what is being sent), and the consent itself is audited."></span>
+    </div>
+    <table id="cloudTable">
+      <thead><tr>
+        <th data-zh="服务商" data-en="Provider"></th>
+        <th data-zh="主机" data-en="Host"></th>
+        <th data-zh="密钥" data-en="Key"></th>
+        <th data-zh="状态" data-en="State"></th>
+        <th data-zh="试一次" data-en="Test"></th>
+      </tr></thead>
+      <tbody></tbody>
+    </table>
+    <div id="cloudOut"></div>
+  </div>
+
+  <!-- 04 用途绑定 -->
+  <div class="card">
+    <h2><span class="idx">04</span><span data-zh="哪个用途用哪个模型" data-en="Which model for which purpose"></span></h2>
+    <div id="purposes"></div>
+    <div class="note" data-zh="现在**只有「问答」这一处**真的在用模型（把材料建成本地索引后提问）。行业建议、可比公司选取还没接入 —— 不呈现为可用功能。"
+         data-en="Today **only Q&amp;A** actually uses a model (ask questions over a locally built index). Industry advice and comparable-company selection are not wired up yet."></div>
+    <div class="row" style="margin-top:12px">
+      <button onclick="save()" data-zh="保存配置" data-en="Save"></button>
+      <span id="saveMsg" class="mut"></span>
+    </div>
+  </div>
+
+  <!-- 05 支持范围 -->
+  <div class="card">
+    <h2><span class="idx">05</span><span data-zh="现在支持哪些 / 未来可以支持哪些" data-en="Supported now / possible later"></span></h2>
+    <table><tbody>
+      <tr><th data-zh="现在支持" data-en="Supported now"></th><td>
+        <span data-zh="本机：Ollama、以及任何 OpenAI 兼容服务（LM Studio / vLLM / llama.cpp server）；云端：OpenAI 兼容协议的服务商 12 家（DeepSeek、通义千问、Kimi、智谱、MiniMax、火山方舟、硅基流动、OpenAI、NVIDIA、xAI、Mistral、Groq）—— 填个密钥就能用，默认关闭 + 按次授权。"
+              data-en="Local: Ollama and any OpenAI-compatible server (LM Studio / vLLM / llama.cpp). Cloud: 12 OpenAI-compatible providers (DeepSeek, Qwen, Kimi, Zhipu, MiniMax, Volcengine Ark, SiliconFlow, OpenAI, NVIDIA, xAI, Mistral, Groq) — key in, ready to use, off by default with per-call consent."></span>
+      </td></tr>
+      <tr><th data-zh="需要单独适配（还没做）" data-en="Needs an adapter (not done)"></th><td>
+        <span class="bad" data-zh="Anthropic Claude（Messages 协议）、Google Gemini（generateContent）、AWS Bedrock（SigV4 签名）—— 协议不兼容，**不假装能用**。"
+              data-en="Anthropic Claude (Messages API), Google Gemini (generateContent), AWS Bedrock (SigV4) — different protocols, **not faked as available**."></span>
+      </td></tr>
+      <tr><th data-zh="未来可加" data-en="Possible later"></th><td>
+        <span data-zh="再加服务商 = 在 llm/cloud.py 的注册表里加一行；本机还可接 GGUF 直跑、多模型路由（按用途自动选）；以及把质量门槛做成"装了新模型自动跑一遍"。"
+              data-en="Adding a provider is one row in llm/cloud.py. Later: direct GGUF, per-purpose routing, and auto-running the gate whenever a new model appears."></span>
+      </td></tr>
+    </tbody></table>
+  </div>
+
+  <!-- 06 出网审计 -->
+  <div class="card">
+    <h2><span class="idx">06</span><span data-zh="出网审计（最近 8 条）" data-en="Egress audit (last 8)"></span></h2>
+    <div class="note" data-zh="每条记的是 主机 / 用途 / 字节数 / sha256 摘要 / 谁授权 —— **不记内容本身**，否则审计文件会变成第二个泄密点。"
+         data-en="Each line records host / purpose / bytes / sha256 / who approved — **never the content itself**, so the audit log does not become a second leak."></div>
+    <table id="audit"><tbody></tbody></table>
+  </div>
+
+  <div class="notice mut" style="font-size:11.5px;margin-top:18px">
+    <span data-zh="配置存在 ~/.freeanalyst/llm.json（权限 600）—— **刻意不放仓库**：密钥进了 git 就等于公开了，而这个仓库是开源的。界面上永远不回显密钥原文。"
+          data-en="Config lives at ~/.freeanalyst/llm.json (mode 600) — deliberately outside the repo: keys in git are public keys, and this repo is open source. The UI never echoes a key back."></span>
+  </div>
+</div>
+
+<script>
+const LANG_KEY = "fa.lang";
+let LANG = localStorage.getItem(LANG_KEY) || "zh";
+let DATA = null;
+
+function t(zh, en){ return LANG === "en" ? en : zh; }
+function esc(s){ return String(s == null ? "" : s).replace(/[&<>"]/g,
+  c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+const $ = id => document.getElementById(id);
+
+// 词表里只认一种标记：`**加粗**` → <b>。
+// 之前直接塞 textContent，页面上会**原样显示星号**（看起来像坏了）。
+// 先 esc 再替换，所以这不引入 HTML 注入。
+function md(s){ return esc(s == null ? "" : s).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>"); }
+
+function applyLang(){
+  document.querySelectorAll("[data-zh]").forEach(el => {
+    el.innerHTML = md(el.dataset[LANG] || el.dataset.zh);
+  });
+  document.querySelectorAll(".lang button").forEach(b =>
+    b.classList.toggle("on", b.dataset.lang === LANG));
+  if(DATA) render();
+}
+function setLang(l){ LANG = l; localStorage.setItem(LANG_KEY, l); applyLang(); }
+
+async function post(path, body){
+  const r = await fetch(path, {method:"POST", headers:{"Content-Type":"application/json"},
+                              body: JSON.stringify(body || {})});
+  return await r.json();
+}
+
+// ── 02 指引：哪台机器配哪个模型 ──
+// 数据全部来自 llm/guide.py（页面不自己写一份建议 —— 两处各写一套必然对不上）
+function renderGuide(g){
+  if(!g) return;
+
+  // 门槛实测：**先说不好听的**——本机现在过不了门槛，云端有过的
+  const q = g.quality || [];
+  $("truth").innerHTML = (g.truth || []).map(x =>
+    `<div class="warn" style="border-color:var(--amber);background:rgba(255,176,0,.07)">
+       <span>${md(x)}</span></div>`).join("");
+  $("quality").innerHTML = q.length
+    ? `<table><thead><tr>
+         <th>${esc(t("模型","Model"))}</th><th>${esc(t("门槛成绩","Gate"))}</th>
+         <th>${esc(t("卡在哪几项","Failed on"))}</th><th>${esc(t("在哪跑","Runs"))}</th>
+       </tr></thead><tbody>` +
+      q.map(r => `<tr>
+        <td>${esc(r.model)}</td>
+        <td>${r.error ? '<span class="amb">' + esc(t("测不了","could not run")) + '</span>'
+                      : '<span class="' + (r.passed === r.total ? "ok" : "amb") + '">' + esc(r.score) + '</span>'}
+            <span class="mut">${esc((r.verdict || "").slice(0, 22))}</span></td>
+        <td class="mut" style="font-size:11.5px">${esc((r.failed || []).join("、")) || "—"}</td>
+        <td class="mut">${r.local ? esc(t("本机","local")) : esc(t("云端","cloud"))}</td>
+      </tr>`).join("") + "</tbody></table>"
+      + `<div class="note">${esc(t("门槛是用例集全过才算过（一票否决）。这四张表都由脚本生成，不是人工写的结论：",
+                                    "A model passes only if every case passes (one miss is fatal). These tables are generated by scripts, not written by hand:"))}
+         <code>bench/model_quality.py</code> · <code>bench/measure_models.py</code></div>`
+    : `<div class="mut" style="font-size:12px">${esc(t("还没跑过门槛实测。","No gate run yet."))}</div>`;
+
+  // 分档建议
+  $("tierTable").querySelector("tbody").innerHTML = (g.tiers || []).map(x => `
+    <tr>
+      <td><b>${md(x.ram)}</b></td>
+      <td>${md(x.rec)}</td>
+      <td class="mut">${md(x.file)}</td>
+      <td class="mut" style="font-size:11.5px">${md(x.examples)}</td>
+      <td>${md(x.expect)}<br><span class="pill ${x.verdict === "推荐" ? "on" : "off"}">${md(x.verdict)}</span></td>
+    </tr>`).join("");
+
+  // 本机实测（没有就说没有，不编一个）
+  const rows = g.measured || [];
+  if(!rows.length){
+    $("measured").innerHTML = '<div class="mut" style="font-size:12px">' +
+      esc(t("还没量过。跑一次就把你这台机器的真实数字填在这里：python3 bench/measure_models.py --json bench/measured-local.json",
+           "Not measured yet. Run this once and the real numbers for your machine appear here: python3 bench/measure_models.py --json bench/measured-local.json")) +
+      "</div>";
+  } else {
+    const m = g.machine || {};
+    $("measured").innerHTML =
+      `<div class="mut" style="font-size:11.5px">${esc(t("实测机器", "Measured on"))}：${esc(m.chip || m.os || "")}　${m.ram_gb ? esc(m.ram_gb) + "GB " + esc(t("内存","RAM")) : ""}${m.gpu ? "　" + esc(m.gpu) : ""}</div>
+      <table><thead><tr>
+        <th>${esc(t("模型","Model"))}</th><th>${esc(t("文件","File"))}</th>
+        <th>${esc(t("驻留内存","Resident"))}</th><th>${esc(t("速度","Speed"))}</th>
+        <th>${esc(t("装得下吗","Fits"))}</th><th>${esc(t("体验","Feel"))}</th>
+      </tr></thead><tbody>` +
+      rows.map(r => `<tr>
+        <td>${esc(r.name)}</td>
+        <td class="mut">${esc(r.file_gb)}G</td>
+        <td class="mut">${r.resident_gb ? esc(r.resident_gb) + "G" : "—"}</td>
+        <td>${r.tok_s ? esc(r.tok_s) + " tok/s" : "—"}</td>
+        <td>${r.error ? '<span class="bad">' + esc(r.error) + '</span>'
+              : (r.fits ? '<span class="ok">✓</span> ' : '<span class="bad">✗</span> ') + esc(r.fit_note)}</td>
+        <td>${r.feel ? esc(r.feel) : "—"}<span class="mut"> ${esc(r.feel_note || "")}</span></td>
+      </tr>`).join("") + "</tbody></table>";
+  }
+
+  // 怎么选
+  $("howto").innerHTML =
+    ((g.recommend || {}).command
+      ? `<div class="rec"><div><b>${esc(t("该装哪个：", "Suggested: "))}</b>${md((g.recommend || {}).note || "")}</div>
+         <pre class="cmd">${esc(g.recommend.command)}　${esc(g.recommend.download || "")}</pre>
+         <div class="mut" style="font-size:11.5px">${md(g.recommend.why || "")}</div></div>`
+      : "") +
+    (g.howto || []).map(x =>
+      `<div class="note" style="margin:6px 0">· ${md(x)}</div>`).join("");
+}
+
+// ── 01 辅助：本机一个模型都没有时，给出三条路 + 照做三步 + 该装哪个 ──
+// 这一段是给**第一次用的人**看的：默认状态下这个工具不需要模型就能出估值，
+// 但"想用问答"的人得知道装什么、装多大、装完怎么确认。
+function renderNoModel(d){
+  const g = d.guide || {};
+  const has = (d.runtimes || []).some(rt => rt.ok && (rt.models || []).length);
+  if(has){ $("noModel").innerHTML = ""; return; }
+  const rec = g.recommend || {};
+  $("noModel").innerHTML = `
+    <div class="warn" style="border-color:var(--pri);background:rgba(0,229,160,.06);margin-top:12px">
+      <b>${esc(t("本机没检测到模型 —— 这不影响估值。",
+                 "No local model detected — this does not affect valuation."))}</b>
+      <span>${esc(t("报表识别、勾稽校验、DCF 与乘数计算全是代码跑的；没有模型只少了「问答」那一步。三条路，挑一条：",
+                    "Statement recognition, articulation checks, DCF and multiples are all code; without a model you only lose Q&A. Three paths — pick one:"))}</span>
+    </div>
+    ${(g.no_model_paths || []).map((p, i) => `
+      <div class="path">
+        <div class="pt"><b>${i + 1}. ${md(p.title)}</b></div>
+        <div class="mut">${esc(t("适合", "For"))}：${md(p.for)}</div>
+        <div class="mut">${esc(t("代价", "Cost"))}：${md(p.cost)}</div>
+        <div>${md(p.how)}</div>
+      </div>`).join("")}
+    <div class="rec">
+      <div><b>${esc(t("装哪个：", "Which one: "))}</b>${md(rec.note || "")}</div>
+      <pre class="cmd">${esc(rec.command || "")}</pre>
+      <div class="mut" style="font-size:11.5px">${(g.install_steps || []).map(s => esc(s)).join("<br>")}</div>
+    </div>`;
+}
+
+// ── 渲染 ──
+function render(){
+  const d = DATA;
+  $("cfgPath").textContent = d.config_path || "";
+
+  // 01 本机运行时
+  $("runtimes").innerHTML = (d.runtimes || []).map(rt => `
+    <div class="rt">
+      <h3>${esc(rt.label)} <span class="pill ${rt.ok ? "on" : "off"}">${rt.ok ? "在跑" : "连不上"}</span></h3>
+      <div class="mut" style="font-size:11.5px">${esc(rt.url)}　${esc(rt.why || "")}</div>
+      <div class="models">${(rt.models || []).map(m =>
+        `<span onclick="pickModel('${esc(m)}')">${esc(m)}</span>`).join("")}</div>
+    </div>`).join("");
+
+  renderNoModel(d);
+
+  const opts = [];
+  (d.runtimes || []).forEach(rt => (rt.models || []).forEach(m => opts.push(m)));
+  (d.providers || []).filter(p => p.kind === "ready" && p.enabled).forEach(p =>
+    (p.models || []).forEach(m => opts.push(p.name + "/" + m)));
+  $("gateModel").innerHTML = opts.map(m => `<option>${esc(m)}</option>`).join("");
+
+  // 02 哪台机器配哪个模型（指引）
+  renderGuide(d.guide);
+
+  // 03 云端
+  $("cloudTable").querySelector("tbody").innerHTML = (d.providers || []).map(p => `
+    <tr>
+      <td>${esc(p.label)}${p.kind !== "ready"
+            ? ' <span class="pill adapter">' + t("需适配", "adapter") + '</span>' : ''}</td>
+      <td class="mut" style="font-size:11.5px">${esc(p.host)}</td>
+      <td>${p.has_key ? '<span class="ok">' + esc(p.key_display) + '</span>'
+                      : '<input type="text" data-keyfile="' + esc(p.name) +
+                        '" placeholder="' + esc(p.key_file || t("密钥文件路径，或下面填密钥", "key file path, or paste a key")) + '">'}</td>
+      <td>
+        ${p.kind !== "ready" ? '<span class="mut">' + t("没做", "n/a") + '</span>' : `
+        <label class="mut"><input type="checkbox" data-enable="${esc(p.name)}"
+          ${p.enabled ? "checked" : ""}> ${t("启用", "enable")}</label>`}
+      </td>
+      <td>${p.kind === "ready" && p.enabled
+            ? `<button class="ghost" onclick="cloudCheck('${esc(p.name)}','${esc((p.models||[])[0]||"")}')">${t("试一次", "test")}</button>`
+            : '<span class="mut">—</span>'}</td>
+    </tr>`).join("");
+
+  // 03 用途
+  $("purposes").innerHTML = Object.entries(d.purpose_label || {}).map(([k, label]) => `
+    <div class="q row" style="margin:8px 0">
+      <span style="min-width:260px">${esc(label)}</span>
+      <select data-purpose="${esc(k)}">
+        ${opts.map(m => `<option ${m === d.purposes[k] ? "selected" : ""}>${esc(m)}</option>`).join("")}
+      </select>
+    </div>`).join("");
+
+  // 05 审计
+  const rows = (d.audit || []).slice().reverse().map(e => {
+    const pay = e.payload || {};
+    const dec = e.decision === "ALLOW-CONSENT"
+      ? '<span class="ok">授权后放行</span>'
+      : (e.decision === "BLOCK" ? '<span class="bad">拦截</span>'
+                                : '<span class="mut">本机</span>');
+    return `<tr><td class="mut" style="white-space:nowrap">${esc(e.ts || "")}</td>
+      <td>${dec}</td><td>${esc(e.host || "")}</td>
+      <td class="mut">${esc(e.purpose || "")}</td>
+      <td class="mut">${pay.bytes || 0} B${pay.sha256 ? " · " + esc(pay.sha256.slice(0, 12)) : ""}</td>
+      <td class="mut">${esc((e.consent && e.consent.what) || "")}</td></tr>`;
+  }).join("");
+  $("audit").querySelector("tbody").innerHTML = rows ||
+    `<tr><td class="mut">${t("还没有出网记录", "no egress recorded yet")}</td></tr>`;
+}
+
+function pickModel(m){ $("gateModel").value = m; }
+
+async function load(){ DATA = await (await fetch("/api/config")).json(); render(); }
+
+// ── 动作 ──
+async function runGate(){
+  const model = $("gateModel").value;
+  if(!model) return;
+  $("gateBtn").disabled = true;
+  $("gateOut").innerHTML = '<div class="term">' +
+    t("正在跑质量门槛（本地模型可能要 1–3 分钟）…", "Running the quality gate (1–3 min for a local model)…") + '</div>';
+  const d = await post("/api/gate", {model});
+  $("gateBtn").disabled = false;
+  if(!d.ok){
+    $("gateOut").innerHTML = '<div class="term bad">' + esc(d.error) + '</div>';
+    return;
+  }
+  const verdict = d.error ? '<span class="bad">' + esc(d.error) + '</span>'
+    : (d.passed ? '<span class="ok">★ ' + t("够格进生产", "fit for production") + '</span>'
+                : '<span class="amber">✗ ' + t("未达门槛", "below the bar") + '</span>');
+  $("gateOut").innerHTML = '<div class="term">' + esc(model) + "　" + verdict +
+    "　" + esc(d.score || "") +
+    (d.failed && d.failed.length ? "\n\n" + t("卡在：", "Failed on:") + "\n" +
+      d.failed.map(f => "  ✗ " + esc(f)).join("\n") : "") +
+    (d.report ? "\n\n" + esc(d.report) : "") + '</div>';
+}
+
+async function cloudCheck(provider, model){
+  const what = prompt(t("这次要发什么？（会写进审计）", "What is being sent? (recorded in the audit)"),
+                      t("一句话测试，不含任何材料内容", "One-line test, contains no material content"));
+  if(what === null) return;
+  $("cloudOut").innerHTML = '<div class="term">' + t("正在试…", "Testing…") + '</div>';
+  const d = await post("/api/cloud-check", {provider, model, what});
+  $("cloudOut").innerHTML = '<div class="term">' + (d.ok
+    ? '<span class="ok">✓ ' + esc(d.model) + '</span>　' + esc(d.reply) +
+      '\n' + t("主机", "host") + ": " + esc(d.host) + "　" + t("发出", "sent") + ": " +
+      d.sent_bytes + " B"
+    : '<span class="bad">✗ ' + esc(d.error) + '</span>') + '</div>';
+  load();
+}
+
+async function save(){
+  const local = {ollama_url: ($("localOllama") || {}).value || undefined};
+  const cloud = {};
+  document.querySelectorAll("[data-enable]").forEach(cb => {
+    cloud[cb.dataset.enable] = {enabled: cb.checked};
+  });
+  document.querySelectorAll("[data-keyfile]").forEach(inp => {
+    if(!cloud[inp.dataset.keyfile]) cloud[inp.dataset.keyfile] = {};
+    cloud[inp.dataset.keyfile].api_key_file = inp.value;
+    cloud[inp.dataset.keyfile].api_key = inp.value.trim().startsWith("sk-")
+      || inp.value.trim().startsWith("nvapi-") ? inp.value.trim() : "";
+  });
+  const purposes = {};
+  document.querySelectorAll("[data-purpose]").forEach(s => {
+    purposes[s.dataset.purpose] = s.value;
+  });
+  if(local.ollama_url === undefined) delete local.ollama_url;
+  const d = await post("/api/config", {local, cloud, purposes});
+  $("saveMsg").textContent = d.ok
+    ? t("已保存 → ", "saved → ") + d.path
+    : t("保存失败：", "save failed: ") + (d.error || "");
+  if(d.ok) load();
+}
+
+applyLang();
+load();
+</script>
+</body></html>

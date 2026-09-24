@@ -92,6 +92,7 @@
     transition:all .18s ease}
   .doclink:hover{color:var(--pri);border-color:var(--pri);background:rgba(0,229,160,.08)}
   .doclink::before{content:"?";color:var(--pri);font-weight:700}
+  .doclink.gear::before{content:"⚙"}                 /* 模型设置：⚙ 一眼认出来 */
 
   /* 装饰性命令行：放进 .tagline-row 里，左沿由外层 padding 决定（自己不写缩进） */
   .prompt{color:var(--mut);font-size:12px;margin:7px 0 0}
@@ -288,6 +289,7 @@
       <div class="byline">by New Chapter Ventures</div>
     </div>
     <a class="doclink" id="docLink" href="/doc" data-i18n="nav.doc"></a>
+    <a class="doclink gear" id="cfgLink" href="/config" data-i18n="nav.config"></a>
     <div class="lang" role="group">
       <button type="button" data-lang="zh">中文</button>
       <button type="button" data-lang="en">EN</button>
@@ -391,6 +393,7 @@ const I18N = {
     "foot.version": "FreeAnalyst v{v} · 本机运行 · 只绑 127.0.0.1",
     "foot.offline": "FreeAnalyst · 设计预览（未连接本机服务）",
     "nav.doc": "说明文件",
+    "nav.config": "模型设置",
     "nav.docstale": "服务是旧进程，可能还没有说明文件页 —— 先重启服务再打开",
     "pill.egress": "零出境 · 机密材料仅在本机处理",
     "pill.arith": "算术由代码执行 · 不交由模型",
@@ -448,6 +451,7 @@ const I18N = {
     "foot.version": "FreeAnalyst v{v} · running locally · bound to 127.0.0.1",
     "foot.offline": "FreeAnalyst · design preview (no local service connected)",
     "nav.doc": "Documentation",
+    "nav.config": "Model settings",
     "nav.docstale": "The service process is stale and may not serve the documentation page yet — restart the service first",
     "pill.egress": "No egress · Confidential materials processed locally only",
     "pill.arith": "Arithmetic executed in code, never by the model",

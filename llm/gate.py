@@ -149,6 +149,19 @@ def _from_json(model: str, report: Path) -> GateResult | None:
             continue
         why = "；".join(r.get("reasons") or []) or "未说明原因"
         failed.append(f"{r.get('name', r.get('id', '?'))} —— {why}")
+
+    # **"测不了"不是"不合格"。** 全部用例都是"调用失败"时（认证失败、超时、
+    # 服务地址不对），结论必须写成"这次没测成 + 原因"，而不是"未达门槛"——
+    # 后者会让人据此把模型否掉，而问题其实在密钥或网络上。
+    err = str(d.get("error") or "")
+    if not err:
+        calls = [(r.get("reasons") or []) for r in (d.get("results") or [])]
+        if calls and all(c and all("调用失败" in x for x in c) for c in calls):
+            err = calls[0][0]
+    if err:
+        return GateResult(model=model, passed=False, score=f"{got}/{total}",
+                          failed=failed[:6], report=str(report), error=err)
+
     return GateResult(model=model, passed=(total > 0 and got == total),
                       score=f"{got}/{total}", failed=failed[:6],
                       report=str(report))

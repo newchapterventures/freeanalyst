@@ -184,9 +184,47 @@ def cmd_ingest(args: argparse.Namespace) -> int:
 # ---------------------------------------------------------------- 问答
 
 def call_local_model(model: str, system: str, user: str) -> str:
+    """本机模型（ollama）—— 老名字，保住了别的调用方。"""
+    return call_model(model, system, user)
+
+
+#: 云端模型的写法：**`服务商/模型名`**，例如 `deepseek/deepseek-chat`。
+#: 不带前缀的一律当本机模型（默认那条路不变）。
+CLOUD_MODEL_PAT = re.compile(r"^([a-z0-9_]+)/(.+)$")
+
+
+def split_model(model: str) -> tuple[str, str]:
+    """`deepseek/deepseek-chat` → `("deepseek", "deepseek-chat")`；本机模型 → `("", 名字)`。
+
+    只在**前缀是已注册的服务商**时才当云端 —— 本机模型名里也可能带斜杠
+    （ollama 的 `library/qwen3:14b`），不能一见到斜杠就往云端送。
+    """
+    m = CLOUD_MODEL_PAT.match(model or "")
+    if m:
+        from llm.cloud import PROVIDERS
+        if m.group(1) in PROVIDERS:
+            return m.group(1), m.group(2)
+    return "", model
+
+
+def call_model(model: str, system: str, user: str, *, consent=None,
+               timeout: int = 180) -> str:
+    """问模型 —— **本机直连，云端必须带按次授权**。
+
+    `consent=None` 且模型是云端时**直接拒绝**（在 `llm/cloud.py` 里挡着），
+    不是"悄悄降级"也不是"静默拒绝"：会抛出说明"云端调用必须带按次授权"。
+    """
+    provider, real = split_model(model)
+    if provider:
+        from llm import cloud
+        backend = cloud.build(provider)
+        r = backend.generate(real, prompt=user, system=system,
+                            timeout=timeout, consent=consent)
+        return r.text
+
     payload = json.dumps(
         {
-            "model": model,
+            "model": real,
             "messages": [
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
@@ -200,7 +238,7 @@ def call_local_model(model: str, system: str, user: str) -> str:
         OLLAMA_URL,
         data=payload,
         headers={"Content-Type": "application/json"},
-        purpose=f"local LLM inference ({model})",
+        purpose=f"local LLM inference ({real})",
     )
     body = json.loads(raw.decode("utf-8"))
     return body["choices"][0]["message"]["content"]
@@ -283,7 +321,22 @@ def cmd_models(args: argparse.Namespace) -> int:
         print()
         print("  一个都没在跑。**这不是错误** —— 提取和估值是纯代码算的，")
         print("  没有模型也能跑出结论，只是「读了材料回答问题」不可用。")
-        print("  想用：装 ollama（ollama.com），然后 `ollama serve`。")
+        # 照着做就能装好，别只丢一句"装 ollama"
+        from llm import guide as _guide
+
+        rec = _guide.recommend(_guide.detect_ram_gb())
+        print()
+        print("  三条路（挑一条）：")
+        for i, p in enumerate(_guide.NO_MODEL_PATHS, 1):
+            print(f"   {i}. {p['title']}")
+            print(f"      适合：{p['for']}　代价：{p['cost']}")
+        print()
+        print("  装本机模型：")
+        for s in _guide.INSTALL_STEPS:
+            print(f"   {s}")
+        print()
+        print(f"  该装哪个：{rec['note']}")
+        print(f"   {rec['command']}　（{rec['download']}，{rec['why']}）")
         return 0
 
     b = backends.pick()

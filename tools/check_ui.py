@@ -23,6 +23,7 @@ ROOT = Path(__file__).resolve().parent.parent
 PAGE = ROOT / "webapp_page.html"
 LOGO = ROOT / "logo.svg"
 DOC = ROOT / "webapp_doc.html"
+CONFIG = ROOT / "webapp_config.html"
 
 # 页面元素的规格（与 webapp_page.html 里的常量一致）
 BW, BH = 3, 3                 # 方块大小
@@ -300,6 +301,30 @@ def check_origins() -> None:
     print(f"  来源类别：{' / '.join(kinds)} · 页面均已识别 ✓")
 
 
+def check_config_page() -> None:
+    """模型配置页：五节齐全 + 中英成对 + JS 语法过。
+
+    这一页最容易出的两种错都**看不出来**：白屏（JS 语法错）、
+    切到英文多一块空白（中英一边缺）。
+    """
+    if not CONFIG.exists():
+        fail("缺少配置页 webapp_config.html")
+    src = CONFIG.read_text(encoding="utf-8")
+    for token in ("本机模型", "云端模型", "哪个用途用哪个模型",
+                  "现在支持哪些", "出网审计"):
+        if token not in src:
+            fail(f"配置页缺一节：{token}")
+    if "闭源模型有数据风险" not in src:
+        fail("配置页没把闭源模型的数据风险写在明面上")
+    zh = len(re.findall(r'data-zh="', src))
+    en = len(re.findall(r'data-en="', src))
+    if zh != en:
+        fail(f"配置页中英不成对：data-zh {zh} 条 / data-en {en} 条")
+    script = src.split("<script>", 1)[-1].split("</script>", 1)[0]
+    check_script_syntax(script)
+    print(f"  配置页：{len(src)} 字节 · 中英各 {zh} 条 ✓")
+
+
 def main() -> int:
     print(f"体检：{PAGE.name} 与 {LOGO.name} 与 {DOC.name}\n")
     src = PAGE.read_text(encoding="utf-8")
@@ -322,6 +347,8 @@ def main() -> int:
     check_logo(LOGO)
     print("── 说明文件 ──")
     check_doc()
+    print("── 模型配置页 ──")
+    check_config_page()
     print()
     if fails:
         print(f"不通过：{len(fails)} 项 ✗")

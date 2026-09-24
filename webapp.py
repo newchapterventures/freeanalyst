@@ -56,13 +56,13 @@ DEFAULT_PORT = 8765
 #: 接口清单与版本 —— 页面拿它跟自己对表。
 #: **真踩过**：页面加了「选择文件夹…」，但跑着的服务还是旧进程（Python 代码不会热加载），
 #: 于是点下去只回一句 `unknown endpoint`。现在页面能自己发现这件事并说清楚。
-VERSION = "0.35"
-ENDPOINTS = ("health", "scan", "appraise", "pick")
+VERSION = "0.36"
+ENDPOINTS = ("health", "scan", "appraise", "pick", "config", "gate", "cloud-check")
 #: 页面依赖的**能力**标记（比接口更细一层：同一个接口也可能少字段）。
 #: 页面会逐条核对，缺哪条就提示"服务是旧进程"。
 #: 真踩过：百分比字段加进引擎后没重启服务，页面上那些框**静默地没有 %** ——
 #: 用户于是不知道填 5、0.05 还是 5%。
-FEATURES = ("percent-unit",)
+FEATURES = ("percent-unit", "llm-config")
 
 #: 项目根目录 —— 页面正文和默认输出都相对它。
 ROOT = Path(__file__).resolve().parent
@@ -74,8 +74,10 @@ PAGE_PATH = ROOT / "webapp_page.html"
 #: 说明文件（功能 / 免责声明 / 模型 / 使用 / 调试 / 接自己的大模型）—— 独立成页，
 #: 因为它给的是**使用者**，而 README 给的是开发者/审计者，两边读者不同。
 DOC_PATH = ROOT / "webapp_doc.html"
+#: 模型配置页（本机运行时 / 云端服务商 / 用途绑定 / 出网审计）。
+CONFIG_HTML_PATH = ROOT / "webapp_config.html"
 #: 除接口之外还提供哪些页面 —— 页面据此判断「服务是不是旧进程」
-PAGES = ("doc",)
+PAGES = ("doc", "config")
 
 
 def doc_html() -> str:
@@ -85,6 +87,15 @@ def doc_html() -> str:
     return ("<!DOCTYPE html><meta charset='utf-8'>"
             "<body style='font:14px monospace;background:#05070A;color:#D7F5E9;padding:40px'>"
             "说明文件缺失：webapp_doc.html 不在仓库里。</body>")
+
+
+def config_html() -> str:
+    """模型配置页。缺失时给一句人话，不抛 500。"""
+    if CONFIG_HTML_PATH.exists():
+        return CONFIG_HTML_PATH.read_text(encoding="utf-8")
+    return ("<!DOCTYPE html><meta charset='utf-8'>"
+            "<body style='font:14px monospace;background:#05070A;color:#D7F5E9;padding:40px'>"
+            "配置页缺失：webapp_config.html 不在仓库里。</body>")
 
 
 def page_html() -> str:
@@ -249,6 +260,194 @@ def api_appraise(path: str, unit: str, answers: dict[str, str],
     }
 
 
+# ─────────────────── 模型配置页（本机 / 云端 / 用途 / 审计） ───────────────────
+
+def api_audit(n: int = 20) -> list[dict]:
+    """出网审计的尾巴 —— **让"发了什么"看得见**。
+
+    审计里记的是 主机 / 用途 / 字节数 / sha256 / 谁授权 / 发了什么的描述，
+    **不记内容本身**（否则审计文件自己会变成第二个泄密点）。
+    """
+    import guard
+    p = Path(guard.AUDIT_PATH)
+    if not p.exists():
+        return []
+    out: list[dict] = []
+    for line in p.read_text(encoding="utf-8").strip().splitlines()[-n:]:
+        try:
+            out.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return out
+
+
+def api_config() -> dict:
+    """配置页要的全部数据。**密钥只给打码值。**"""
+    from llm import backends as lb
+    from llm import cloud
+    from llm import config as lcfg
+
+    cfg = lcfg.load()
+    runtimes: list[dict] = []
+
+    ob = lb.OllamaBackend(base_url=cfg["local"]["ollama_url"])
+    ok, why = ob.available()
+    models: list[str] = []
+    if ok:
+        try:
+            models = ob.list_models()
+        except Exception as exc:                        # noqa: BLE001
+            why = f"{why}；列模型失败：{exc}"
+    runtimes.append({"name": "ollama", "label": "Ollama",
+                     "url": cfg["local"]["ollama_url"], "ok": ok, "why": why,
+                     "models": models})
+
+    if cfg["local"].get("openai_compat_enabled"):
+        cb = lb.OpenAICompatBackend(base_url=cfg["local"]["openai_compat_url"])
+        ok2, why2 = cb.available()
+        ms: list[str] = []
+        if ok2:
+            try:
+                ms = cb.list_models()
+            except Exception as exc:                    # noqa: BLE001
+                why2 = f"{why2}；列模型失败：{exc}"
+        runtimes.append({"name": "openai-compat", "label": "OpenAI 兼容（LM Studio / vLLM / llama.cpp）",
+                         "url": cfg["local"]["openai_compat_url"], "ok": ok2,
+                         "why": why2, "models": ms})
+
+    providers = []
+    for name, info in cloud.PROVIDERS.items():
+        c = cfg["cloud"].get(name, {})
+        key = lcfg.key_for(cfg, name)
+        providers.append({
+            "name": name, "label": info["label"], "kind": info["kind"],
+            "host": info["host"], "models": list(info["models"]),
+            "note": info.get("note", ""),
+            "enabled": bool(c.get("enabled")),
+            "key_display": cloud.mask(key), "has_key": bool(key),
+            "key_file": (c.get("api_key_file") or info.get("key_file") or ""),
+        })
+
+    return {"ok": True, "runtimes": runtimes, "providers": providers,
+            "purposes": cfg["purposes"], "purpose_label": lcfg.PURPOSE_LABEL,
+            "local": cfg["local"],
+            "config_path": str(lcfg.DEFAULT_PATH), "audit": api_audit(8),
+            # 指引（哪台机器配哪个模型）—— **单一来源在 llm/guide.py**，
+            # 页面只渲染，不自己写一份建议：两处各写一套，早晚对不上。
+            "guide": guide_payload()}
+
+
+def guide_payload() -> dict:
+    """给页面/说明文件用的指引数据：分档建议 + 本机实测 + 怎么选 + 没有模型怎么办。"""
+    from llm import guide
+
+    d = guide.load_measured()
+    ram = guide.detect_ram_gb() or (d.get("machine") or {}).get("ram_gb") or 0
+    return {"tiers": [dict(t) for t in guide.NO_GPU_TIERS],
+            "measured": guide.measured_rows(),
+            "machine": (d.get("machine") or {}),
+            "howto": list(guide.HOWTO),
+            "speed_tiers": [{"min": a, "name": b, "note": c}
+                            for a, b, c in guide.SPEED_TIERS],
+            # 还没有本地模型的人：三条路 + 照做三步 + 按内存推荐的 pull 命令
+            "ram_gb": ram,
+            "recommend": guide.recommend(ram),
+            "no_model_paths": [dict(p) for p in guide.NO_MODEL_PATHS],
+            "install_steps": list(guide.INSTALL_STEPS),
+            # 质量门槛实测（本地 vs 云端）—— **指引里最该说清的一句话**
+            "quality": guide.quality_rows(),
+            "truth": guide.truth_lines()}
+
+
+def api_config_save(body: dict) -> dict:
+    """只认这三种字段（本机地址 / 云端开关与密钥 / 用途绑定），别的一律忽略。"""
+    from llm import cloud
+    from llm import config as lcfg
+
+    cfg = lcfg.load()
+    local = body.get("local") or {}
+    for k in ("ollama_url", "openai_compat_url"):
+        if local.get(k):
+            cfg["local"][k] = str(local[k]).strip()
+    if "openai_compat_enabled" in local:
+        cfg["local"]["openai_compat_enabled"] = bool(local["openai_compat_enabled"])
+
+    for name, c in (body.get("cloud") or {}).items():
+        if name not in cloud.PROVIDERS:
+            continue
+        tgt = cfg["cloud"].setdefault(name, {"enabled": False, "api_key": "",
+                                             "api_key_file": ""})
+        if "enabled" in c:
+            tgt["enabled"] = bool(c["enabled"])
+        if c.get("api_key_file") is not None:
+            tgt["api_key_file"] = str(c.get("api_key_file") or "").strip()
+        # 密钥：空字符串 = **不改**（避免"界面拿不到原文 → 一保存就把密钥清空"）
+        if str(c.get("api_key") or "").strip():
+            tgt["api_key"] = str(c["api_key"]).strip()
+
+    for purpose, model in (body.get("purposes") or {}).items():
+        if purpose in lcfg.PURPOSE_LABEL:
+            cfg["purposes"][purpose] = str(model).strip()
+
+    p = lcfg.save(cfg)
+    return {"ok": True, "path": str(p), "config": lcfg.masked(lcfg.load())}
+
+
+def api_gate(model: str, runs: int = 1) -> dict:
+    """跑一次模型质量门槛。**这是"能用不能用"的裁决，不是跑分。**"""
+    from llm import gate as lg
+
+    if not model.strip():
+        return {"ok": False, "error": "先选一个模型"}
+    try:
+        r = lg.run_gate(model.strip(), timeout=900)
+    except Exception as exc:                            # noqa: BLE001
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+    return {"ok": True, "model": r.model, "passed": r.passed, "score": r.score,
+            "failed": list(r.failed), "error": r.error, "report": r.report,
+            "line": r.line(), "detail": lg.detail_lines(r)}
+
+
+def api_cloud_check(provider: str, model: str, what: str) -> dict:
+    """云端**试一次** —— 这一次调用要按次授权，授权也写进审计。
+
+    发出去的只有一句合成测试话术（**不含任何材料内容**），
+    `what` 是人在界面上确认过的"这次到底发什么"。
+    """
+    from guard import CloudConsent
+    from llm import cloud
+    from llm import config as lcfg
+
+    info = cloud.PROVIDERS.get(provider)
+    if not info:
+        return {"ok": False, "error": f"不认识的服务商 {provider}"}
+    if info["kind"] != "ready":
+        return {"ok": False, "error": f"{info['label']} 需要单独适配（{info.get('note','')}）"}
+
+    cfg = lcfg.load()
+    if not (cfg["cloud"].get(provider, {}) or {}).get("enabled"):
+        return {"ok": False, "error": f"{info['label']} 还没在配置里启用 —— "
+                                      "启用之后才能试（云端默认关闭是刻意的）"}
+    b = cloud.build(provider, api_key=lcfg.key_for(cfg, provider))
+    ok, why = b.available()
+    if not ok:
+        return {"ok": False, "error": why}
+
+    prompt = "请只回复两个字：可用"
+    consent = CloudConsent(
+        host=b.host, purpose=f"配置页试一次：{info['label']}",
+        what=(what.strip() or "一句话测试（不含任何材料内容）"),
+        approved_by="user:配置页确认")
+    try:
+        r = b.generate(model or b.models[0], prompt=prompt, system="",
+                       timeout=60, consent=consent)
+    except Exception as exc:                            # noqa: BLE001
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+    return {"ok": True, "reply": (r.text or "").strip()[:80],
+            "host": b.host, "model": r.model,
+            "sent_bytes": len(prompt.encode("utf-8"))}
+
+
 # ─────────────────────────── HTTP 层 ───────────────────────────
 
 class Handler(BaseHTTPRequestHandler):
@@ -291,6 +490,12 @@ class Handler(BaseHTTPRequestHandler):
                         "features": list(FEATURES)})
         elif self.path in ("/doc", "/doc.html"):
             self._send(200, doc_html().encode(), "text/html; charset=utf-8")
+        elif self.path in ("/config", "/config.html"):
+            self._send(200, config_html().encode(), "text/html; charset=utf-8")
+        elif self.path == "/api/config":
+            self._json(api_config())
+        elif self.path == "/api/audit":
+            self._json({"ok": True, "lines": api_audit(20)})
         else:
             self._send(404, b"not found", "text/plain; charset=utf-8")
 
@@ -313,6 +518,14 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(api_appraise(body.get("path") or "",
                                         body.get("unit") or "",
                                         body.get("answers") or {}))
+            elif self.path == "/api/config":
+                self._json(api_config_save(body or {}))
+            elif self.path == "/api/gate":
+                self._json(api_gate(body.get("model") or "", body.get("runs") or 1))
+            elif self.path == "/api/cloud-check":
+                self._json(api_cloud_check(body.get("provider") or "",
+                                           body.get("model") or "",
+                                           body.get("what") or ""))
             else:
                 self._json({"ok": False, "error": "unknown endpoint"}, 404)
         except Exception as exc:                       # noqa: BLE001
