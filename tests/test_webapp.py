@@ -524,7 +524,8 @@ class TestOnboarding(unittest.TestCase):
     def test_buttons_and_replay(self):
         for token in ("onbNext", "onbSkip", "onbDots", "onb.replay", "ONB_KEY"):
             self.assertIn(token, self.html, token)
-        self.assertIn("onbMaybeStart()", self.html, "boot 里没调起来，引导永远不会出现")
+        # boot 里必须把它调起来，并且**带上服务端的使用状态**（否则端口换了会重弹）
+        self.assertIn("onbMaybeStart(h && h.usage)", self.html)
 
 
 class TestConfigPage(unittest.TestCase):

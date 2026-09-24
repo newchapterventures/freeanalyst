@@ -1028,7 +1028,7 @@ function boot(){
     const feats = (h && h.features) || [];
     VER = (h && h.version) || "";
     setVer();
-    onbMaybeStart();     // 第一次打开：先讲三句（服务通了才讲）
+    onbMaybeStart(h && h.usage);   // 第一次打开且没用过：先讲三句
     // 接口、页面、**能力标记**逐条核对：少任何一条都说明跑着的是旧进程。
     // 能力标记这一类是后补的 —— 百分比字段加进来但没重启时，
     // 页面上那些框会**静默地没有 %**，用户根本不知道填 5 还是 0.05。
@@ -1070,6 +1070,12 @@ function onbDone(){
   $("onb").classList.add("hide");
   document.body.style.overflow = "";
   try { localStorage.setItem(ONB_KEY, "1"); } catch(e){ /* 私密模式：不强求 */ }
+  // 回记到**服务端**（按这台机器记，不按浏览器记）—— 端口换了、缓存清了都不再重弹。
+  // 记不上也不打扰人：引导本身已经完成了。
+  try {
+    fetch("/api/onboarded", {method:"POST",
+      headers:{"Content-Type":"application/json"}, body:"{}"});
+  } catch(e){ /* 老服务没有这个接口时静默跳过 */ }
 }
 
 // 键盘：← → 翻页、Esc 跳过、回车下一步（提示就写在弹层里，不能写了不生效）
@@ -1094,11 +1100,18 @@ function onbRelang(){
   if(el && !el.classList.contains("hide")) onbShow(ONB_I);
 }
 
-//: 只在"服务在跑"时弹（DEMO 预览模式不弹 —— 那是在改设计稿，不是真在用）
-function onbMaybeStart(){
-  let seen = "1";
+//: 该不该出现？看三件事，**依据是"这台机器上用过没有"，不是"这个浏览器记没记住"**：
+//:   ① 服务端：出过估值（runs > 0）→ **用过就不用教**
+//:   ② 服务端：引导回记过（onboarded）→ 看过就不必再看
+//:   ③ 浏览器：localStorage（服务端状态读不到时的兜底）
+//: 三个都为否才弹。这样端口换了（浏览器眼里是新站点）不会重弹，
+//: 反过来已经跑过一份估值的人也不会被拦一次教学。
+function onbMaybeStart(u){
+  u = u || {};
+  let seen = "";
   try { seen = localStorage.getItem(ONB_KEY) || ""; } catch(e){ seen = ""; }
-  if(!seen) onbShow(0);
+  if(u.onboarded || (u.runs || 0) > 0 || seen) return;
+  onbShow(0);
 }
 
 boot();
