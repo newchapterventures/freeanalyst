@@ -230,14 +230,15 @@
         并写进审计；代价是那一次的内容离开了本机，机密材料要自己拿捏。</li>
   </ul>
 
-  <h3>先说一句实话：本机模型现在过不了门槛</h3>
-  <p><b>质量门槛是用例集全过才算过（一票否决）。</b>实测（<code>bench/gate-local-6.json</code>）：
-     <b>本机 6 个模型没有一个过</b> —— 最好的是 <code>qwen3:14b</code> 与 <code>gemma3:12b</code> 各 4/5；
-     7B~8B 档（hermes3:8b、qwen2.5-coder:7b）只有 2/5；<b>18GB 的 <code>qwen3:30b-a3b</code> 反而只有 3/5</b>。
-     闭源那边 <code>deepseek-chat</code> 实测 5/5（代价：那一次的内容离开本机）。</p>
-  <p>所以现在本机的定位是<b>辅助</b>：答案必须带出处（工具会逐条给出处），关键结论人工回原文核对。
-     不能把本机模型的答复当成产出依据 —— 尤其"某条款是否已锁定""义务落在谁身上"这类判断，
-     实测正是这些项上翻车。</p>
+  <h3>先说一句实话：本机模型能过门槛了 —— 但要按实测挑</h3>
+  <p><b>质量门槛是用例集全过才算过（一票否决）。</b>实测（<code>bench/gate-qwen35c.json</code>）：
+     <b><code>qwen3.5:4b</code> 5/5 过全部门槛</b> —— 它只有 3.4GB，<b>8GB 内存的商务本就能跑</b>；
+     <code>qwen3.5:9b</code> 4/5（差「主体识别」一项）；旧一代 <code>qwen3:14b</code> 3/5；
+     18GB 的 <code>qwen3:30b-a3b</code> 也只有 3/5。<b>档位更大不等于更准</b> —— 这条是量出来的，
+     不是推理出来的。闭源那边 <code>deepseek-chat</code> 实测 5/5（代价：那一次的内容离开本机）。</p>
+  <p>但<b>过门槛 ≠ 万能</b>：答案仍必须带出处（工具会逐条给出处），关键结论要人工回原文核对。
+     翻车点集中在判断类问题上 ——「某条款是否已锁定」「义务落在谁身上」，旧一代和 9b 正是栽在这里
+     （4b 这一轮答对了，但同一题的表现会随材料与措辞波动，别把一次 5/5 当成保证）。</p>
 
   <h3>还没有本地模型？</h3>
   <p><b>默认状态下这个工具不需要模型</b>就能出估值报告。想用"读了材料回答问题"，再挑一条路：</p>
@@ -451,17 +452,19 @@ python3 freeanalyst.py ask "调整后 EBITDA 是怎么算的？"</pre>
         call's content leaves the machine. Judge that for confidential material yourself.</li>
   </ul>
 
-  <h3>Straight talk: no local model passes the gate today</h3>
+  <h3>Straight talk: a local model does pass the gate now — pick it by measurement</h3>
   <p><b>A model passes only if every case passes (a single miss is fatal).</b> Measured
-     (<code>bench/gate-local-6.json</code>): <b>none of the six local models passes</b> — the best are
-     <code>qwen3:14b</code> and <code>gemma3:12b</code> at 4/5; the 7B–8B tier (hermes3:8b,
-     qwen2.5-coder:7b) sits at 2/5; and the 18 GB <code>qwen3:30b-a3b</code> does <b>worse</b> at 3/5.
-     On the closed-source side <code>deepseek-chat</code> scored 5/5 (at the price of that call's
-     content leaving the machine).</p>
-  <p>So treat local models as <b>assistants</b>: answers must carry citations (the tool provides
-     them per line) and key conclusions need a human check against the source. Do not use a local
-     model's answer as the basis for a figure — the failures land exactly on judgements like
-     &quot;is this clause locked?&quot; and &quot;whose obligation is this?&quot;.</p>
+     (<code>bench/gate-qwen35c.json</code>): <b><code>qwen3.5:4b</code> scores 5/5</b> — and it is only
+     3.4 GB, so <b>an 8 GB business laptop can run it</b>. <code>qwen3.5:9b</code> scores 4/5
+     (missing &quot;entity identification&quot;); the older <code>qwen3:14b</code> 3/5; and the 18 GB
+     <code>qwen3:30b-a3b</code> also 3/5. <b>Bigger does not mean better</b> — that is measured,
+     not reasoned. On the closed-source side <code>deepseek-chat</code> scored 5/5 (at the price of
+     that call's content leaving the machine).</p>
+  <p>But <b>passing the gate is not omniscience</b>: answers must still carry citations (the tool
+     provides them per line) and key conclusions need a human check against the source. The failures
+     cluster on judgement calls — &quot;is this clause locked?&quot;, &quot;whose obligation is
+     this?&quot; — which is exactly where the older generation and 9b fell over (4b got it right this
+     round, but one run of 5/5 is not a guarantee).</p>
 
   <h3>No local model yet?</h3>
   <p><b>By default this tool needs no model at all</b> to produce a valuation report. If you want

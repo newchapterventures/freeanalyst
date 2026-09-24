@@ -103,11 +103,14 @@ NO_MODEL_PATHS: tuple[dict, ...] = (
 #: 代次会过期 —— 所以候选代次也在 `llm/registry.py` 里，联网时以官方库为准。
 RECOMMEND: tuple[dict, ...] = (
     {"ram_gb": 8, "model": "qwen3.5:4b", "download": "约 3.4GB",
-     "why": "当前一代的小档；8GB 机器留给系统的余量很小，这是能跑起来的最小档"},
+     "why": "**实测门槛 5/5，过全部门槛**；8GB 机器留给系统的余量很小，"
+            "而这正是能跑起来又够用的那一档"},
     {"ram_gb": 16, "model": "qwen3.5:9b", "download": "约 6.6GB",
-     "why": "16GB 商务本最稳的选择；本工具的问答够用"},
+     "why": "实测 4/5（差「主体识别」一项）；**只求过门槛就选 4b —— 它实测 5/5**，"
+            "要更大容量再上 9b"},
     {"ram_gb": 24, "model": "qwen3.5:9b", "download": "约 6.6GB",
-     "why": "先上 9b 试；内存有富余再考虑 qwen3.5:27b（体积未核实，装前先看下载量）"},
+     "why": "先上 9b 试；内存有富余再考虑 qwen3.5:27b（体积未核实，装前先看下载量）。"
+            "**大不等于稳** —— 实测 18GB 的 qwen3:30b-a3b 只有 3/5"},
     {"ram_gb": 32, "model": "qwen3.6:35b-a3b", "download": "体积未核实",
      "why": "大机器才谈得上的档；**大不等于稳**，装完先跑质量门槛再说"},
 )
@@ -167,8 +170,12 @@ def recommend(ram_gb: float = 0.0) -> dict:
 # ─────────────── 质量门槛的实测成绩（不猜：没有文件就说没有） ───────────────
 #: `bench/gate-*.json` —— 由 `bench/model_quality.py --json <路径>` 生成
 GATE_FILES: tuple[Path, ...] = (ROOT / "bench" / "gate-local-6.json",
-                                ROOT / "bench" / "gate-qwen35.json",
+                                ROOT / "bench" / "gate-qwen35c.json",
                                 ROOT / "bench" / "gate-cloud-2.json")
+# 注：`gate-qwen35.json` 是**坏测量**，已删除 —— 那一轮本机调用走的是 /v1，思考型模型
+# 在 /v1 上关不掉思考，答案全被挤进 reasoning 字段、content 恒空，于是 qwen3.5 被读成
+# "1/5 未达门槛"。修好调用路径后重测（gate-qwen35c.json）：4b 5/5、9b 4/5。
+# 坏测量的记录属于那次 bug 的提交，不属于这些模型的成绩 —— 留着会把结论带偏。
 
 
 def quality_rows() -> list[dict]:
@@ -218,10 +225,15 @@ def quality_of(model: str) -> dict:
 
 
 def truth_lines() -> list[str]:
-    """**最该先说清楚的一句话** —— 本地模型现在过不了门槛，云端能过。
+    """**最该先说清楚的一句话** —— 本机模型现在能不能过门槛，以及代价。
 
-    这条不是推理，是实测（`bench/gate-local-6.json` 与 `gate-cloud-2.json`）。
-    指引里如果不写，用户会以为"装个 8B 就万事大吉"，然后拿到错的答案还照用。
+    这条不是推理，是实测（`bench/gate-qwen35c.json` 等）。指引里如果不写，
+    用户要么以为"装个 8B 就万事大吉"，要么以为"本机根本不行" —— 两种都错：
+
+      * 2026-09 实测：`qwen3.5:4b`（3.4GB）**5/5 过全部门槛** —— 8GB 商务本就能跑
+      * 但档位更大**不等于**更准：`qwen3.5:9b` 4/5、旧一代 `qwen3:14b` 3/5、
+        18GB 的 `qwen3:30b-a3b` 也只有 3/5
+      * 过门槛也**不等于**万能：答案仍要带出处、关键结论回原文核对
     """
     rows = quality_rows()
     if not rows:
@@ -232,7 +244,13 @@ def truth_lines() -> list[str]:
     best_cloud = max((r["passed"] for r in cloud), default=0)
     total = (local[0]["total"] if local else 5)
     out = []
-    if local and best_local < total:
+    if local and best_local >= total:
+        hits = sorted(r["model"] for r in local if r["passed"] == total)
+        out.append(f"**本机模型能过门槛了**（门槛 {total} 项全过、一票否决）："
+                   f"{'、'.join(hits)}。它是最小档也能过 —— 档位更大**不等于**更准"
+                   f"（实测 9b 4/5、14b 3/5、18GB 的 30b-a3b 也只有 3/5）。"
+                   "过门槛**不等于**万能：答案必须带出处，关键结论人工回原文核对。")
+    elif local and best_local < total:
         out.append(f"**本机模型目前没有一个过门槛**（门槛是 {total} 项全过，一票否决）："
                    f"最好的是 {best_local}/{total}。所以本机问答现阶段只能当**辅助** —— "
                    "答案必须带出处、关键结论要人工回原文核对。")

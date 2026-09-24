@@ -269,7 +269,7 @@ async function post(path, body){
 function renderGuide(g){
   if(!g) return;
 
-  // 门槛实测：**先说不好听的**——本机现在过不了门槛，云端有过的
+  // 门槛实测：先说过得去的那一面 + 大不等于稳（内容全部由 llm/guide.py 的 truth 渲染）
   const q = g.quality || [];
   $("truth").innerHTML = (g.truth || []).map(x =>
     `<div class="warn" style="border-color:var(--amber);background:rgba(255,176,0,.07)">
