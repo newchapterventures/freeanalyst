@@ -105,14 +105,15 @@ RECOMMEND: tuple[dict, ...] = (
     {"ram_gb": 8, "model": "qwen3.5:4b", "download": "约 3.4GB",
      "why": "**实测门槛 5/5，过全部门槛**；8GB 机器留给系统的余量很小，"
             "而这正是能跑起来又够用的那一档"},
-    {"ram_gb": 16, "model": "qwen3.5:9b", "download": "约 6.6GB",
-     "why": "实测 4/5（差「主体识别」一项）；**只求过门槛就选 4b —— 它实测 5/5**，"
-            "要更大容量再上 9b"},
+    {"ram_gb": 16, "model": "qwen3.5:4b", "download": "约 3.4GB",
+     "why": "**选型顺序是先过门槛、再看速度** —— 过门槛的是 4b（5/5）；"
+            "想留更大余量可以上 9b（6.6GB，实测 4/5，差「主体识别」一项）"},
     {"ram_gb": 24, "model": "qwen3.5:9b", "download": "约 6.6GB",
-     "why": "先上 9b 试；内存有富余再考虑 qwen3.5:27b（体积未核实，装前先看下载量）。"
-            "**大不等于稳** —— 实测 18GB 的 qwen3:30b-a3b 只有 3/5"},
-    {"ram_gb": 32, "model": "qwen3.6:35b-a3b", "download": "体积未核实",
-     "why": "大机器才谈得上的档；**大不等于稳**，装完先跑质量门槛再说"},
+     "why": "内存宽裕就先试 9b（容量更大）；**但门槛上 4b 更可靠**（9b 4/5、4b 5/5），"
+            "**大不等于稳** —— 18GB 的 qwen3:30b-a3b 只有 3/5"},
+    {"ram_gb": 32, "model": "qwen3.5:9b", "download": "约 6.6GB",
+     "why": "大机器也别直接上大档：**先跑质量门槛再说** —— 实测 30b 级并不比小档准。"
+            "要更大容量再考虑 qwen3.5:27b（体积未核实，装前先看下载量）"},
 )
 
 #: 装本机模型的三步 —— 命令行 `models` 和配置页共用这一段。
@@ -179,8 +180,14 @@ GATE_FILES: tuple[Path, ...] = (ROOT / "bench" / "gate-local-6.json",
 
 
 def quality_rows() -> list[dict]:
-    """读所有门槛成绩：模型 / 分数 / 裁定 / 卡在哪几项。"""
-    rows: list[dict] = []
+    """读所有门槛成绩：模型 / 分数 / 裁定 / 卡在哪几项。
+
+    **同一个模型重测过就以后测的为准**（`GATE_FILES` 是从旧到新排的）。
+    不这么做会出现两行自相矛盾的成绩：`qwen3:14b` 在旧文件里是 4/5、新文件里是 3/5 ——
+    而那两次走的**不是同一条调用路径**（旧的走 /v1 且开着思考，新的走原生且关掉思考），
+    放在一张表里比大小是错的，人会照着一行错的去选型。
+    """
+    rows: dict[str, dict] = {}
     for f in GATE_FILES:
         try:
             d = json.loads(f.read_text(encoding="utf-8"))
@@ -206,14 +213,14 @@ def quality_rows() -> list[dict]:
                 if answers and empty * 2 > len(answers):
                     err = (f"{empty}/{len(answers)} 处回答为空 —— "
                            "很可能是思考占满了 token 预算（不是模型答错）")
-            rows.append({"model": model,
-                         "passed": r.get("passed", 0), "total": r.get("total", 0),
-                         "score": f"{r.get('passed', 0)}/{r.get('total', 0)}",
-                         "verdict": r.get("verdict", ""),
-                         "error": err,
-                         "failed": [] if err else failed,
-                         "local": "/" not in model})
-    return sorted(rows, key=lambda r: (-r["passed"], r["model"]))
+            rows[model] = {"model": model,
+                           "passed": r.get("passed", 0), "total": r.get("total", 0),
+                           "score": f"{r.get('passed', 0)}/{r.get('total', 0)}",
+                           "verdict": r.get("verdict", ""),
+                           "error": err,
+                           "failed": [] if err else failed,
+                           "local": "/" not in model}
+    return sorted(rows.values(), key=lambda r: (-r["passed"], r["model"]))
 
 
 def quality_of(model: str) -> dict:

@@ -306,9 +306,13 @@ class TestModelGuide(unittest.TestCase):
     def test_recommend_scales_with_ram(self):
         from llm import guide, registry
 
+        # **8GB 与 16GB 都推 4b**：它是实测过门槛的那个（5/5，3.4GB）；
+        # 内存更大不等于该换更大的模型 —— 先过门槛，再看速度。
         self.assertEqual(guide.recommend(8)["model"], "qwen3.5:4b")
-        self.assertEqual(guide.recommend(16)["model"], "qwen3.5:9b")
-        self.assertEqual(guide.recommend(64)["model"], "qwen3.6:35b-a3b")
+        self.assertEqual(guide.recommend(16)["model"], "qwen3.5:4b")
+        # 内存宽裕才上 9b（容量更大，但实测 4/5）
+        self.assertEqual(guide.recommend(24)["model"], "qwen3.5:9b")
+        self.assertEqual(guide.recommend(64)["model"], "qwen3.5:9b")
         # 推荐清单与 registry 的候选**不许走散** —— 两处各写一套，早晚对不上
         for ram in (8, 16, 24, 32):
             rec = guide.recommend(ram)["model"]
@@ -328,7 +332,9 @@ class TestModelGuide(unittest.TestCase):
             self.assertIn(q["score"], rec["note"])
         else:
             self.assertNotIn("门槛", rec["note"])
-        self.assertEqual(guide.quality_of("qwen3:14b")["score"], "4/5")
+        # 不钉死分数：重测就会变（14b 因为换调用路径从 4/5 变 3/5）。
+        # 钉的是形状 —— 成绩必须来自真跑过的文件。
+        self.assertIn(guide.quality_of("qwen3:14b")["score"], ("3/5", "4/5"))
 
     def test_detect_ram_never_guesses(self):
         """探不到就是 0 —— 不许编一个内存数。"""
@@ -407,6 +413,29 @@ class TestModelGuide(unittest.TestCase):
             guide.quality_rows = orig
         self.assertIn("没有一个过门槛", txt)
         self.assertIn("辅助", txt)
+
+    def test_repeat_measurement_supersedes_and_does_not_duplicate(self):
+        """同一模型重测过就以后测的为准 —— 一张表里不许出现两行自相矛盾的同一模型。
+
+        真踩过：`qwen3:14b` 在旧文件里 4/5、新文件里 3/5，两张表并排显示，
+        而两次走的不是同一条调用路径（/v1+思考 vs 原生+关思考）—— 放一起比大小是错的。
+        """
+        from llm import guide
+
+        rows = guide.quality_rows()
+        models = [r["model"] for r in rows]
+        self.assertEqual(len(models), len(set(models)), f"有重复模型：{models}")
+        # 最新那份文件里的 14b 是 3/5 → 表里就该是 3/5（不是旧文件的 4/5）
+        by = {r["model"]: r for r in rows}
+        self.assertEqual(by["qwen3:14b"]["score"], "3/5")
+
+    def test_recommend_leads_with_the_model_that_passes(self):
+        """选型顺序：先过门槛、再看内存 —— 别推荐一个没过门槛的档位。"""
+        from llm import guide
+
+        for ram in (8, 16):
+            r = guide.recommend(ram)
+            self.assertEqual(r["model"], "qwen3.5:4b", f"{ram}GB 该推过门槛的那个")
 
     def test_recommend_with_no_measurement_says_so(self):
         from llm import guide

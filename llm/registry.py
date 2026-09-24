@@ -36,11 +36,13 @@ CACHE_TTL_DAYS = 14
 
 #: 每个内存档位的候选（**按代次从新到旧**）。第一个查得到就用第一个。
 #: 加新代次 = 在对应的档位列表前面加一行。
+#: 排序还遵守一条：**实测过门槛的排在前面**（选型顺序是先过门槛、再看速度）——
+#: 所以 16GB 档第一位是 4b 而不是 9b：实测 4b 5/5、9b 4/5，而 4b 只有 3.4GB。
 CANDIDATES: dict[str, list[str]] = {
     "8": ["qwen3.5:4b", "qwen3:4b", "gemma3:4b", "llama3.2:3b"],
-    "16": ["qwen3.5:9b", "qwen3:8b", "llama3.1:8b", "qwen2.5:7b"],
-    "24": ["qwen3.5:9b", "qwen3:14b", "gemma3:12b"],
-    "32": ["qwen3.6:35b-a3b", "qwen3.5:27b", "qwen3:30b-a3b"],
+    "16": ["qwen3.5:4b", "qwen3.5:9b", "qwen3:8b", "llama3.1:8b", "qwen2.5:7b"],
+    "24": ["qwen3.5:9b", "qwen3.5:4b", "qwen3:14b", "gemma3:12b"],
+    "32": ["qwen3.5:9b", "qwen3.6:35b-a3b", "qwen3.5:27b", "qwen3:30b-a3b"],
 }
 
 
