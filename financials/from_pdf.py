@@ -353,6 +353,27 @@ def load_pdf_statements(path: str | Path, unit: str = "元") -> stm.Statements:
         "页范围按**内容**判定（" +
         "；".join(f"{k} {v[0]}–{v[-1]}页" for k, v in picked.items() if v) + "）")
 
+    # **单位与期间：只有装载器拿得到。**
+    #
+    # 调用方从文件字节里 sniff 是认不出来的 —— PDF 的文字层在压缩流里。
+    # 实测三份真实材料（H 股年报、非上市审计报告、A 股扫描件），
+    # **单位全部认不出**，而它们的报表头上就写着「人民币千元」「金额单位：元」——
+    # 那几行正躺在这里读过的页里。认错单位是 1000 倍级的静默错误，
+    # 所以认不出就留空、由调用方停下来问人，而不是默认给「元」。
+    from . import meta
+
+    page_text = " ".join(
+        pg.text for pg in doc.pages
+        if any(pg.number in v for v in picked.values() if v))
+    if not unit:
+        u, basis = meta.detect_unit(page_text)
+        if u:
+            unit = u
+            S.warnings.append(f"金额单位从报表正文认出：{u}（依据：{basis}）")
+    S.unit = unit
+    if not S.period:
+        S.period = meta.detect_period(page_text)
+
     for kind, label in (("balance", "资产负债表"), ("income", "利润表"),
                         ("cash_flow", "现金流量表")):
         pages = picked[kind]
