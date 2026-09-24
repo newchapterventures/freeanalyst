@@ -304,15 +304,31 @@ class TestModelGuide(unittest.TestCase):
         self.assertIn("ollama pull", install)
 
     def test_recommend_scales_with_ram(self):
-        from llm import guide
+        from llm import guide, registry
 
-        self.assertEqual(guide.recommend(8)["model"], "qwen3:4b")
-        self.assertEqual(guide.recommend(16)["model"], "qwen3:8b")
-        self.assertEqual(guide.recommend(24)["model"], "qwen3:14b")
-        self.assertEqual(guide.recommend(64)["model"], "qwen3:30b-a3b")
+        self.assertEqual(guide.recommend(8)["model"], "qwen3.5:4b")
+        self.assertEqual(guide.recommend(16)["model"], "qwen3.5:9b")
+        self.assertEqual(guide.recommend(64)["model"], "qwen3.6:35b-a3b")
+        # 推荐清单与 registry 的候选**不许走散** —— 两处各写一套，早晚对不上
+        for ram in (8, 16, 24, 32):
+            rec = guide.recommend(ram)["model"]
+            self.assertIn(rec, registry.CANDIDATES[registry.tier_for(ram)],
+                          f"{ram}GB 推荐的 {rec} 不在 registry 候选里")
         unknown = guide.recommend(0)
         self.assertTrue(unknown["command"].startswith("ollama pull "))
         self.assertIn("没探到", unknown["note"], "内存未知要说清为什么给这一档")
+
+    def test_recommend_never_invents_a_score(self):
+        """测过的必须带成绩；**没测过的不许编一个**。"""
+        from llm import guide
+
+        rec = guide.recommend(16)
+        q = guide.quality_of(rec["model"])
+        if q:
+            self.assertIn(q["score"], rec["note"])
+        else:
+            self.assertNotIn("门槛", rec["note"])
+        self.assertEqual(guide.quality_of("qwen3:14b")["score"], "4/5")
 
     def test_detect_ram_never_guesses(self):
         """探不到就是 0 —— 不许编一个内存数。"""
@@ -357,14 +373,6 @@ class TestModelGuide(unittest.TestCase):
         self.assertIn("没有一个过门槛", txt)
         self.assertIn("人工", txt)
         self.assertIn("deepseek", txt.lower(), "有过门槛的要报出来（连同它的代价）")
-
-    def test_recommend_carries_the_measured_score(self):
-        """推荐里必须带实测成绩 —— 不能只凭"内存够就推荐"。"""
-        from llm import guide
-
-        note = guide.recommend(24)["note"]
-        self.assertIn("4/5", note)
-        self.assertIn("门槛", note)
 
     def test_recommend_with_no_measurement_says_so(self):
         from llm import guide
