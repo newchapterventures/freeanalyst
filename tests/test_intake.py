@@ -267,11 +267,12 @@ class TestAppraiseFlow(unittest.TestCase):
                 "<tr><td>所有者权益合计</td><td>600</td></tr>"
                 "<tr><td>负债和所有者权益总计</td><td>1000</td></tr>"
                 "</table>", encoding="utf-8")
-            rc = intake.appraise(dummy)
+            rc = intake.appraise(dummy, out_dir=Path(d) / "out")
             self.assertEqual(rc, 0)
-            self.assertTrue((dummy / "估值问答.txt").exists())
+            self.assertTrue((Path(d) / "out" / "估值问答.txt").exists())
             # 单位认不出来时必须**写在清单里**让人看见
-            self.assertIn("必须你声明", (dummy / "估值问答.txt").read_text(encoding="utf-8"))
+            self.assertIn("必须你声明",
+                          (Path(d) / "out" / "估值问答.txt").read_text(encoding="utf-8"))
 
     def test_stops_when_unit_unknown(self):
         with tempfile.TemporaryDirectory() as d:
@@ -286,7 +287,7 @@ class TestAppraiseFlow(unittest.TestCase):
                 encoding="utf-8")
             ans = Path(d) / "ans.txt"
             ans.write_text("growth = 0.05\n", encoding="utf-8")
-            rc = intake.appraise(dummy, ans)
+            rc = intake.appraise(dummy, ans, out_dir=Path(d) / "out")
             self.assertEqual(rc, 1)            # 单位没确定 → 不往下算
 
     def test_config_written_is_valid_json(self):
@@ -316,8 +317,12 @@ class TestSingleFile(unittest.TestCase):
         mat = intake.scan(FITBIT / "R2.htm")
         self.assertEqual(mat.label, "R2")
 
-    def test_template_lands_next_to_the_file(self):
-        """清单放在材料旁边，**带上文件名前缀** —— 否则同目录两份材料会互相覆盖。"""
+    def test_template_lands_in_out_not_next_to_the_material(self):
+        """**工具不该往用户的材料库里写东西** —— 材料目录是只读输入。
+
+        第一版把问答清单写在材料旁边，实测往三个真实项目的私有目录里
+        各扔了一份。现在统一落到 `out/<标的>/`。
+        """
         with tempfile.TemporaryDirectory() as d:
             src = Path(d) / "某标的年报.htm"
             src.write_text(
@@ -329,8 +334,12 @@ class TestSingleFile(unittest.TestCase):
                 "<tr><td>负债合计</td><td>400</td></tr>"
                 "<tr><td>所有者权益合计</td><td>600</td></tr>"
                 "</table>", encoding="utf-8")
-            self.assertEqual(intake.appraise(src), 0)
-            self.assertTrue((Path(d) / "某标的年报-估值问答.txt").exists())
+            out = Path(d) / "结果"
+            self.assertEqual(intake.appraise(src, out_dir=out), 0)
+            self.assertTrue((out / "估值问答.txt").exists())
+            # 材料目录里不该多出任何东西
+            self.assertEqual(sorted(p.name for p in Path(d).iterdir()),
+                             ["某标的年报.htm", "结果"])
 
     def test_missing_path_says_so(self):
         with self.assertRaises(FileNotFoundError):
