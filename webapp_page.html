@@ -457,6 +457,20 @@
     <div id="cOut"></div>
   </div>
 
+  <div class="card hide" id="cardAsk">
+    <h2><span data-i18n="ask.title"></span>
+        <small data-i18n="ask.sub"></small></h2>
+    <div class="notice" data-i18n-html="ask.notice"></div>
+    <div id="askLog" style="margin-top:12px"></div>
+    <div class="grid2" style="margin-top:12px">
+      <label><span data-i18n="ask.input"></span>
+        <input id="askText" placeholder="租金　/　增长率按 5%" onkeydown="askKey(event)"></label>
+      <div style="align-self:end">
+        <button class="act amber" id="askBtn" onclick="ask()" data-i18n="ask.btn"></button>
+      </div>
+    </div>
+  </div>
+
   <div class="card need hide" id="card5">
     <h2><span class="idx">05</span><span data-i18n="s5.title"></span>
         <small data-i18n="s5.sub"></small></h2>
@@ -528,6 +542,23 @@ const I18N = {
     "s4.thin": "⚠ 样本只有 {n} 家 —— 不足 3 家不给中位数当结论（2 家的「中位数」没有意义）。下列数值仅作单家参考。",
     "s4.stat": "P25 / 中位 / P75", "s4.range": "区间", "s4.gaps": "取不到的：",
     "s4.none": "这批代码一家都没取到 —— 换代码，或留空。留空不是缺陷：拿不到同行分布时，不凑一个参照系才是对的。",
+    "ask.title": "对话 · 检索原文与录入假设",
+    "ask.sub": "当前**未启用模型** —— 它只会按关键词检索原文，以及把一句话转成假设",
+    "ask.notice": "<b>这个面板现在不接模型</b>，所以它只会做两件事：① <b>检索原文</b>（按关键词找，回文件 + 页码 + 片段 —— 在本地材料上做，不出本机）；② <b>把一句话转成假设</b>（「增长率按 5%」→ 提议填「营业收入增长率」= 5%，来源标「对话输入（未核实）」）。<b>每一处提议都要点「采纳」才生效</b> —— 它不会自己改任何东西，也不会替你算数。装了模型之后，「读懂一段话」接在同一处。",
+    "ask.input": "输入 —— 带数字当录入，不带数字当检索",
+    "ask.btn": "发送",
+    "ask.nopath": "先在第一步解析材料 —— 对话要用它来检索。",
+    "ask.hits": "在材料里找到 {n} 处：",
+    "ask.more": "（只列了前几条）",
+    "ask.nohit": "材料里没有「{q}」—— 换个词试试。",
+    "ask.page": "第 {n} 页 · ",
+    "ask.pick": "这句话可能指多项",
+    "ask.prop": "提议",
+    "ask.trail": "痕迹",
+    "ask.adopt": "采纳（填进第 5 步）",
+    "ask.drop": "忽略",
+    "ask.adopted": "已填入「{k}」—— 这是你的判断，报告里会标明来源。",
+    "ask.nofield": "第 5 步还没有「{k}」这一栏（先让材料解析完成）。",
     "step.1": "载入材料", "step.2": "报表识别与勾稽校验",
     "step.3": "行业建议 · 未接入", "step.4": "可比公司",
     "step.5": "估值假设", "step.6": "估值结论",
@@ -631,6 +662,23 @@ const I18N = {
     "s5.title": "Valuation assumptions", "s5.sub": "Inputs only you can provide — the engine will not set them for you",
     "s5.notice": "Append a source to each figure: <code>0.10 @management plan p.12</code>. Prefix the source with <code>高:</code>/<code>中:</code>/<code>低:</code> to set confidence (engine syntax remains Chinese). <b>No source is treated as low confidence</b> and appears under the report's weak points. \"Reference\" shows historical values, <b>not recommended inputs</b>.",
     "s5.btn": "Generate valuation report",
+    "ask.title": "Dialogue · search the materials, file an assumption",
+    "ask.sub": "No model is enabled yet — it can search the materials by keyword and turn one sentence into an assumption",
+    "ask.notice": "<b>This panel does not use a model yet.</b> It does exactly two things: ① <b>search the materials</b> (by keyword; returns file + page + snippet — done locally, nothing leaves this machine); ② <b>turn one sentence into an assumption</b> (\"growth 5%\" → proposes Revenue growth = 5%, sourced as \"dialogue input (unverified)\"). <b>Every proposal must be accepted</b> — it never changes anything on its own and never performs arithmetic. Once a model is installed, \"understanding a sentence\" plugs into this same place.",
+    "ask.input": "Input — with a number it files a value; without one it searches",
+    "ask.btn": "Send",
+    "ask.nopath": "Parse materials in step 1 first — the dialogue searches them.",
+    "ask.hits": "{n} match(es) in the materials:",
+    "ask.more": "(only the first few are listed)",
+    "ask.nohit": "No match for \"{q}\" — try another term.",
+    "ask.page": "p.{n} · ",
+    "ask.pick": "This could refer to several items",
+    "ask.prop": "Proposal",
+    "ask.trail": "Trail",
+    "ask.adopt": "Accept (fills step 5)",
+    "ask.drop": "Dismiss",
+    "ask.adopted": "Filled into \"{k}\" — this is your judgement; the report will show its source.",
+    "ask.nofield": "Step 5 has no field named \"{k}\" yet (let the materials finish parsing).",
     "s4.title": "Comparable companies", "s4.sub": "Peer fundamentals — fetch, compare, keep the trail",
     "s4.notice": "<b>This step gives fundamentals, not multiples.</b> EDGAR has filings but <b>no share prices</b> — market cap / EV / EV·EBITDA cannot be derived (multiples would need a price source, not wired yet). <b>US listings only for now.</b> With fewer than 3 peers, <b>no median is presented as a conclusion</b>.",
     "s4.tickers": "Peer tickers (US, comma-separated)",
@@ -792,6 +840,7 @@ function demo(){
   $("s6").className = "step on";
   $("card2").classList.remove("hide");
   $("card4").classList.remove("hide");
+  $("cardAsk").classList.remove("hide");
   $("card5").classList.remove("hide");
   $("outDir").textContent = t("out.prefix") + "out/target/";
   $("report").textContent = DEMO_REPORT;
@@ -877,6 +926,7 @@ function scan(){
     $("s6").className = "step on";
     $("card2").classList.remove("hide");
     $("card4").classList.remove("hide");
+    $("cardAsk").classList.remove("hide");
     $("card5").classList.remove("hide");
     $("srvNote").classList.remove("hide");
     $("card2").scrollIntoView({behavior:"smooth", block:"start"});
@@ -951,6 +1001,88 @@ function renderComps(){
     h += '<div class="notice quiet" style="margin-top:12px">' + esc(t("s4.gaps")) +
          '<br>' + d.gaps.map(g => "· " + esc(g)).join("<br>") + '</div>';
   $("cOut").innerHTML = h;
+}
+
+// ─── 对话面板（**当前不接模型**）───────────────────────────────────────
+// 现在只会两件事，都是纯代码：
+//   ① 检索原文 —— 关键词 → 文件 + 页码 + 片段（在本地材料上做，不出本机）
+//   ② 把一句话转成提议 —— 字段 + 值 + 来源，**点「采纳」才写进字段**
+// 分流规则和"有没有模型"无关：**带数字当录入，不带数字当检索**。
+function pushAsk(kind, html){
+  const el = $("askLog"); if(!el) return;
+  const cls = kind === "you" ? "kv" : kind === "bad" ? "notice issue"
+            : kind === "ok" ? "notice" : kind === "mut" ? "mut" : "notice quiet";
+  el.insertAdjacentHTML("beforeend",
+    '<div class="' + cls + '" style="margin:8px 0;font-size:13px">' + html + '</div>');
+  el.scrollIntoView({behavior:"smooth", block:"nearest"});
+}
+
+function askKey(e){ if(e.key === "Enter") ask(); }
+
+async function ask(){
+  const text = ($("askText").value || "").trim();
+  if(!text) return;
+  if(!STATE.path){ pushAsk("bad", esc(t("ask.nopath"))); return; }
+  pushAsk("you", esc(text));
+  $("askText").value = "";
+  const withNumber = /\d/.test(text);
+  try{
+    const out = await post("/api/ask", withNumber
+      ? {action:"propose", path:STATE.path, text:text}
+      : {action:"search",  path:STATE.path, q:text});
+    if(!out.ok){
+      pushAsk("bad", esc(out.error || ""));
+      if(out.ambiguous && out.candidates)
+        pushAsk("mut", esc(t("ask.pick")) + "：" +
+                out.candidates.map(c => esc(c.label)).join(" / "));
+      return;
+    }
+    if(!withNumber){
+      if(!out.total){ pushAsk("mut", esc(t("ask.nohit").replace("{q}", out.q))); return; }
+      pushAsk("ok", esc(t("ask.hits").replace("{n}", out.total)) +
+              (out.truncated ? " " + esc(t("ask.more")) : ""));
+      for(const h of out.hits)
+        pushAsk("hit", (h.page ? esc(t("ask.page").replace("{n}", h.page)) : "") +
+                "<b>" + esc(h.file) + "</b>　" + esc(h.snippet));
+    }else{
+      STATE.proposal = out.proposal;
+      renderProposal(out.proposal);
+    }
+  }catch(e){ pushAsk("bad", esc(String(e))); }
+}
+
+function renderProposal(p){
+  pushAsk("ok", "<b>" + esc(t("ask.prop")) + "：</b>" + esc(p.label) +
+    " = <b>" + esc(p.value) + "</b><br><span class=\"mut\">" + esc(p.why) + "</span><br>" +
+    "<span class=\"mut\">" + esc(t("ask.trail")) + "：" + esc(p.source) + " · " +
+    esc(p.confidence) + "</span><br>" +
+    '<button class="act" onclick="adopt()">' + esc(t("ask.adopt")) + "</button> " +
+    '<button class="act" onclick="dropProposal()">' + esc(t("ask.drop")) + "</button>");
+}
+
+// 采纳 = **填进第 5 步那个真实的输入框** —— 按标签文字找，不依赖 DOM 结构。
+// 填进去的格式沿用既有约定：`值 @来源`（报告里"结果的软肋"会按来源列出来）。
+function adopt(){
+  const p = STATE.proposal;
+  if(!p) return;
+  let hit = null;
+  document.querySelectorAll("#questions input, #questions select, #questions textarea")
+    .forEach(b => {
+      if(hit) return;
+      const lab = (b.closest("label") || b.parentElement || {}).textContent || "";
+      if(lab.indexOf(p.label) >= 0) hit = b;
+    });
+  if(!hit){ pushAsk("bad", esc(t("ask.nofield").replace("{k}", p.label))); return; }
+  hit.value = p.value + " @" + p.source;
+  hit.dispatchEvent(new Event("input", {bubbles:true}));
+  pushAsk("ok", esc(t("ask.adopted").replace("{k}", p.label)) +
+          "　<b>" + esc(p.value) + "</b>");
+  STATE.proposal = null;
+}
+
+function dropProposal(){
+  STATE.proposal = null;
+  pushAsk("mut", esc(t("ask.drop")));
 }
 
 // 有数据时按当前语言重绘（切语言也走这里）

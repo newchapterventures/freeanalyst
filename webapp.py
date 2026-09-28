@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import socket
 import subprocess
 import sys
@@ -59,7 +60,7 @@ DEFAULT_PORT = 8765
 #: 于是点下去只回一句 `unknown endpoint`。现在页面能自己发现这件事并说清楚。
 VERSION = "0.42"
 ENDPOINTS = ("health", "scan", "appraise", "pick", "config", "gate", "cloud-check",
-             "pull", "pull-status", "model-check", "onboarded", "comps")
+             "pull", "pull-status", "model-check", "onboarded", "comps", "ask")
 #: 页面依赖的**能力**标记（比接口更细一层：同一个接口也可能少字段）。
 #: 页面会逐条核对，缺哪条就提示"服务是旧进程"。
 #: 真踩过：百分比字段加进引擎后没重启服务，页面上那些框**静默地没有 %** ——
@@ -227,6 +228,151 @@ def pick_path(kind: str = "dir") -> dict:
 
 
 # ─────────────────────── 接口层：把现有函数包成 JSON ───────────────────────
+
+def api_ask(payload: dict) -> dict:
+    """对话面板的后端 —— **当前不接模型**（骨架先立住）。
+
+    ## 它现在只会两件事（都是纯代码）
+    ① `search`  —— 在材料里按关键词检索，回**文件 + 页码 + 原文片段**
+    ② `propose` —— 把一句话转成**结构化提议**（哪个字段、什么值、来源是谁），
+                   **等用户点头才生效**（不点头就什么都不发生）
+
+    ## 为什么先这样
+    模型来了之后，"读懂一段话"接在**同一处**：位置、痕迹、授权流程都不用改。
+    在那之前，这个面板**不是不能互动**，只是互动**不智能** —— 它会明说这一点，
+    而不是装作听懂了。
+
+    ## 三条硬约束（对话层同样要守）
+    · **对话只产生输入与判断，永不产生数字** —— 提议要被采纳才落进字段，
+      数字仍由引擎算（"算术不能有随机"）
+    · **材料不出本机** —— 检索在本地材料上做，不发任何请求
+    · **可追溯** —— 提议带 `source="对话输入（未核实）"` + 置信度「低」，
+      采纳后写进字段的注释里，报告里能看回来
+    """
+    action = (payload.get("action") or "").strip()
+    path = (payload.get("path") or "").strip()
+    if not path:
+        return {"ok": False, "error": "先在第一步载入材料 —— 对话要用它来检索"}
+
+    if action == "search":
+        return _ask_search(path, (payload.get("q") or "").strip(),
+                           int(payload.get("limit") or 20))
+    if action == "propose":
+        return _ask_propose(path, (payload.get("text") or "").strip())
+    return {"ok": False, "error": f"不认识的动作：{action}（可用：search / propose）"}
+
+
+#: 一句话里的常见说法 → 问题清单里的键。**表很短、可审阅** —— 不带模型也够用。
+#: 长词放前面（"永续增长"要先于"增长"匹配，否则会被后者的泛化吃掉）。
+_ASK_ALIASES: tuple[tuple[str, str], ...] = (
+    ("永续增长", "growth_terminal"), ("永续增长", "terminal_growth"),
+    ("退出倍数", "exit_multiple"), ("净债务", "debt"), ("有息负债", "debt"),
+    ("所得税", "tax_rate"), ("税率", "tax_rate"),
+    ("无风险", "risk_free"), ("风险溢价", "equity_risk_premium"),
+    ("beta", "beta_unlevered"), ("贝塔", "beta_unlevered"),
+    ("债务成本", "cost_of_debt"), ("借款利率", "cost_of_debt"),
+    ("折旧摊销", "da_ratio"), ("资本开支", "capex_ratio"),
+    ("营运资本", "nwc_ratio"), ("增长率", "growth"),
+    ("ebitda", "ebitda_margin"),
+)
+
+
+def _ask_search(path: str, q: str, limit: int = 20) -> dict:
+    """在材料里按关键词找 —— **纯检索，不发任何请求，材料不出本机**。"""
+    from ingest import pdf as ip        # 延迟导入：只在真要读 PDF 时才需要
+    if len(q) < 2:
+        return {"ok": False, "error": "关键词太短（至少 2 个字）—— 太短会命中一大片"}
+    mat = _CACHE.get(path)
+    if mat is None:
+        return {"ok": False, "error": "这份材料还没载入过 —— 先在第一步解析它"}
+    files = sorted(p for p in Path(mat.directory).rglob("*") if p.is_file())
+    if not mat.is_file:
+        files = [f for f in files if f.suffix.lower() in (".pdf", ".txt", ".md")]
+    hits: list[dict] = []
+    total = 0
+    for f in files:
+        suffix = f.suffix.lower()
+        if suffix not in (".pdf", ".txt", ".md"):
+            continue
+        try:
+            if suffix == ".pdf":
+                doc = ip.extract_pdf(f)
+                pages = [(pg.number, pg.raw_text or pg.text or "") for pg in doc.pages]
+            else:
+                # 纯文本材料没有页码概念 —— **不编页码**，如实给 None。
+                pages = [(None, f.read_text(encoding="utf-8", errors="ignore"))]
+        except Exception:                                   # noqa: BLE001
+            continue
+        for num, text in pages:
+            if q not in text:
+                continue
+            total += 1
+            if len(hits) >= limit:
+                continue
+            i = text.find(q)
+            snippet = text[max(0, i - 60): i + 90].replace("\n", " ")
+            hits.append({"file": f.name, "page": num, "snippet": snippet})
+    return {"ok": True, "q": q, "hits": hits, "total": total,
+            "truncated": total > len(hits)}
+
+
+def _ask_propose(path: str, text: str) -> dict:
+    """把一句话转成**结构化提议**。**不猜就明说猜不出。**
+
+    返回的 `value` 是**表单里该填的原文**（`%` 字段填数值，如 `8.5` 表示 8.5%）——
+    与「能确定的就不要人打字」的既有约定一致，界面直接把它填进那个输入框。
+    """
+    mat = _CACHE.get(path)
+    if mat is None:
+        return {"ok": False, "error": "这份材料还没载入过 —— 先在第一步解析它"}
+    if not text:
+        return {"ok": False, "error": "说点什么（例如「增长率按 5%」）"}
+
+    m = re.search(r"(-?\d+(?:\.\d+)?)\s*(%|％|个点)?", text)
+    if not m:
+        return {"ok": False,
+                "error": "这句话里没有数字 —— 我只会把它转成字段值，不猜你的意思"}
+    raw = m.group(1)
+    is_pct = bool(m.group(2))
+
+    low = text.lower()
+    cands: list[tuple[str, str]] = []          # (key, label)
+    for q in intake.questions(mat):
+        key = getattr(q, "key", "")
+        label = getattr(q, "label", "") or key
+        if not key:
+            continue
+        if label and (label in text or key in low):
+            cands.append((key, label))
+    if not cands:
+        for word, key in _ASK_ALIASES:
+            if word in low or word in text:
+                for q in intake.questions(mat):
+                    if getattr(q, "key", "") == key:
+                        cands.append((key, getattr(q, "label", "") or key))
+                        break
+            if cands:
+                break
+    # 去重（同一键只留一条）
+    seen: set[str] = set()
+    uniq = [(k, l) for k, l in cands if not (k in seen or seen.add(k))]
+    if not uniq:
+        return {"ok": False,
+                "error": "认不出这是哪一项 —— 换一种说法（用问题清单里的名字，"
+                         "例如「永续增长率」「折旧摊销占收入比」）"}
+    if len(uniq) > 1:
+        return {"ok": False, "ambiguous": True,
+                "candidates": [{"key": k, "label": l} for k, l in uniq[:6]],
+                "error": f"这句话可能指 {len(uniq)} 项 —— 请点一个："
+                         + "、".join(l for _, l in uniq[:6])}
+    key, label = uniq[0]
+    value = raw + ("%" if is_pct else "")
+    return {"ok": True, "proposal": {
+        "key": key, "label": label, "value": value,
+        "source": "对话输入（未核实）", "confidence": "低",
+        "why": f"按「{m.group(0).strip()}」匹配到问题清单里的「{label}」",
+    }}
+
 
 def api_scan(path: str, unit: str = "") -> dict:
     """第 1、2 步：认材料 + 提取核对。"""
@@ -778,6 +924,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(api_onboarded())
             elif self.path == "/api/comps":
                 self._json(api_comps(body or {}))
+            elif self.path == "/api/ask":
+                self._json(api_ask(body or {}))
             else:
                 self._json({"ok": False, "error": "unknown endpoint"}, 404)
         except Exception as exc:                       # noqa: BLE001
