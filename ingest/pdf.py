@@ -250,17 +250,41 @@ def _contiguous_runs(nums: list[int]) -> list[tuple[int, int]]:
     return runs
 
 
+#: 一张图要占页面多大面积，才算"这一页的整页扫描"。
+#:
+#: **必须按占比筛，不能把页面上所有图一起取中位数** —— 实测某 102 页扫描件
+#: 每页有 8 张图：一张占满整页的扫描图（1200+ px → 150 dpi），
+#: 外加页眉 logo、印章、签名（占比 0%、7~63 dpi）。全部一起取中位数得到 **20 dpi** ✗，
+#: 比真值小七倍 —— 而这种错会直接印在给用户的提示里。
+_MIN_SCAN_COVERAGE = 0.5
+
+
 def _image_dpi(page) -> list[float]:
-    """这一页嵌入图的原始分辨率（dpi）。没有嵌入图（矢量页）就是空。"""
+    """这一页**作为整页扫描**的那张图的分辨率（dpi）。
+
+    取**显示面积最大**那张（且必须占页面一半以上），没有就是空（矢量页）。
+    只看面积最大的，是因为"整页扫描"就是这一页里最大的那张图；
+    logo、印章、签名会把它带偏（见 `_MIN_SCAN_COVERAGE` 的实测）。
+    """
     out: list[float] = []
     try:
         images = page.images or []
     except Exception:                                     # noqa: BLE001
         return out
+    pw = getattr(page, "width", 0) or 0
+    ph = getattr(page, "height", 0) or 0
+    page_area = pw * ph
+    if not page_area:
+        return out
+    best_area, best_dpi = 0.0, 0.0
     for im in images:
         w, _h = im.get("srcsize", (0, 0))
-        if w and getattr(page, "width", 0):
-            out.append(w / (page.width / 72))
+        area = (im.get("width", 0) or 0) * (im.get("height", 0) or 0)
+        if not w or not pw or area <= best_area:
+            continue
+        best_area, best_dpi = area, w / (pw / 72)
+    if best_dpi and best_area / page_area >= _MIN_SCAN_COVERAGE:
+        out.append(best_dpi)
     return out
 
 

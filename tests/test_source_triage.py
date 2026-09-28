@@ -31,19 +31,42 @@ class _FakeImage(dict):
 
 
 class _FakePage:
-    def __init__(self, width: float, images: list[dict]):
+    def __init__(self, width: float, images: list[dict], height: float = 842.0):
         self.width = width
+        self.height = height
         self.images = images
 
 
 class TestImageDpi(unittest.TestCase):
     def test_192dpi_scan_is_measured(self):
         # 实测那份材料：1587 px 宽 / 595 pt 页 → 192 dpi
-        page = _FakePage(595.0, [_FakeImage(srcsize=(1587, 2245))])
+        page = _FakePage(595.0, [_FakeImage(srcsize=(1587, 2245),
+                                            width=595.0, height=842.0)])
         dpi = ip._image_dpi(page)
         self.assertEqual(len(dpi), 1)
         self.assertAlmostEqual(dpi[0], 1587 / (595 / 72), places=1)
         self.assertEqual(ip._median_int(dpi), 192)
+
+    def test_logos_do_not_drag_the_number_down(self):
+        """**实测踩到的坑**：一页 8 张图，整页扫描 1240 px（150 dpi），
+        其余是页眉 logo/印章（占比 0%、7~63 dpi）。一起取中位数得到 20 dpi ✗ ——
+        比真值小七倍，而且会直接印在给用户的提示里。
+        """
+        page = _FakePage(595.0, [
+            _FakeImage(srcsize=(1240, 1754), width=595.0, height=842.0),   # 整页扫描
+            _FakeImage(srcsize=(56, 52), width=13.0, height=12.0),         # logo
+            _FakeImage(srcsize=(152, 44), width=36.0, height=11.0),        # 印章
+            _FakeImage(srcsize=(88, 52), width=21.0, height=12.0),         # 签名
+        ])
+        self.assertEqual(ip._median_int(ip._image_dpi(page)), 150)
+
+    def test_mostly_small_images_is_not_a_scan_page(self):
+        """整页扫描的判据是**占比**，不是"有没有图"。"""
+        page = _FakePage(595.0, [
+            _FakeImage(srcsize=(56, 52), width=13.0, height=12.0),
+            _FakeImage(srcsize=(152, 44), width=36.0, height=11.0),
+        ])
+        self.assertEqual(ip._image_dpi(page), [])
 
     def test_vector_page_has_no_dpi(self):
         self.assertEqual(ip._image_dpi(_FakePage(595.0, [])), [])
