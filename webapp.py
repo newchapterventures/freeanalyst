@@ -57,7 +57,7 @@ DEFAULT_PORT = 8765
 #: 接口清单与版本 —— 页面拿它跟自己对表。
 #: **真踩过**：页面加了「选择文件夹…」，但跑着的服务还是旧进程（Python 代码不会热加载），
 #: 于是点下去只回一句 `unknown endpoint`。现在页面能自己发现这件事并说清楚。
-VERSION = "0.40"
+VERSION = "0.41"
 ENDPOINTS = ("health", "scan", "appraise", "pick", "config", "gate", "cloud-check",
              "pull", "pull-status", "model-check", "onboarded")
 #: 页面依赖的**能力**标记（比接口更细一层：同一个接口也可能少字段）。
