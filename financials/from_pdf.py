@@ -411,6 +411,11 @@ def load_pdf_statements(path: str | Path, unit: str = "元") -> stm.Statements:
         for c in st.conflicts:
             S.warnings.append(f"[{label}] {c}")
 
+    # **行业判定已退回**（判据不成立，见 `meta._FIN_SIGNS` 的说明）：
+    # 试过"金融科目出现在报表行里"就判金融 —— 实测矿业公司的三张表行里
+    # 也有「吸收存款」「保险责任准备金」这些科目（集团旗下有金融/保险业务），
+    # 会把工商业材料误判成金融 ✗（四个参考值被全部关掉，比不改更坏）。
+
     # 口径从**内容**推断，不写死（见 `meta.py`）。
     # 写死 scope="合并" 的时候：某非上市公司那份**非上市单体审计报告**被报成合并。
     from . import meta
