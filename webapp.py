@@ -59,12 +59,87 @@ DEFAULT_PORT = 8765
 #: 于是点下去只回一句 `unknown endpoint`。现在页面能自己发现这件事并说清楚。
 VERSION = "0.42"
 ENDPOINTS = ("health", "scan", "appraise", "pick", "config", "gate", "cloud-check",
-             "pull", "pull-status", "model-check", "onboarded")
+             "pull", "pull-status", "model-check", "onboarded", "comps")
 #: 页面依赖的**能力**标记（比接口更细一层：同一个接口也可能少字段）。
 #: 页面会逐条核对，缺哪条就提示"服务是旧进程"。
 #: 真踩过：百分比字段加进引擎后没重启服务，页面上那些框**静默地没有 %** ——
 #: 用户于是不知道填 5、0.05 还是 5%。
-FEATURES = ("percent-unit", "llm-config", "install-model", "onboard-state")
+FEATURES = ("percent-unit", "llm-config", "install-model", "onboard-state", "comps-step")
+
+
+def api_comps(payload: dict) -> dict:
+    """第 4 步 · 可比公司（**只做基本面对照**）。
+
+    ## 边界：这一步**不假装**能给倍数（实测文档）
+    `datasources/sec_edgar.py` 的头注释写得很清楚：**EDGAR 有财报、没有股价** ——
+
+        能算：EBITDA、收入、净利、总资产、股数
+        不能算：市值、EV、EV/EBITDA   ← 都需要价格
+        "要做市值的倍数，必须再配一个价格源。" —— 那个源没接。
+
+    所以这里给的是**同行在基本面指标上的分布**（收入增速 / EBITDA 率 / 收入规模），
+    用来支撑假设与假设参谋 —— **不是倍数**。倍数那一步等价格源。
+
+    ## 纪律（`valuation/comps_workflow.py`）
+    · **≥3 家才给中位数当结论**，不够就明说不够（2 家的"中位数"没有意义）
+    · 代码在 SEC 查不到 → **明说只支持美股** + 给退路（留空不凑参照系）
+    · 不代用户选指标：指标由用户选，这里只算
+    """
+    from datasources import sec_edgar as se
+    from valuation import advisor as ad
+    from valuation.comps_workflow import MIN_COMPS
+
+    raw = payload.get("tickers") or ""
+    # 逗号、分号、顿号、空格、换行全当分隔符 —— 用户从别处粘贴过来什么形状都有。
+    # ⚠️ **全角也要拆**：中文输入法打出来的是「，」「；」「、」，实测漏掉全角逗号时
+    # 「LEA，MGA」会被当成一个代码，然后报"SEC 查不到"（错怪用户）。
+    tickers = [t.strip().upper()
+               for t in str(raw)
+               .replace(",", " ").replace("，", " ")
+               .replace(";", " ").replace("；", " ")
+               .replace("、", " ").replace("　", " ")
+               .split()
+               if t.strip()]
+    if not tickers:
+        return {"ok": False,
+                "error": "先给可比公司代码（美股，逗号分隔，如 LEA, MGA, BWA）"}
+
+    metric = (payload.get("metric") or "revenue_cagr").strip()
+    if metric not in ad.METRIC_FUNCS:
+        return {"ok": False,
+                "error": f"不支持的指标：{metric}（可用：{'、'.join(ad.METRIC_FUNCS)}）"}
+    years = int(payload.get("years") or 3)
+    as_of = (payload.get("as_of") or "").strip() or None
+
+    pairs: list[tuple[str, str]] = []
+    missing: list[str] = []
+    for t in tickers:
+        cik = se.ticker_to_cik(t)
+        if cik:
+            pairs.append((cik, t))
+        else:
+            missing.append(t)
+    if missing:
+        return {"ok": False, "error":
+                f"这些代码在 SEC 查不到 → {'、'.join(missing)}。"
+                "**目前只支持美股** —— A 股/港股还没有免接口的数据源。"
+                "（留空不是缺陷：拿不到同行分布时，不凑一个参照系才是对的。）"}
+
+    stat = ad.build_peer_stat(pairs, metric=metric, years=years, as_of=as_of)
+    _, title, fmt = ad.METRIC_FUNCS[metric]
+    return {
+        "ok": True, "metric": metric, "title": title, "fmt": fmt,
+        "unit": stat.unit, "n": stat.n, "min_comps": MIN_COMPS,
+        "enough": stat.n >= MIN_COMPS,
+        "rows": [{"label": lab, "value": v}
+                 for lab, v in zip(stat.labels, stat.values)],
+        "p25": stat.quantile(0.25), "median": stat.median(), "p75": stat.quantile(0.75),
+        "lo": min(stat.values) if stat.values else None,
+        "hi": max(stat.values) if stat.values else None,
+        "source": stat.source,
+        "gaps": stat.gaps,
+    }
+
 
 #: 项目根目录 —— 页面正文和默认输出都相对它。
 ROOT = Path(__file__).resolve().parent
@@ -701,6 +776,8 @@ class Handler(BaseHTTPRequestHandler):
                                            bool(body.get("consent_ok"))))
             elif self.path == "/api/onboarded":
                 self._json(api_onboarded())
+            elif self.path == "/api/comps":
+                self._json(api_comps(body or {}))
             else:
                 self._json({"ok": False, "error": "unknown endpoint"}, 404)
         except Exception as exc:                       # noqa: BLE001
