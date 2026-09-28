@@ -33,7 +33,10 @@ def _fake_mat(tmp: str):
 def _questions():
     return [Q("growth", "营业收入增长率（逐年，逗号分隔）", group="预测"),
             Q("tax_rate", "所得税率", group="折现率", unit="%"),
-            Q("terminal_growth", "永续增长率", group="预测", unit="%")]
+            Q("terminal_growth", "永续增长率", group="预测", unit="%"),
+            # ⚠️ 真实的键就长这样（不是 `da_ratio` 那种猜出来的名字）——
+            # 实测的缺陷：按猜的键名匹配，这类项目**永远匹配不上**。
+            Q("da_pct_revenue", "折旧摊销占收入比", group="历史比率", unit="%")]
 
 
 class TestAskSearch(unittest.TestCase):
@@ -99,11 +102,31 @@ class TestAskPropose(unittest.TestCase):
         self.assertEqual(p["confidence"], "低", "未核实的输入不许标高置信度")
         self.assertIn("所得税率", p["why"])
 
+    def test_matches_by_label_not_by_guessed_key(self):
+        """★ 实测缺陷：真实清单里键是 `da_pct_revenue`，猜的名字（`da_ratio`）匹配不上。
+
+        「折旧摊销 12%」必须能落到「折旧摊销占收入比」——按**标签**匹配才不会随键名漂。
+        """
+        out = webapp.api_ask({"action": "propose", "path": self.path,
+                              "text": "折旧摊销 12%"})
+        self.assertTrue(out["ok"], out)
+        self.assertEqual(out["proposal"]["key"], "da_pct_revenue")
+        self.assertEqual(out["proposal"]["value"], "12%")
+
     def test_plain_number_without_percent_stays_plain(self):
         out = webapp.api_ask({"action": "propose", "path": self.path,
-                              "text": "增长率 0.05"})
+                              "text": "营业收入增长率 0.05"})
         self.assertTrue(out["ok"])
         self.assertEqual(out["proposal"]["value"], "0.05")
+
+    def test_ambiguous_wording_asks_instead_of_choosing(self):
+        """「增长率 5%」在这个清单里同时像两项 —— **不许替用户选**，列出来让他点。"""
+        out = webapp.api_ask({"action": "propose", "path": self.path,
+                              "text": "增长率 5%"})
+        if out.get("ok"):
+            self.skipTest("这一版收敛到唯一一项了 —— 若是有意为之，删掉本条")
+        self.assertTrue(out.get("ambiguous"))
+        self.assertGreaterEqual(len(out["candidates"]), 2)
 
     def test_no_number_is_refused_with_a_reason(self):
         out = webapp.api_ask({"action": "propose", "path": self.path,

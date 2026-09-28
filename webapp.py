@@ -262,18 +262,20 @@ def api_ask(payload: dict) -> dict:
     return {"ok": False, "error": f"不认识的动作：{action}（可用：search / propose）"}
 
 
-#: 一句话里的常见说法 → 问题清单里的键。**表很短、可审阅** —— 不带模型也够用。
-#: 长词放前面（"永续增长"要先于"增长"匹配，否则会被后者的泛化吃掉）。
+#: 一句话里的常见说法 → **问题清单里标签的片段**。
+#: ⚠️ **不要写死键名**：清单里的键是 `da_pct_revenue` 这种，猜的名字（`da_ratio`）
+#: 一漂就失效 —— 实测「折旧摊销 12%」因此认不出来 ✗。按**标签**匹配才不会漂。
+#: 长词放前面（"永续增长"要先于"增长"匹配）。
 _ASK_ALIASES: tuple[tuple[str, str], ...] = (
-    ("永续增长", "growth_terminal"), ("永续增长", "terminal_growth"),
-    ("退出倍数", "exit_multiple"), ("净债务", "debt"), ("有息负债", "debt"),
-    ("所得税", "tax_rate"), ("税率", "tax_rate"),
-    ("无风险", "risk_free"), ("风险溢价", "equity_risk_premium"),
-    ("beta", "beta_unlevered"), ("贝塔", "beta_unlevered"),
-    ("债务成本", "cost_of_debt"), ("借款利率", "cost_of_debt"),
-    ("折旧摊销", "da_ratio"), ("资本开支", "capex_ratio"),
-    ("营运资本", "nwc_ratio"), ("增长率", "growth"),
-    ("ebitda", "ebitda_margin"),
+    ("永续增长", "永续增长"), ("退出倍数", "退出倍数"),
+    ("净债务", "净债务"), ("有息负债", "有息负债"),
+    ("所得税", "所得税"), ("税率", "所得税"),
+    ("无风险", "无风险"), ("溢价", "风险溢价"),
+    ("beta", "beta"), ("贝塔", "beta"),
+    ("债务成本", "债务成本"), ("借款利率", "债务成本"),
+    ("折旧摊销", "折旧摊销"), ("资本开支", "资本开支"),
+    ("营运资本", "营运资本"), ("增长率", "增长"),
+    ("ebitda", "EBITDA"),
 )
 
 
@@ -336,21 +338,26 @@ def _ask_propose(path: str, text: str) -> dict:
     is_pct = bool(m.group(2))
 
     low = text.lower()
+    qs = intake.questions(mat)                 # **只调一次** —— 两次调用可能给出不同对象
+    # 标签里的括号说明要去掉再比 —— 用户不会照着「（逐年，逗号分隔）」念。
+    core = {id(q): re.sub(r"[（(].*?[）)]", "", getattr(q, "label", "") or "").strip()
+            for q in qs}
     cands: list[tuple[str, str]] = []          # (key, label)
-    for q in intake.questions(mat):
+    for q in qs:
         key = getattr(q, "key", "")
         label = getattr(q, "label", "") or key
         if not key:
             continue
-        if label and (label in text or key in low):
+        c = core.get(id(q), "")
+        if (label and label in text) or (c and c in text) or key in low:
             cands.append((key, label))
     if not cands:
-        for word, key in _ASK_ALIASES:
+        for word, frag in _ASK_ALIASES:
             if word in low or word in text:
-                for q in intake.questions(mat):
-                    if getattr(q, "key", "") == key:
-                        cands.append((key, getattr(q, "label", "") or key))
-                        break
+                for q in qs:
+                    label = getattr(q, "label", "") or ""
+                    if frag in label or frag.lower() in label.lower():
+                        cands.append((getattr(q, "key", ""), label))
             if cands:
                 break
     # 去重（同一键只留一条）
