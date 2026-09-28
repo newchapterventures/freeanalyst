@@ -1288,6 +1288,36 @@ def out_dir_for(mat: Materials, override: str | Path | None = None) -> Path:
     return ROOT / "out" / _slug(mat.label)
 
 
+#: 假设名 → 「去问答清单的哪一行填」。
+#:
+#: ## 为什么要这张表（实测：全链条会在这里断）
+#: 某材料的问答清单里 `debt` 留着没填 → 净债务推不出来 → 引擎抛
+#: `ValueError: 假设「净债务」缺失（来源：未提供），无法继续计算` →
+#: **用户面对的是一段栈** ✗。而"缺假设"本来是**可动手**的事：
+#: 说清缺哪一项、去哪一行填，用户 10 秒就能补上。
+_ASSUMPTION_HINTS: dict[str, str] = {
+    "净债务": "净债务由「有息负债 − 现金」自动推。推不出来时请在问答清单里填 "
+              "debt（有息负债 —— 没有借款就填 0）",
+    "无风险利率": "填 risk_free（对应货币的长期国债收益率）",
+    "股权风险溢价": "填 equity_risk_premium",
+    "去杠杆 beta": "填 beta_unlevered",
+    "债务成本": "填 cost_of_debt（实际借款利率或 LPR+利差）",
+    "所得税率": "填 tax_rate",
+    "永续增长率": "填 terminal_growth（上界是长期名义 GDP 增速，引擎会拦）",
+    "股权价值": "填 equity（市值口径 —— 材料里没有，未上市更不会有）",
+    "收入增长率": "填 growth（逐年给，逗号分隔）",
+    "乘数": "填 multiple_low / multiple_mid / multiple_high（可比公司分位数）",
+}
+
+
+def _missing_hint(message: str) -> str:
+    """从「假设「X」缺失」里翻出可动手的那句话。认不出就返回空（不硬编）。"""
+    m = re.search(r"假设「([^」]+)」", message)
+    if not m:
+        return ""
+    return _ASSUMPTION_HINTS.get(m.group(1).strip(), "")
+
+
 def appraise(directory: str | Path, answers: str | Path | None = None,
              *, unit: str = "", out_dir: str | Path | None = None,
              no_trace: bool = False, growth_years: int = 5) -> int:
@@ -1379,8 +1409,27 @@ def appraise(directory: str | Path, answers: str | Path | None = None,
     report_path = out / f"{stem}.报告.txt"
     cfg_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    report = run_report(cfg, cfg_path.parent, statements=mat.statements,
-                        no_trace=no_trace)
+    try:
+        report = run_report(cfg, cfg_path.parent, statements=mat.statements,
+                            no_trace=no_trace)
+    except ValueError as exc:
+        # **不让用户对着一段栈发呆。** 缺假设是**可动手**的事：
+        # 说清缺哪一项、去哪一行填（见 `_ASSUMPTION_HINTS`）。
+        print(f"✗ 算不出来：{exc}", file=sys.stderr)
+        hint = _missing_hint(str(exc))
+        if hint:
+            print(f"  → {hint}", file=sys.stderr)
+        print(f"  报告未生成（配置留档已写出：{cfg_path.name}）。"
+              "把上面那一项填进问答清单，再跑一次。", file=sys.stderr)
+        return 2
+    except Exception as exc:                               # noqa: BLE001
+        # 意料之外的错：**照实说是引擎出错，不要伪装成"材料缺数"**，
+        # 并把栈打出来 —— 这类错要么是真 bug，要么是没覆盖的写法，都需要能定位。
+        print(f"✗ 估值引擎出错（{type(exc).__name__}: {exc}）—— 这是引擎的问题，"
+              "不是材料缺数；下面是栈，便于定位。", file=sys.stderr)
+        import traceback
+        traceback.print_exc()
+        return 3
 
     head = ["=" * 74, "本次没跑的与没给的（**不是没发生**）", "=" * 74]
     if missing:
