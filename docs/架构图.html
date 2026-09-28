@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>FreeAnalyst 架构图</title>
+<style>
+  :root{
+    --bg:   var(--card, #ffffff);
+    --fg:   var(--foreground, #101828);
+    --mut:  var(--muted-foreground, #667085);
+    --line: var(--border, #e4e7ec);
+    --acc:  var(--accent, #4743E8);
+  }
+  *{ box-sizing: border-box; }
+  html,body{ margin:0; }
+  body{
+    background: var(--bg); color: var(--fg);
+    display:flex; justify-content:flex-start;
+    padding: 22px;
+  }
+  .wrap{ width: 1040px; }
+
+  /* ── 页头 ── */
+  .hd{ display:flex; align-items:flex-end; justify-content:space-between; gap:20px; margin-bottom:20px; }
+  .hd .t{ font-size: 22px; font-weight: 680; letter-spacing:.01em; }
+  .hd .t small{ display:block; font-size:12.5px; font-weight:400; color:var(--mut); margin-top:5px; letter-spacing:0; }
+  .hd .v{ text-align:right; font-size:12px; color:var(--mut); line-height:1.7; white-space:nowrap; }
+  .hd .v b{ color:var(--fg); font-weight:640; }
+
+  /* ── 横切护栏条 ── */
+  .guard{
+    display:flex; align-items:center; gap:12px;
+    padding:10px 16px; border-radius:11px;
+    border:1px dashed var(--line); color:var(--mut);
+    font-size:12.5px; margin-bottom:14px;
+  }
+  .guard .n{ font-variant-numeric:tabular-nums; font-weight:680; color:var(--acc); font-size:11.5px; letter-spacing:.05em; }
+  .guard .nm{ font-weight:640; color:var(--fg); }
+  .guard .d{ margin-left:auto; text-align:right; }
+
+  /* ── 层 ── */
+  .lay{
+    display:grid; grid-template-columns: 44px 200px 1fr;
+    gap:16px; align-items:start;
+    padding:14px 18px; border-radius:12px;
+    border:1px solid var(--line);
+    border-left:3px solid var(--line);
+    transition: border-color .2s ease, background .2s ease, transform .2s ease;
+  }
+  .lay:hover{ border-color:var(--acc); border-left-color:var(--acc); background:var(--bg); transform:translateX(4px); }
+  .lay.sec{ border-left-style:dashed; }
+  .lay.pub{ border-left-color:transparent; border-left-style:dotted; }
+
+  .lay .n{ font-variant-numeric:tabular-nums; font-weight:680; font-size:13px; color:var(--acc); letter-spacing:.04em; }
+  .lay .nm{ font-weight:660; font-size:13.5px; }
+  .lay .nm em{
+    display:block; font-style:normal; font-size:11px; font-weight:400; color:var(--mut);
+    letter-spacing:.02em; margin-top:3px; text-transform:none; word-break:break-all;
+  }
+  .lay .nm em b{ color:var(--acc); font-weight:600; }
+  .chips{ display:flex; flex-wrap:wrap; gap:6px; }
+  .chip{
+    font-size:11.5px; padding:3px 9px; border-radius:20px;
+    border:1px solid var(--line); color:var(--fg); white-space:nowrap;
+    transition: border-color .18s ease, color .18s ease;
+  }
+  .lay:hover .chip{ border-color:var(--acc); }
+  .chip.of{ color:var(--mut); border-style:dashed; }
+  .note{ font-size:12px; color:var(--mut); line-height:1.6; margin-top:9px; }
+  .lay:hover .note{ color:var(--fg); }
+  .note b{ color:var(--fg); font-weight:620; }
+  .note .k{ color:var(--acc); font-weight:620; }
+
+  /* ── 层间箭头 ── */
+  .arw{ text-align:center; color:var(--mut); font-size:12px; line-height:1; padding:5px 0; opacity:.55; }
+
+  /* ── 编排说明（右侧窄条内容用） ── */
+  .seclab{
+    display:flex; gap:8px; align-items:center; margin:2px 0 15px;
+    font-size:11.5px; color:var(--mut);
+  }
+  .seclab .lg{ display:flex; align-items:center; gap:6px; padding:3px 10px; border:1px solid var(--line); border-radius:20px; }
+  .seclab .lk{ width:10px; height:5px; border-radius:3px; background:var(--acc); }
+  .seclab .lk.dash{ background:transparent; border-left:2px dashed var(--mut); height:9px; width:0; }
+  .seclab .lk.dot{ background:transparent; border-left:2px dotted var(--mut); height:9px; width:0; }
+
+  /* ── 承诺三卡 ── */
+  .three{ display:grid; grid-template-columns:repeat(3,1fr); gap:9px; margin-bottom:20px; }
+  .c{ border:1px solid var(--line); border-radius:11px; padding:12px 15px;
+      transition:border-color .2s ease, background .2s ease, transform .2s ease; }
+  .c:hover{ border-color:var(--acc); transform:translateY(-2px); }
+  .c .k{ font-size:11.5px; font-weight:680; color:var(--acc); letter-spacing:.05em; }
+  .c .v{ font-weight:640; font-size:13px; margin:5px 0 5px; }
+  .c .x{ font-size:12px; color:var(--mut); line-height:1.55; }
+
+  /* ── 数字条 ── */
+  .nums{ display:grid; grid-template-columns:repeat(4,1fr); gap:9px; margin-top:20px; }
+  .nm{ border:1px solid var(--line); border-radius:11px; padding:12px 14px;
+       transition:border-color .2s ease, transform .2s ease; }
+  .nm:hover{ border-color:var(--acc); transform:translateY(-2px); }
+  .nm .big{ font-size:20px; font-weight:690; color:var(--acc); font-variant-numeric:tabular-nums; letter-spacing:-.01em; }
+  .nm .who{ font-size:12.5px; font-weight:640; margin:3px 0 4px; }
+  .nm .x{ font-size:11.5px; color:var(--mut); line-height:1.5; }
+
+  /* ── 缺口 ── */
+  .gaps{ margin-top:20px; padding:14px 17px; border-radius:11px; border:1px dashed var(--line); }
+  .gaps .h{ font-size:12px; font-weight:680; color:var(--acc); letter-spacing:.04em; margin-bottom:7px; }
+  .gaps ul{ margin:0; padding-left:17px; }
+  .gaps li{ font-size:12px; color:var(--mut); line-height:1.75; }
+  .gaps li b{ color:var(--fg); font-weight:620; }
+
+  .ft{ margin-top:22px; display:flex; justify-content:space-between; align-items:baseline;
+       font-size:11.5px; color:var(--mut); }
+  .ft .slog{ font-size:13px; font-weight:640; color:var(--fg); }
+  .ft .slog b{ color:var(--acc); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="hd">
+    <div class="t">FreeAnalyst 架构图
+      <small>一级市场尽调 agent · 完全跑在你自己机器上 · 一个字节都不离开这台电脑</small>
+    </div>
+    <div class="v">
+      <b>v0.30</b> · 2026-09<br>
+      85 个 Python 文件 · 21,343 行<br>
+      33 个测试文件 · 6,638 行
+    </div>
+  </div>
+
+  <div class="three">
+    <div class="c">
+      <div class="k">承诺一</div>
+      <div class="v">代码全开源</div>
+      <div class="x">全部代码在仓库里，任何人可审计。没有二进制黑盒。</div>
+    </div>
+    <div class="c">
+      <div class="k">承诺二</div>
+      <div class="v">默认零出境</div>
+      <div class="x">全项目唯一网络出口是 <code>guard.py</code>，只放行 localhost；要发云端需<b>按次授权</b>，每次留痕。</div>
+    </div>
+    <div class="c">
+      <div class="k">承诺三</div>
+      <div class="v">结论可追溯</div>
+      <div class="x">每条结论强制带原文出处（页码/段落）；材料里没有的一律写"未提供"。</div>
+    </div>
+  </div>
+
+  <div class="guard">
+    <span class="n">横切</span>
+    <span class="nm">出网闸门 · 双域隔离</span>
+    <span>guard.py 唯一出口　│　net.py 公开域白名单　│　privacy.py 跨域唯一入口（出境值与语料逐字比对 + 禁名表）</span>
+    <span class="d">拦截、放行、授权，全部进审计日志</span>
+  </div>
+
+  <div class="seclab">
+    <span>分层：</span>
+    <span class="lg"><span class="lk"></span>机密域 · 只放行 127.0.0.1</span>
+    <span class="lg"><span class="lk dot"></span>公开域 · 只放行白名单主机</span>
+    <span>两层结构上互相拿不到对方 —— 隔离靠能力，不靠过滤</span>
+  </div>
+
+  <!-- L0 -->
+  <div class="lay sec">
+    <div class="n">L0</div>
+    <div class="nm">材料入口<em>materials/ · corpus/ · ingest/</em></div>
+    <div>
+      <div class="chips">
+        <span class="chip">CIM / 尽调材料 PDF</span>
+        <span class="chip">上市公司申报 HTML</span>
+        <span class="chip">三张表 Excel / CSV</span>
+        <span class="chip">扫描件</span>
+        <span class="chip">访谈纪要 / 纪要文本</span>
+      </div>
+      <div class="note">
+        <code>.txt/.md</code> 零依赖 · <code>.htm/.html</code> 正文+表格+<b>官方 XBRL 标签</b>，零依赖 ·
+        <code>.pdf</code> 可选 pdfplumber（保留行列网格）· <code>.xls</code> 走 xlrd（WPS 老二进制）·
+        扫描件自动走 <b>macOS Vision OCR</b>（约 0.4 秒/页，原生 zh-Hans / zh-Hant / EN）<br>
+        <span class="k">纪律</span>：没能读进来的材料<b>全部列出来</b>，不静默跳过 —— 否则后面的问答会用"材料里没写"解释这个缺失。
+      </div>
+    </div>
+  </div>
+  <div class="arw">↓</div>
+
+  <!-- L1 -->
+  <div class="lay sec">
+    <div class="n">L1</div>
+    <div class="nm">结构化与行级理解<em>financials/ · 14 文件 / 3,780 行</em></div>
+    <div>
+      <div class="chips">
+        <span class="chip">科目映射 CAS / US GAAP / IFRS / HKFRS</span>
+        <span class="chip">+ 1993 旧制度科目名</span>
+        <span class="chip">三张表</span>
+        <span class="chip">勾稽校验</span>
+        <span class="chip">口径派生</span>
+        <span class="chip">股本结构</span>
+      </div>
+      <div class="note">
+        勾稽结论<b>分三种分开报</b>：<b>不平</b>（映射错了，别用结果）/ <b>不适用</b>（这种格式本来就没这条，如 A 股直接法没有间接法调节段）/ <b>数据不足</b>（去补材料）。合并成一句"判不了"是最坏的做法。<br>
+        <span class="k">派生缺项报缺，不填 0</span> —— 填 0 会让净债务偏低、股权价值偏高，而"往好看的方向偏最危险"。<br>
+        <span class="k">实测</span>：Fitbit FY2016 三张表与 SEC 官方数据对账 <b>89/89 一致</b>；某小企业四年报表 <b>100% 映射、四条勾稽全平</b>。
+      </div>
+    </div>
+  </div>
+  <div class="arw">↓</div>
+
+  <!-- L2 -->
+  <div class="lay sec">
+    <div class="n">L2</div>
+    <div class="nm">本地索引与检索<em>retrieval.py · glossary.py · index/</em></div>
+    <div>
+      <div class="chips">
+        <span class="chip">BM25</span>
+        <span class="chip">中文字符二元组</span>
+        <span class="chip">200 条术语表扩查询</span>
+        <span class="chip">页码 / 段落级引用</span>
+        <span class="chip">零第三方依赖</span>
+      </div>
+      <div class="note">
+        跨语言不靠翻译、不靠模型 —— 靠<b>术语表扩展查询</b>（财务术语是封闭词汇集：「营业收入 / revenue」「总资产 / total assets / Assets」，XBRL 标签也扩）。确定、可审阅、零延迟。<br>
+        <span class="k">已知边界</span>：术语表覆盖<b>词汇</b>，不覆盖<b>语义</b>；纯词频召回，尚无向量。
+      </div>
+    </div>
+  </div>
+  <div class="arw">↓</div>
+
+  <!-- L3 -->
+  <div class="lay pub">
+    <div class="n">L3</div>
+    <div class="nm">公开域数据源<em>datasources/ · 5 文件 / 1,330 行</em></div>
+    <div>
+      <div class="chips">
+        <span class="chip">SEC EDGAR</span>
+        <span class="chip">companyfacts / frames</span>
+        <span class="chip">可比公司筛选</span>
+        <span class="chip of">股价 —— 缺口</span>
+        <span class="chip of">A 股 / 港股 —— 待接</span>
+      </div>
+      <div class="note">
+        EDGAR：免费、无需 key、<b>官方结构化数据（XBRL）</b>，不用让模型去"读"年报。<code>frames()</code> 一次调用返回<b>同一科目、同一期间、6,000+ 家公司</b>的值 —— 可比公司筛选的现成答案。<br>
+        <span class="k">诚实缺口</span>：EDGAR 有财报、没有股价 → 市值与 EV 算不出来 → <b>EV/EBITDA 用不了</b>。这一层留了位置，但没有假装它能用。
+      </div>
+    </div>
+  </div>
+  <div class="arw">↓</div>
+
+  <!-- L4 -->
+  <div class="lay sec">
+    <div class="n">L4</div>
+    <div class="nm">估值引擎（纯代码）<em>valuation/ · 13 文件 / 4,027 行</em></div>
+    <div>
+      <div class="chips">
+        <span class="chip">Scenario 六项必填</span>
+        <span class="chip">WACC / CAPM</span>
+        <span class="chip">DCF（FCFF）</span>
+        <span class="chip">反向估值</span>
+        <span class="chip">乘数 / SDE</span>
+        <span class="chip">可比公司分位数</span>
+        <span class="chip">Football Field</span>
+        <span class="chip">二维敏感性</span>
+        <span class="chip">早期项目四法</span>
+        <span class="chip">假设参谋</span>
+      </div>
+      <div class="note">
+        <b>确定性数学，不用大模型算数</b> —— 让模型算会算错，而且算错了你查不出来。模型在这个流程里只做两件事：把材料抽成数字、给假设找依据。<br>
+        <span class="k">每个假设必须带来源和置信度</span>（高：审计报告/已签合同/官方披露；中：管理报表；低：管理层口径）—— 一个没有来源的假设是隐性炸弹。<br>
+        <span class="k">算不出来就报错</span>：核心输入缺失、永续增长率 ≥ WACC、基数为负，直接拒绝，不给一个看起来正常的错数字。<br>
+        <span class="k">假设参谋</span>是本项目唯一的数据优势：拿 EDGAR 真算分位数告诉你"这个 14.6% 落在同行第 100 百分位，凭什么超过四分之三的同行"；拿不到分布就说拿不到，<b>不给你凑一个参照系</b>。
+      </div>
+    </div>
+  </div>
+  <div class="arw">↓</div>
+
+  <!-- L5 -->
+  <div class="lay sec">
+    <div class="n">L5</div>
+    <div class="nm">模型层<em>llm/ · 3 文件 / 419 行</em></div>
+    <div>
+      <div class="chips">
+        <span class="chip">backends</span>
+        <span class="chip">gate 质量门槛</span>
+        <span class="chip">只走回环 127.0.0.1</span>
+        <span class="chip">不绑后端</span>
+      </div>
+      <div class="note">
+        模型层走 OpenAI 兼容接口：<b>Ollama / LM Studio / vLLM / llama.cpp 都能换</b>，换机器不改代码。所有请求经回环闸门 —— "模型在本机"是代码挡着的，不是一句承诺。<br>
+        <span class="k">门槛</span>：五类用例（单位纪律 · 主体识别 · 跨文档冲突 · 格式遵循 · 拒答幻觉），<b>全绿才算够格进生产</b>；多轮不一致时<b>用最差那轮</b>——生产里没有"重跑一次"这个选项。<br>
+        <span class="k">一条设计前提</span>：没有模型<b>不是错误</b>，功能降级。提取与估值本来就不依赖它。
+      </div>
+    </div>
+  </div>
+  <div class="arw">↓</div>
+
+  <!-- L6 -->
+  <div class="lay sec">
+    <div class="n">L6</div>
+    <div class="nm">输出<em>CLI · 报告 · 审计</em></div>
+    <div>
+      <div class="chips">
+        <span class="chip">估值区间 + 每条出处</span>
+        <span class="chip">数据缺口清单（强制）</span>
+        <span class="chip">多方法差额</span>
+        <span class="chip">出网审计</span>
+        <span class="chip of">网页交互 —— 仅 mockup</span>
+      </div>
+      <div class="note">
+        当前入口是 CLI：<code>ingest</code> / <code>ask</code> / <code>models</code> / <code>audit</code> / <code>doctor</code>。三条入口命令之外还有 <code>value.py</code>（估值）与 <code>early_cli.py</code>（早期项目）。<br>
+        <b>数据缺口清单是强制的，不是可选项。</b>而公开域审计日志里只有公开查询词，所以<b>可以直接拿给人看</b> —— 这才是"数据不出境"的可证明形式：不是承诺，是一份可核查的记录。
+      </div>
+    </div>
+  </div>
+
+  <div class="nums">
+    <div class="nm"><div class="big">89/89</div><div class="who">对账一致</div><div class="x">Fitbit FY2016 三张表 vs SEC 官方 XBRL</div></div>
+    <div class="nm"><div class="big">4/4</div><div class="who">过质量门槛</div><div class="x">qwen3:14b（9.3GB / 71 秒）；连跑三轮皆 4/4</div></div>
+    <div class="nm"><div class="big">638</div><div class="who">项测试全过</div><div class="x">33 个测试文件；每个踩过的坑都固化成用例</div></div>
+    <div class="nm"><div class="big">0</div><div class="who">字节出境</div><div class="x">审计：总调用全为回环，外部主机 无</div></div>
+  </div>
+
+  <div class="gaps">
+    <div class="h">已知缺口（写进 README，没有掩饰）</div>
+    <ul>
+      <li><b>EDGAR 没有股价</b> → 市值 / EV 算不出 → EV/EBITDA 倍数用不了（Roadmap 第一优先）</li>
+      <li><b>A 股 / 港股数据源未接</b>（AKShare / Tushare 待接入）</li>
+      <li><b>检索是纯 BM25</b>，无向量召回；跨语言只到词汇，不到语义</li>
+      <li><b>OCR 仅 macOS</b>（Linux 上会明确报"跑不了 OCR"并说明原因）；<code>.docx</code> 未做</li>
+      <li><b>网页交互只有 mockup</b>：六步向导未实现 —— 这一步不做，三个互动环节落不了地</li>
+    </ul>
+  </div>
+
+  <div class="ft">
+    <div class="slog">开源框架 ＋ <b>你的私有资产</b>：填好的判断框架、真实材料、本地索引，永久不进 git。</div>
+    <div>Freely available · Air gapped · Off at six &nbsp;·&nbsp; 926</div>
+  </div>
+
+</div>
+</body>
+</html>

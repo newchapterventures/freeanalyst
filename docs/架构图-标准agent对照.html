@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>FreeAnalyst · 标准 agent 架构对照</title>
+<style>
+  :root{
+    --bg:   var(--card, #ffffff);
+    --fg:   var(--foreground, #101828);
+    --mut:  var(--muted-foreground, #667085);
+    --line: var(--border, #e4e7ec);
+    --acc:  var(--accent, #4743E8);
+  }
+  *{ box-sizing:border-box; }
+  html,body{ margin:0; }
+  body{ background:var(--bg); color:var(--fg); padding:22px; }
+  .wrap{ width:1040px; }
+
+  .hd{ margin-bottom:18px; }
+  .hd .t{ font-size:21px; font-weight:680; letter-spacing:.01em; }
+  .hd .s{ font-size:12.5px; color:var(--mut); margin-top:6px; line-height:1.6; }
+  .hd .s b{ color:var(--fg); }
+
+  .verdict{
+    display:flex; flex-wrap:wrap; gap:8px; margin:16px 0 22px;
+  }
+  .vd{
+    display:flex; align-items:center; gap:7px;
+    border:1px solid var(--line); border-radius:20px; padding:5px 13px;
+    font-size:12px; color:var(--mut);
+    transition:border-color .18s ease;
+  }
+  .vd:hover{ border-color:var(--acc); }
+  .vd b{ color:var(--fg); font-weight:620; }
+  .dot{ width:7px; height:7px; border-radius:50%; border:1.5px solid var(--mut); }
+  .dot.ok{ background:var(--acc); border-color:var(--acc); }
+  .dot.half{ background:transparent; border-color:var(--acc); }
+  .dot.no{ background:transparent; border-style:dotted; }
+
+  .sec{ font-size:13.5px; font-weight:660; margin:26px 0 10px; }
+  .sec span{ font-weight:400; font-size:12px; color:var(--mut); margin-left:8px; }
+
+  /* 六行对照 */
+  .map{ display:grid; gap:7px; }
+  .m{
+    display:grid; grid-template-columns: 30px 190px 1fr 118px;
+    gap:15px; align-items:start;
+    border:1px solid var(--line); border-radius:11px; padding:13px 16px;
+    transition:border-color .2s ease, transform .2s ease;
+  }
+  .m:hover{ border-color:var(--acc); transform:translateX(4px); }
+  .m .n{ font-variant-numeric:tabular-nums; font-weight:680; font-size:13px; color:var(--acc); }
+  .m .name{ font-weight:650; font-size:13.5px; }
+  .m .name em{ display:block; font-style:normal; font-weight:400; font-size:11.5px;
+               color:var(--mut); line-height:1.5; margin-top:4px; letter-spacing:.02em; }
+  .m .body{ font-size:12.5px; color:var(--mut); line-height:1.62; }
+  .m .body b{ color:var(--fg); font-weight:620; }
+  .m .body .p{ color:var(--acc); font-weight:600; }
+  .m .body i{ font-style:normal; display:block; margin-top:5px; }
+  .badge{
+    justify-self:end; font-size:11.5px; font-weight:660; letter-spacing:.04em;
+    padding:4px 11px; border-radius:20px; border:1px solid var(--line); color:var(--fg); white-space:nowrap;
+  }
+  .badge.ok{ border-color:var(--acc); color:var(--acc); }
+  .badge.half{ border-style:dashed; }
+  .badge.no{ border-style:dotted; color:var(--mut); }
+
+  code{ font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size:11.5px; }
+
+  /* 界面表 */
+  table{ width:100%; border-collapse:collapse; font-size:12.5px; }
+  th,td{ text-align:left; padding:9px 11px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th{ color:var(--mut); font-weight:620; font-size:11.5px; letter-spacing:.03em; }
+  tr:hover td{ background:var(--bg); }
+  td.n{ font-variant-numeric:tabular-nums; color:var(--acc); font-weight:660; width:26px; }
+  td.path{ color:var(--fg); }
+  td.d{ color:var(--mut); }
+  td .tag{ font-size:11px; border:1px solid var(--line); border-radius:20px; padding:2px 9px; white-space:nowrap; }
+  td .tag.no{ border-style:dotted; color:var(--mut); }
+
+  .two{ display:grid; grid-template-columns:1fr 1fr; gap:9px; }
+  .c{ border:1px solid var(--line); border-radius:11px; padding:13px 16px;
+      transition:border-color .2s ease, transform .2s ease; }
+  .c:hover{ border-color:var(--acc); transform:translateY(-2px); }
+  .c .k{ font-size:11.5px; font-weight:680; color:var(--acc); letter-spacing:.05em; }
+  .c .v{ font-weight:640; font-size:13px; margin:5px 0 6px; }
+  .c .x{ font-size:12px; color:var(--mut); line-height:1.6; }
+  .c .x b{ color:var(--fg); font-weight:620; }
+
+  .plan{ margin-top:14px; display:grid; gap:7px; }
+  .pl{ display:grid; grid-template-columns:30px 1fr; gap:14px;
+       border:1px solid var(--line); border-radius:11px; padding:12px 16px;
+       transition:border-color .2s ease, transform .2s ease; }
+  .pl:hover{ border-color:var(--acc); transform:translateX(4px); }
+  .pl .n{ font-variant-numeric:tabular-nums; font-weight:680; color:var(--acc); font-size:13px; }
+  .pl .v{ font-weight:640; font-size:13px; }
+  .pl .x{ font-size:12px; color:var(--mut); line-height:1.6; margin-top:4px; }
+  .pl .x b{ color:var(--fg); font-weight:620; }
+
+  .note{ margin-top:20px; padding:13px 16px; border-radius:11px; border:1px dashed var(--line);
+         font-size:12.5px; color:var(--mut); line-height:1.68; }
+  .note b{ color:var(--fg); font-weight:640; }
+  .note .hl{ color:var(--acc); font-weight:640; }
+  .ft{ margin-top:20px; font-size:11.5px; color:var(--mut); display:flex; justify-content:space-between; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="hd">
+    <div class="t">FreeAnalyst · 标准 agent 架构对照</div>
+    <div class="s">
+      把六个标准部件逐项对到真实代码路径上。<b>结论先说：它不是一个标准 agent，是一个「确定性内核 + 两个 LLM 算子」的专业管线，外面套了一层极厚的护栏。</b>
+      自主性被刻意做低 —— 而尽调要的正是可复现、可追溯。
+    </div>
+  </div>
+
+  <div class="verdict">
+    <span class="vd"><span class="dot ok"></span>超配　<b>护栏 · 评测</b></span>
+    <span class="vd"><span class="dot half"></span>半个　<b>LLM 核心 · 记忆 · 工具</b></span>
+    <span class="vd"><span class="dot no"></span>缺　<b>编排循环 · 技能体系</b></span>
+    <span class="vd"><span class="dot no"></span>没有　<b>MCP · ACP</b></span>
+  </div>
+
+  <div class="sec">六个标准部件，逐项对<span>右边是判定和差距</span></div>
+
+  <div class="map">
+
+    <div class="m">
+      <div class="n">01</div>
+      <div class="name">LLM 核心<em>大脑 · 推理</em></div>
+      <div class="body">
+        对应物：<code>llm/backends.py</code>（Ollama / 任意 OpenAI 兼容端点，只走回环）。
+        <i>但它<b>被刻意限制在两个位置</b>：把材料抽成数字、给假设找依据。<b>估值算术一律不走模型</b>——"让大模型算会算错，而且算错了你查不出来"。</i>
+      </div>
+      <div class="badge half">有 · 被降级为算子</div>
+    </div>
+
+    <div class="m">
+      <div class="n">02</div>
+      <div class="name">编排循环<em>harness / agent loop</em></div>
+      <div class="body">
+        <b>没有循环。</b><code>freeanalyst.py ask</code> 是单轮：检索 → 生成 → 挂出处。估值链是确定性流水线：Scenario → 提取 → 假设 → DCF → Football Field，<b>谁调谁由代码写死</b>。
+        <i>这是与"标准 agent"最大的差别 —— 它不会自己想"下一步该干什么"。</i>
+      </div>
+      <div class="badge no">缺</div>
+    </div>
+
+    <div class="m">
+      <div class="n">03</div>
+      <div class="name">工具<em>tools / tool schema</em></div>
+      <div class="body">
+        能力都在，但形态是 <b>Python 模块</b>：<code>datasources/sec_edgar</code> · <code>prices</code> · <code>retrieval</code> · <code>financials</code> · <code>valuation</code>。
+        <i>全仓库 <b>没有任何 tool_calls / tool_use / function_call</b> —— 也就是说：手脚长在身上，但模型没有"自己伸手"的通道，伸手的是代码。</i>
+      </div>
+      <div class="badge half">有手脚 · 无模型调用</div>
+    </div>
+
+    <div class="m">
+      <div class="n">04</div>
+      <div class="name">记忆<em>memory</em></div>
+      <div class="body">
+        工作记忆：<code>index/chunks.json</code> 本地索引 + 材料语料（BM25 + 术语表扩查询）。
+        <i><b>没有跨会话长期记忆</b> —— 每次都是一份新材料重新开始。对尽调这个场景，这未必是缺点（不串案子）。</i>
+      </div>
+      <div class="badge half">半个</div>
+    </div>
+
+    <div class="m">
+      <div class="n">05</div>
+      <div class="name">技能<em>skills / 操作手册</em></div>
+      <div class="body">
+        <b>没有 SKILL.md 体系。</b>等价物是三样硬编码的东西：代码里的流程、<code>EVIDENCE_LIBRARY</code>（证据清单知识表）、<code>root-templates/</code> 的 12 份空白判断框架。
+        <i>这恰恰是"技能"的雏形 —— 只是写死在代码里，用户改不了、也不随行业更新漂移。</i>
+      </div>
+      <div class="badge no">形态不同</div>
+    </div>
+
+    <div class="m">
+      <div class="n">06</div>
+      <div class="name">护栏<em>guardrails</em></div>
+      <div class="body">
+        六件里<b>唯一超配的一件</b>：<code>guard.py</code> 唯一出网口 · <code>net.py</code> 公开域白名单 · <code>privacy.py</code> 跨域唯一入口（出境值与语料逐字比对 + 禁名表）· 按次授权 · 全量审计。
+        <i>而且多了一类标准架构里没有的护栏：<b>纪律护栏</b>——缺数据报缺、不用 LLM 算数、门槛裁决用最差轮。</i>
+      </div>
+      <div class="badge ok">超配</div>
+    </div>
+
+  </div>
+
+  <div class="note">
+    <b>附：第七件——评测。</b>标准架构里经常没有这一层，它反而是全项目的重心：<code>bench/model_quality.py</code> 五类致命用例 + 33 个测试文件 638 项 + <span class="hl">判分的尺子自己也被测（20 项）</span>。
+    连"格式检查不够用"这种自我否定，都被固定成了一条测试。
+  </div>
+
+  <div class="sec">界面：几个，都是什么<span>实际可用的 vs 只有设计稿的</span></div>
+
+  <table>
+    <tr><th></th><th>入口</th><th>能做什么</th><th>状态</th></tr>
+    <tr><td class="n">1</td><td class="path"><code>freeanalyst.py</code></td><td class="d">主 CLI：<code>ingest</code> 入库 · <code>ask</code> 提问 · <code>models</code> 看模型 · <code>audit</code> 审计 · <code>doctor</code> 自检</td><td><span class="tag">可用</span></td></tr>
+    <tr><td class="n">2</td><td class="path"><code>value.py</code></td><td class="d">估值引擎 CLI —— 但输入是<b>一份手写的 JSON 配置</b>（假设、三张表路径、可比公司 ticker 都在里面）</td><td><span class="tag">可用 · 有门槛</span></td></tr>
+    <tr><td class="n">3</td><td class="path"><code>valuation/football_demo.py</code></td><td class="d">Football Field 渲染 —— <b>区间是演算数据</b>，用来验证图和数据结构对不对</td><td><span class="tag">演示件</span></td></tr>
+    <tr><td class="n">4</td><td class="path"><code>bench/model_quality.py</code></td><td class="d">模型质量评测：<code>--repeat</code> 多轮 · <code>--rescore</code> 只换尺子不重跑模型</td><td><span class="tag">可用</span></td></tr>
+    <tr><td class="n">5</td><td class="path"><code>financials/verify_reports.py</code></td><td class="d">报告验证</td><td><span class="tag">可用</span></td></tr>
+    <tr><td class="n">6</td><td class="path"><code>tools/scrub_names.py</code></td><td class="d">保密用的私有工具：把标的公司名从公开代码里清掉（v0.19 那次）</td><td><span class="tag">私有</span></td></tr>
+    <tr><td class="n">7</td><td class="path">输出文件</td><td class="d">4 份 txt 报告 + 1 个 HTML（Football Field）+ 2 个 JSON；最终目标形态是<b>可手动编辑的 Excel</b></td><td><span class="tag">文件</span></td></tr>
+    <tr><td class="n">8</td><td class="path"><code>docs/interface-mockup.html</code></td><td class="d">六步向导：<b>1 丢材料 · 2 提取核对 · 3 行业建议 · 4 可比公司 · 5 假设清单 · 6 结论</b>，每一步都是"程序准备好、你点头才往下走"</td><td><span class="tag no">只有设计稿</span></td></tr>
+    <tr><td class="n">9</td><td class="path">网页 / 桌面 app / API</td><td class="d">都没有。部署四阶段只走到第 1 阶段（源码运行）</td><td><span class="tag no">无</span></td></tr>
+  </table>
+
+  <div class="sec">协议：MCP 和 ACP 都没有<span>但要不要加，两个答案不一样</span></div>
+
+  <div class="two">
+    <div class="c">
+      <div class="k">MCP · 没有</div>
+      <div class="v">Model Context Protocol —— 昨天讲过的"插座"</div>
+      <div class="x">
+        全仓库唯一的痕迹是两句自述：CHANGELOG「未提供 MCP server，接入 Claude Code / Cursor 等宿主需自行封装」，README Roadmap 里一个没勾的框。<b>既没有 server 也没有 client。</b><br><br>
+        <b>加了会怎样：</b>FreeAnalyst 从"一个你要学命令行的工具"变成<b>一套能被别的 agent 直接调用的能力</b>——你在 Hermes 或 Claude Code 里说一句"把这份 CIM 跑一遍估值"，背后调的是它的 <code>ingest</code> / 提取 / <code>run_dcf</code>。<br>
+        <b>判断：值得做，而且优先级排在向导之后 —— 因为它同样能替你消化掉"手写 JSON"那个断点。</b>
+      </div>
+    </div>
+    <div class="c">
+      <div class="k">ACP · 没有</div>
+      <div class="v">Agent Client Protocol —— 编辑器 ↔ agent 的协议（Zed 发起，JetBrains 共同维护）</div>
+      <div class="x">
+        本地 agent 以子进程 + JSON-RPC over stdio 接入编辑器；已成熟到 v2 draft、Rust/TS SDK 1.0、注册表（2026-04 发布）。<b>它的定位是"把你的 agent 装进 IDE"</b>。<br><br>
+        <b>对 FreeAnalyst 用处有限</b>——你不需要在 Zed 里做尽调，你需要一个能走完六步的网页。<br>
+        <b>但有一个细节值得记：</b>ACP 在 2026-07 把 <span style="color:var(--acc)">Elicitation</span>（agent 向用户要结构化输入）稳定了 —— 那正是你"假设层"缺的那件事。只是为它接 ACP 属于绕远路，<b>自己做个表单更直接。</b><br>
+        <b>判断：现在不做。</b>
+      </div>
+    </div>
+  </div>
+
+  <div class="note">
+    别把两个 ACP 搞混：现在说 ACP 一般指 <b>Agent Client Protocol</b>（Zed / JetBrains，编辑器侧）；还有 IBM 早先的 <b>Agent Communication Protocol</b>（agent 之间通信，已并入 AGNTCY）。FreeAnalyst 两个都没有。
+  </div>
+
+  <div class="sec">若要"标准 agent 化"，缺的是这三件<span>而且顺序不能反</span></div>
+
+  <div class="plan">
+    <div class="pl">
+      <div class="n">01</div>
+      <div>
+        <div class="v">补编排循环：把六个步骤变成 agent 的"待办"</div>
+        <div class="x">每一步<b>准备好 → 问用户 → 点头才往下</b>（mockup 里已经这么写了）。循环只负责编排与提问，<b>算术仍然交给确定性内核</b>——这样既拿到 agent 的灵活性，又不把可复现性赔进去。</div>
+      </div>
+    </div>
+    <div class="pl">
+      <div class="n">02</div>
+      <div>
+        <div class="v">工具化：把那 12 个模块包成带 JSON Schema 的工具</div>
+        <div class="x">这一步同时解决"手写 JSON 配置"的断点，也是 MCP server 的前置条件。<b>做完这个，MCP server 几乎是顺手的事。</b></div>
+      </div>
+    </div>
+    <div class="pl">
+      <div class="n">03</div>
+      <div>
+        <div class="v">技能化：把判断知识从代码里搬出来成文档</div>
+        <div class="x">现在"人力外包毛利率是个位数、EV/Revenue 会严重失真"这类知识写在 <code>comps_workflow.py</code> 里。<b>变成可审阅、可编辑的文档</b>，才能加行业、才能让别人贡献，而不是每次改代码。</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="note">
+    <b>但先说清楚一件事：不做这三件，FreeAnalyst 也能是完整的产品。</b>
+    尽调要的是可复现、可追溯、不幻觉 —— 标准 agent 的"自主性"在这个场景里是<span class="hl">负债不是资产</span>。
+    所以这三件不是"补课"，是<span class="hl">在自主性和可复现之间划一条线</span>：<b>编排可以有循环，算术不能有随机。</b>
+  </div>
+
+  <div class="ft">
+    <div>对照依据：仓库实际代码 · CHANGELOG · README Roadmap · docs/interface-mockup.html</div>
+    <div>ACP/MCP 现状：Zed &amp; JetBrains ACP（2026-07 Elicitation 稳定）· MCP 规范</div>
+  </div>
+
+</div>
+</body>
+</html>
