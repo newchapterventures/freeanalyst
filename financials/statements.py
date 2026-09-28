@@ -591,7 +591,14 @@ class Statements:
         if self.cash_flow and self.cash_flow.fields.get(Field.CAPEX) is not None:
             note = "按「购建固定资产类支付的现金」口径"
             unit = self.unit or ""
-            note += f"；依据：{self.cash_flow.fields[Field.CAPEX]:,.0f}{unit}"
+            raw = self.cash_flow.fields[Field.CAPEX]
+            # **按绝对值显示，并说明原表的印法。** 现金流量表把流出印成负数是**排版约定**
+            # （实测某 10-K 印成 -78,640），比率用的是量级 —— 照原样显示会让读者
+            # 以为"资本开支是负的"，这是没必要的困惑。
+            shown = f"{abs(raw):,.0f}{unit}"
+            if raw < 0:
+                shown += "（原表以负数列示流出）"
+            note += f"；依据：{shown}"
             check = self.capex_crosscheck()
             if check:
                 note += f"；{check}"

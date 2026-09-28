@@ -224,6 +224,26 @@ class TestCapexCrosscheck(unittest.TestCase):
         self.assertIn("依据", note)
         self.assertIn("核对自洽", note)
 
+    def test_negative_outflow_is_shown_as_magnitude(self):
+        """现金流量表把流出印成负数是**排版约定**（实测某 10-K 印成 -78,640）。
+
+        照原样显示会让读者以为"资本开支是负的" —— 比率用的是量级，
+        提示里也该按量级显示，但要说清原表的印法（不能悄悄改数）。
+        """
+        S = self._S(capex=-78640.0, outflow=100000.0)
+        S.unit = "千美元"
+        note = S.history_notes().get("历史资本开支占收入比", "")
+        self.assertIn("78,640千美元", note)
+        self.assertNotIn("-78,640", note)
+        self.assertIn("原表以负数列示流出", note)
+
+    def test_positive_outflow_gets_no_extra_note(self):
+        S = self._S(capex=78640.0, outflow=100000.0)
+        S.unit = "元"
+        note = S.history_notes().get("历史资本开支占收入比", "")
+        self.assertIn("78,640元", note)
+        self.assertNotIn("负数列示", note)
+
 
 class TestNotesCarryTheBasis(unittest.TestCase):
     def test_ebitda_note_shows_basis_and_check(self):
