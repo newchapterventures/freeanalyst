@@ -336,10 +336,19 @@ MAPPINGS: tuple[Mapping, ...] = (
             ("GrossProfit",)),
     Mapping(Field.OPERATING_EXPENSES, ("营业费用合计", "营业总成本", "营业费用"),
             ("OperatingExpenses", "CostsAndExpenses")),
-    Mapping(Field.RND, ("研发费用", "研发支出"),
+    Mapping(Field.RND, ("研发费用", "研发支出", "研发开支", "研發開支"),
             ("ResearchAndDevelopmentExpense",)),
     Mapping(Field.SGNA, ("销售费用", "管理费用", "销售及管理费用", "销售和管理费用"),
             ("SellingGeneralAndAdministrativeExpense",)),
+    # 港交所/台股写法：把三费**分行列示**、且用「開支」而不是「费用」。
+    # 实测某港股年报：`Selling and marketing expenses 銷售及營銷開支` /
+    # `General and administration expenses 一般及行政開支` / `Research and development expenses 研發開支`
+    # —— 三行一个字都认不出来（不是缺科目，是写法没覆盖）。
+    # 它们不参与估值计算，但**是"经营利润能不能推导"的关键**：
+    # 没有它们，就无法用「毛利 + 其他收入 − 三费 ≈ 经营亏损」去反查经营利润取得对不对。
+    Mapping(Field.SELLING_EXPENSE, ("销售及营销开支", "銷售及營銷開支", "銷售開支",
+                                    "销售开支", "营销开支", "營銷開支")),
+    Mapping(Field.ADMIN_EXPENSE, ("一般及行政开支", "一般及行政開支", "行政开支", "行政開支")),
     Mapping(Field.DEPRECIATION_AMORTIZATION, ("折旧与摊销", "折旧和摊销"),
             ("DepreciationDepletionAndAmortization", "DepreciationAndAmortization",
              "DepreciationAmortizationAndAccretionNet")),

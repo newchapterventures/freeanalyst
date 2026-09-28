@@ -56,5 +56,23 @@ class TestTraditionalLossForms(unittest.TestCase):
         self.assertEqual(identify("年度虧損")[0], Field.NET_INCOME)
 
 
+    def test_hk_expense_lines_are_mapped(self):
+        """港交所把三费分行、用「開支」—— 实测某港股年报这三行一个字都认不出来。
+
+        它们不参与估值计算，但**是"经营利润能不能推导"的关键**：
+        没有它们就没法用「毛利 + 其他收入 − 三费 ≈ 经营亏损」反查经营利润对不对。
+        """
+        cases = {
+            "Selling and marketing expenses 銷售及營銷開支": Field.SELLING_EXPENSE,
+            "General and administration expenses 一般及行政開支": Field.ADMIN_EXPENSE,
+            "Research and development expenses 研發開支": Field.RND,
+            "研發開支": Field.RND,
+            "销售及营销开支": Field.SELLING_EXPENSE,
+        }
+        for label, want in cases.items():
+            f, via = identify(label)
+            self.assertEqual(f, want, f"{label} → {f}（依据 {via}）")
+
+
 if __name__ == "__main__":
     unittest.main()
