@@ -291,6 +291,35 @@ def page_scores(doc: ip.PdfDocument, strict: bool = True) -> list[PageScore]:
             for pg in doc.pages]
 
 
+#: 页首 600 字内找「母公司 XX 表」—— 表题就在页首。用 `_PARENT_TITLE`（要求
+#: 「母公司」后面紧跟表名），正文里顺带提一句「母公司」不算。
+def _drop_parent_pages(doc: ip.PdfDocument,
+                       pages: list[int]) -> tuple[list[int], list[int]]:
+    """把页范围里**属于母公司报表**的页挑出来。返回 `(留下的, 剔除的)`。
+
+    ## 为什么（实测某 A 股审计报告）
+    合并表与母公司表**印在相邻两页**，页范围总是把母公司那份也圈进来：
+
+        资产负债表 7–8 页：7 = 合并资产负债表，8 = 母公司资产负债表
+        利润表     9–10 页：9 = 合并利润表，   10 = 母公司利润表
+
+    于是**21 个科目出现两个取值**。取首次出现的那份（合并）虽然不静默——
+    会警告——但多出来的那份污染了整张表：勾稽要靠两张表混着算，容易不平。
+
+    **全都会被剔掉时一个也不剔** —— 宁可留着让下游照实报警，
+    也不能交出空表（那才是更坏的失败）。
+    """
+    kept: list[int] = []
+    dropped: list[int] = []
+    for n in pages:
+        pg = doc.pages[n - 1] if 0 < n <= len(doc.pages) else None
+        head = ((pg.raw_text or "") if pg is not None else "")[:600]
+        (dropped if _PARENT_TITLE.search(head) else kept).append(n)
+    if not kept:
+        return list(pages), []
+    return kept, dropped
+
+
 def pick_all(doc: ip.PdfDocument) -> tuple[dict[str, list[int]], list[str]]:
     """挑三张表的页范围。返回 `(结果, 说明)`。
 
@@ -321,6 +350,17 @@ def pick_all(doc: ip.PdfDocument) -> tuple[dict[str, list[int]], list[str]]:
             if v:
                 notes.append(f"{kind}：明细行门槛全文档命中不足，已回落到只看标志词")
         out[kind] = v
+    # **剔掉「母公司 XX 表」那几页。** 默认口径是合并；多出来的母公司页会让
+    # 同一个科目出现两个取值（实测 21 个），把整张表污染掉。见 `_drop_parent_pages`。
+    for kind, pages in list(out.items()):
+        if not pages:
+            continue
+        kept, dropped = _drop_parent_pages(doc, pages)
+        if dropped and kept:
+            out[kind] = kept
+            notes.append(
+                f"{kind}：页范围里的第 {'、'.join(str(n) for n in dropped)} 页"
+                "是**母公司报表**，已剔除（默认口径是合并）")
     return out, notes
 
 
