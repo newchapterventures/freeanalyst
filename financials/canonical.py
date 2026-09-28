@@ -343,8 +343,15 @@ MAPPINGS: tuple[Mapping, ...] = (
     Mapping(Field.DEPRECIATION_AMORTIZATION, ("折旧与摊销", "折旧和摊销"),
             ("DepreciationDepletionAndAmortization", "DepreciationAndAmortization",
              "DepreciationAmortizationAndAccretionNet")),
-    Mapping(Field.OPERATING_INCOME, ("营业利润", "营业利润（亏损）"),
+    Mapping(Field.OPERATING_INCOME, ("营业利润", "营业利润（亏损）", "经营溢利",
+                                     "营业溢利", "营业利润(亏损以“-”号填列)"),
             ("OperatingIncomeLoss",)),
+    # 英文人读名（港交所/美股 PDF 里是这么写的，双语行拆开后也走精确匹配）
+    Mapping(Field.OPERATING_INCOME, ("Operating profit", "Operating income",
+                                     "Profit from operations", "Operating profit (loss)")),
+    Mapping(Field.ID_DA, ("Depreciation and amortisation", "Depreciation and amortization",
+                          "Depreciation, amortisation and impairment",
+                          "Depreciation of property, plant and equipment")),
     Mapping(Field.INTEREST_EXPENSE, ("利息费用", "财务费用"),
             ("InterestExpense", "InterestExpenseNonoperating")),
     Mapping(Field.INTEREST_INCOME, ("利息收入",), ("InvestmentIncomeInterest",)),
@@ -587,6 +594,33 @@ _PREFIXES: tuple[tuple[str, Field], ...] = (
     ("accruedexpense", Field.ACCRUED_LIABILITIES),
     ("accruedliabilit", Field.ACCRUED_LIABILITIES),
     ("note payable", Field.LONG_TERM_DEBT),
+    # 港交所年报是双语的，抓出来的行名常常是「英文 + 繁体」且**被截断**：
+    # 实测 宝宝树年报里资本开支那行是
+    #   `Payments for purchase of property, plant 購置物…`（后面被切掉）
+    # 精确匹配必然落空，前缀才能救。`_norm` 会去掉空格，所以这里也不写空格。
+    ("paymentsforpurchaseofproperty", Field.CAPEX),
+    ("purchaseofpropertyplantandequipment", Field.CAPEX),
+)
+
+
+#: **包含**判定 —— 有些科目写法太多，逐个列永远补不全。
+#:
+#: 实测（2026-09-24，两份中文/港股年报都取不到折旧摊销）：间接法那一行在不同准则、
+#: 不同行业里写作「固定资产折旧、油气资产折耗、生产性生物资产折旧」「使用权资产折旧」
+#: 「无形资产摊销」「长期待摊费用摊销」「折旧及摊销」…… 逐个补写法是打地鼠，
+#: 而这一行**必然带"折旧 / 折耗 / 摊销"三个词之一**，按包含判更稳。
+#:
+#: 排除项不能省：「累计折旧」「累计摊销」是**资产负债表上的抵减项**，不是当期费用 ——
+#: 把它当成折旧摊销加进 EBITDA，等于把存量数字混进当期流量。
+#:
+#: 为什么不怕误伤别的表：`ID_DA` 只从**现金流量表**里取（`_da_total` 逐行过滤现金表），
+#: `CAPEX` 只从现金表取（`cf.get(Field.CAPEX)`）—— 所以即便资产负债表里某行也被判成
+#: 这两个科目，也不会污染 D&A 与资本开支。**这是取数处收口的价值，不是运气。**
+_CONTAINS: tuple[tuple[tuple[str, ...], tuple[str, ...], Field], ...] = (
+    (("折旧", "折耗", "摊销"), ("累计",), Field.ID_DA),
+    (("购建固定资产", "购置固定资产", "购买固定资产", "购建物业", "购置物业",
+      "购买物业", "购建厂房", "购置厂房", "购建无形", "购置无形", "购建在建",
+      "购置油气资产", "购建油气资产"), (), Field.CAPEX),
 )
 
 #: **每个字段属于哪张表** —— 用来挡住"串表"。
@@ -848,6 +882,14 @@ def identify(label: str, xbrl_tag: str | None = None) -> tuple[Field | None, str
             hit = _BY_NAME.get(c)
             if hit is not None:
                 return hit, "name"
+        # 精确匹配全落空，试**包含** —— 折旧摊销这类写法无穷的科目靠它兜住。
+        # 排除词先过一遍：命中排除词就整条不认（否则「累计折旧」会被当成当期折旧）。
+        for keys, bans, f in _CONTAINS:
+            for c in cands:
+                if any(b in c for b in bans):
+                    continue
+                if any(k in c for k in keys):
+                    return f, "contains"
         # 精确匹配全落空，才试**前缀** —— 标签被截断的情况（见 `_PREFIXES`）
         for c in cands:
             for pre, f in _PREFIXES:

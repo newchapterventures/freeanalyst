@@ -635,17 +635,30 @@ NEED = {
 def questions(mat: Materials, *, growth_years: int = 5) -> list[Q]:
     """列出这次估值必须由人给的输入。**不给默认值的键留空。**"""
     hist = {}
+    reasons: dict[str, str] = {}
+    notes: dict[str, str] = {}
     if mat.statements is not None:
         try:
             hist = mat.statements.history()
         except Exception:                              # noqa: BLE001
             hist = {}
+        try:
+            reasons = mat.statements.history_reasons()
+            notes = mat.statements.history_notes()
+        except Exception:                              # noqa: BLE001
+            reasons, notes = {}, {}
 
     def ref(name: str, pct: bool = True) -> str:
         v = hist.get(name)
         if v is None:
-            return "数据不足"
-        return f"{v:.2%}" if pct else f"{v:,.0f}"
+            # **别只说「数据不足」。** 用户看到这四个字分不清三种完全不同的情况：
+            # 财报里确实没有 / 我们没认出来 / 认出来了但数字没抽到。
+            # 三种的应对完全不同（填数 / 改科目字典 / 修取数），所以要把原因带上。
+            why = reasons.get(name)
+            return f"数据不足 —— {why}" if why else "数据不足"
+        txt = f"{v:.2%}" if pct else f"{v:,.0f}"
+        note = notes.get(name)
+        return f"{txt}（{note}）" if note else txt
 
     def cur(attr: str) -> str:
         """材料里推出来的当前值 —— **让用户能看见、能改**。"""
