@@ -90,5 +90,48 @@ class TestPageHandlers(unittest.TestCase):
         self.assertIn("applyLang(", cfg)
 
 
+def _strip_css_comments(src: str) -> str:
+    """去掉 CSS 注释再扫规则 —— 否则注释里写的反例会被当成真规则（我自己踩过）。"""
+    return re.sub(r"/\*.*?\*/", "", src, flags=re.S)
+
+
+class TestHideUtilityAlwaysWins(unittest.TestCase):
+    """`.hide` 必须永远能隐藏 —— 这一条是踩出来的（"按键无效/关不掉"）。
+
+    2026-09-24：本机向导页里 `.hide{display:none}` 写在 `.onb{display:flex}` **前面**，
+    两条同优先级 → 后写的赢 → 全屏引导遮罩**永远显示**；而 JS 那边 `onbKey()`
+    第一句是"带 hide 就 return"，它以为自己是隐藏的 → 键盘、跳过、开始使用全部失效。
+    用户被关在遮罩里，浏览器控制台**一行错都没有**（语法没错、逻辑也没错，是 CSS 赢了）。
+
+    所以：工具类的显示规则必须带 !important，且每个页面都要有；谁把它去掉，这里就红。
+    """
+
+    def test_every_page_hide_rule_carries_important(self):
+        for name in PAGES:
+            p = ROOT / name
+            if not p.exists():
+                continue
+            src = _strip_css_comments(p.read_text(encoding="utf-8"))
+            m = re.search(r"\.hide\s*\{([^}]*)\}", src)
+            if not m:
+                continue
+            body = m.group(1).replace(" ", "")
+            self.assertIn("display:none", body, f"{name}: .hide 得真的隐藏({body})")
+            self.assertIn("!important", body,
+                          f"{name}: .hide 的 display 必须带 !important —— "
+                          "同优先级的后置规则会盖掉它，遮罩就关不掉了")
+
+    def test_overlay_has_a_backup_rule(self):
+        page = (ROOT / "webapp_page.html").read_text(encoding="utf-8")
+        self.assertIn(".onb.hide{display:none}", page.replace(" ", ""),
+                      "遮罩要有第二条隐藏规则兜底（万一 !important 被误删）")
+
+    def test_overlay_can_be_escaped_without_any_state(self):
+        """`?onb=0` 与"点遮罩空白处"两条退路必须在 —— 遮罩不能把人关在里面。"""
+        page = (ROOT / "webapp_page.html").read_text(encoding="utf-8")
+        self.assertIn('onb=0', page)
+        self.assertIn('e.target === el', page, "点空白处关闭那条要真的按目标判断")
+
+
 if __name__ == "__main__":
     unittest.main()

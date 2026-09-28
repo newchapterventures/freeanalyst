@@ -237,7 +237,16 @@
            color:var(--mut);font-size:11.5px;letter-spacing:.06em}
   .verline b{color:var(--pri);font-weight:400}
   footer span.ttl{color:var(--pri)}
-  .hide{display:none}
+  /* ⚠ 这个 !important 是**故意的**，别去掉：
+     `.hide` 是"隐藏"这个动作的唯一工具类，它必须**永远赢**。
+     踩过的坑（2026-09-24，用户报"按键无效/关不掉"）：
+       .hide{display:none}          ← 第 240 行先声明
+       .onb{…display:flex}          ← 第 247 行后声明，**同优先级，后写的赢**
+     结果：全屏引导遮罩的 hide 类加了也关不掉；而 JS 那边 `onbKey()` 第一句是
+     "带 hide 就 return" —— 它以为自己是隐藏的，于是按键全部失效。
+     教训：**别让显隐依赖"规则先后"**，工具类的显示规则必须带 !important。 */
+  .hide{display:none !important}
+  .onb.hide{display:none}        /* 第二道保险：即使将来 !important 被误删，这条也赢 */
   code{font-family:var(--mono);color:var(--amber);background:rgba(255,176,0,.07);
        padding:1px 5px;border-radius:2px}
 
@@ -1092,6 +1101,10 @@ function wireOnbLang(){
   document.querySelectorAll("[data-onblang]").forEach(b =>
     b.addEventListener("click", () => applyLang(b.dataset.onblang)));
   document.addEventListener("keydown", onbKey);
+  // 点遮罩空白处也能退出 —— 全屏遮罩**绝不允许把人关在里面**（踩过：CSS 让 hide 失效，
+  // 于是按键全死、关不掉）。多加一条不依赖任何状态的退路。
+  const el = $("onb");
+  if(el) el.addEventListener("click", e => { if(e.target === el) onbDone(); });
 }
 
 //: 切语言时引导若正开着，把它也换成对应语言（否则中英混在同一屏里）
@@ -1108,6 +1121,8 @@ function onbRelang(){
 //: 反过来已经跑过一份估值的人也不会被拦一次教学。
 function onbMaybeStart(u){
   u = u || {};
+  //: `?onb=0` 永不弹 —— 万一将来又出"关不掉"，人还有一条不带任何依赖的退路。
+  if(location.search.indexOf("onb=0") >= 0) return;
   let seen = "";
   try { seen = localStorage.getItem(ONB_KEY) || ""; } catch(e){ seen = ""; }
   if(u.onboarded || (u.runs || 0) > 0 || seen) return;

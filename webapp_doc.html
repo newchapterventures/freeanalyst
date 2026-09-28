@@ -76,7 +76,10 @@
   tbody tr:nth-child(even){background:rgba(255,255,255,.014)}
   footer{margin-top:34px;padding-top:16px;border-top:1px solid var(--line);
          color:var(--mut);font-size:11.5px}
-  .hide{display:none}
+  /* ⚠ !important 故意的：`.hide` 必须永远赢。同一个坑在本机向导页上出过 ——
+     `.onb{display:flex}` 写在 `.hide{display:none}` 后面，同优先级 → 后写的赢 →
+     全屏遮罩加了 hide 也关不掉，而按键因为"以为自己是隐藏的"全部失效。 */
+  .hide{display:none !important}
 </style></head><body><div class="wrap">
 
   <div class="top">

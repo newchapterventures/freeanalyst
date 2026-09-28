@@ -67,7 +67,7 @@ const ctx = vm.createContext({
   localStorage: {getItem: k => (k === "fa.onboarded" ? scenario.seen : null),
                  setItem(){}, removeItem(){}},
   navigator: {language: "zh-CN"},
-  location: {protocol: "http:", search: ""},       // 有后端（不是预览模式）
+  location: {protocol: "http:", search: scenario.search || ""},   // 有后端（不是预览模式）
   fetch: async () => ({json: async () => health}),
   setTimeout, clearTimeout, console,
 });
@@ -89,8 +89,8 @@ class TestOnboardTrigger(unittest.TestCase):
         cls.js = cls.tmp / "h.js"
         cls.js.write_text(HARNESS, encoding="utf-8")
 
-    def _run(self, usage: dict, seen: str = "") -> bool:
-        arg = json.dumps({"usage": usage, "seen": seen})
+    def _run(self, usage: dict, seen: str = "", search: str = "") -> bool:
+        arg = json.dumps({"usage": usage, "seen": seen, "search": search})
         out = subprocess.run([shutil.which("node") or "node", str(self.js),
                               str(PAGE), arg],
                              capture_output=True, text=True, timeout=60)
@@ -116,6 +116,20 @@ class TestOnboardTrigger(unittest.TestCase):
     def test_missing_usage_field_does_not_crash(self):
         """老服务没有 usage 字段 → 退回浏览器记忆，不报错。"""
         self.assertFalse(self._run({}, seen="1"))
+
+    def test_onb0_never_shows(self):
+        """`?onb=0` 永不弹 —— 不带任何依赖的退路。
+
+        为什么要有：2026-09-24 出过一次"引导关不掉"（CSS 里 .onb 的 display 盖掉了
+        .hide，遮罩永远显示，而按键因为"以为自己隐藏着"全部失效）。人在那种情况下
+        手里必须有一条不依赖 JS 状态、不依赖 localStorage 的退路。
+        """
+        self.assertFalse(self._run({"onboarded": False, "runs": 0}, seen="",
+                                   search="?onb=0"),
+                         "带 ?onb=0 还弹了 —— 退路失效")
+        # 别的参数不能顺带把它关掉（只有明确的 onb=0 才算表态）
+        self.assertTrue(self._run({"onboarded": False, "runs": 0}, seen="",
+                                  search="?x=1"))
 
 
 class TestUsageStateOnTheServer(unittest.TestCase):

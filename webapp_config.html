@@ -67,7 +67,8 @@
         max-height:320px;overflow:auto}
   .lang button{border:0;color:var(--mut);padding:2px 6px;font-weight:400}
   .lang button.on{color:var(--pri)}
-  .hide{display:none}
+  /* ⚠ !important 故意的：`.hide` 必须永远赢（同坑见本机向导页的 .onb） */
+  .hide{display:none !important}
   /* 「还没有模型」块：三条路 + 能直接粘的命令 */
   .path{border-left:2px solid var(--line);padding:8px 0 8px 12px;margin:10px 0}
   .path .pt{margin-bottom:4px}
