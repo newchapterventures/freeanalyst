@@ -538,14 +538,21 @@ class TestForecastReferences(unittest.TestCase):
     def test_every_metric_option_is_wired_in_the_engine(self):
         """下拉里给的每个指标，选了之后引擎**真的能算** —— 否则就是骗人。
 
-        SDE 是唯一例外，而它必须**明说推不出**（不静默、不给一个看起来对的数）。
+        **两种合法例外，都必须明说原因**（不静默、不给一个看起来对的数）：
+          · `SDE` —— 材料里没有所有者薪酬，推不出
+          · `EBITDA` / `EBIT` —— **这份材料的基数是负的**（EBITDA −74,332）
+            乘数 × 负数 = 负价值，没有意义 → 整块不跑并说明
+        例外之外，指标值都是**从材料里真的取到的** —— 报错信息里带着那个值
+        （−74,332 / −112,465），这本身就证明接通了。
         """
         base = {"unit": intake.parse_answer("千美元"),
                 "multiple_low": intake.parse_answer("8"),
                 "multiple_mid": intake.parse_answer("10"),
                 "multiple_high": intake.parse_answer("12")}
-        for metric, works in (("EBITDA", True), ("EBIT", True),
-                              ("收入", True), ("SDE", False)):
+        for metric, works, why in (("EBITDA", False, "负基数"),
+                                   ("EBIT", False, "负基数"),
+                                   ("收入", True, ""),
+                                   ("SDE", False, "需所有者薪酬")):
             ans = dict(base, metric_name=intake.parse_answer(metric))
             cfg, missing = intake.build_config(self.mat, ans)
             if works:
@@ -553,8 +560,13 @@ class TestForecastReferences(unittest.TestCase):
                 self.assertEqual(cfg["multiples"]["metric_name"], metric)
                 self.assertIsNotNone(cfg["multiples"]["metric_value"]["value"])
             else:
-                self.assertNotIn("multiples", cfg)
-                self.assertTrue(any("需所有者薪酬" in m for m in missing), missing)
+                self.assertNotIn("multiples", cfg, metric)
+                self.assertTrue(any(why in m for m in missing),
+                                f"{metric} 拒绝得不明不白：{missing}")
+                if why == "负基数":
+                    # 报错里必须带上**从材料取到的那个值** —— 否则看不出是"接通了但基数不可用"
+                    self.assertTrue(any(v in " ".join(missing)
+                                        for v in ("-74,332", "-112,465")), missing)
 
 
 class TestOrigins(unittest.TestCase):
