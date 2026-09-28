@@ -377,19 +377,66 @@ def pick_all(doc: ip.PdfDocument) -> tuple[dict[str, list[int]], list[str]]:
             if v:
                 notes.append(f"{kind}：明细行门槛全文档命中不足，已回落到只看标志词")
         out[kind] = v
+    # **不要在这里按页首表题锁锚点** —— 试过：修好了中信证券，但把中国平安的
+    # 映射从 20/11 压到 17/10（回归抓到的），而且三条路（页首表题 / 阈值 / 整页表题）
+    # 都没法只收中信不碰平安。完整实测表见 `_title_pages` 的说明。分数赢。
     # **不要在这里按页首文字剔「母公司页」** —— 试过，误伤了一份材料的合并表
     # （映射 28→23 / 10→5，EBITDA 率从 +29.96% 变无值）。原因与替代判据见
     # `_drop_parent_pages` 的说明。多出来的母公司页目前由"取首次出现 + 报警"兜着。
     return out, notes
 
 
+def _title_pages(doc: ip.PdfDocument, kind: str) -> list[int]:
+    """页首**写明表题**（「合并资产负债表」这类）的页 —— 最具体的写法优先。
+
+    ## ⚠️ 当前**没有被调用**：试过，修不好，已从调用处摘掉（别再试了）
+    想解决的问题是真的：`pick_pages` 的注释里留着"概览表 vs 真表"的量化数据 ——
+    某年报利润表真表 536 分 vs MD&A 概览 534 分，**只差 2 分**；有一份真表 markers 是 0。
+    当时的结论是"边际太薄，等找到更稳的组合再说"，而**表题看着像那个更稳的信号**：
+    它是**分类**的，不靠词表、不靠边际。实测中信证券那份年报也**确实修好了**：
+
+        资产负债表  P40（MD&A 说明表，278 分）→ **P176（合并资产负债表，277 分）** ✓
+        利润表      P37（比率表，380 分）    → **P182（合并利润表，304 分）** ✓
+
+    **但它误伤了另一份** ✗（中国平安中期报告，回归抓到的）：
+
+        映射 balance 20 → **17** · income 11 → **10** ✗
+        （真表被推到了 [111,112] / [114]，而原来选中的 [120] / [121] 分数更高）
+
+    ## 三条路都试过，**没有一条能只收中信、不碰平安**
+    | 判据 | 中信（该修） | 平安（不该动） | 能否分开 |
+    |---|---|---|---|
+    | 页首 600 字找表题 | income 比值 **0.80** | income 比值 **0.80** | ✗ **一模一样** |
+    | 放宽到**整页**找表题 | ✓ 修正 | ✗ 更糟：现金流被推到**第 2 页目录**（0 分） | ✗ |
+    | 分数比值设阈值 | 0.80~1.00 | 0.80~0.92 | ✗ 区间重叠 |
+
+    两者 income 的比值**分毫不差**（都是 0.80）—— 任何阈值都切不开。
+    平安的 [121] 页**整页都没有**表题文字（所以"放宽到整页"也救不回来），
+    而它恰恰是分数最高的那一页。分数与表题在这份材料上**就是矛盾的**，
+    而这个矛盾**没有可用的仲裁信号**（试过的都不行）。
+
+    → 结论：**分数赢**（保持现状），并把这条实测留下，免得下次再试一遍。
+    """
+    from .from_pdf import TITLES     # 延迟导入：单一口径，且避免循环导入
+    heads = [(pg.number, (pg.raw_text or "")[:600]) for pg in doc.pages]
+    for title in TITLES.get(kind, ()):          # TITLES 本身就是"最具体在前"
+        hit = [n for n, h in heads if title in h]
+        if hit:
+            return hit
+    return []
+
+
 def pick_pages(scores: list[PageScore], kind: str,
-               max_gap: int = 0) -> list[int]:
+               max_gap: int = 0, allowed: list[int] | None = None) -> list[int]:
     """挑出属于 `kind` 的连续页。
 
     1. 取分最高的那页当锚点；
     2. 往后走，只要后面某页对 `kind` 的分**高于**其他类就继续；
        遇到别的类的分明显更高就停。
+
+    `allowed` 参数（"锚点只从这些页里挑"）**当前没有被调用** ——
+    试过用页首表题当它，修好了中信证券但误伤了中国平安，三条路都分不开。
+    完整实测表见 `_title_pages` 的说明。留着签名是为了别让下一个人再写一遍。
 
     ## ⚠️ 已知未解：概览表 vs 真表（附实测量化数据）
 
@@ -447,9 +494,14 @@ def pick_pages(scores: list[PageScore], kind: str,
     anchor = None
     best = 0
     for s in scores:
+        if allowed and s.number not in allowed:      # 表题页之外不参选
+            continue
         v = s.scores.get(kind, 0)
         if v > best:
             anchor, best = s.number, v
+    if anchor is None and allowed:
+        # 表题页一个分都没有 → **退回全体**。宁可照旧，也不要交出空表。
+        return pick_pages(scores, kind, max_gap, allowed=None)
     if anchor is None:
         return []
 
