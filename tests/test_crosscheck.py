@@ -130,6 +130,62 @@ class TestCrosscheck(unittest.TestCase):
         self.assertIn("吻合", msg)
 
 
+class TestNwcCrosscheck(unittest.TestCase):
+    """净营运资本的「分项 vs 合计」——「分项 > 合计」是算术上不可能的事。
+
+    它比"对不上"更硬：**没有口径差异的余地**。能抓到两类真会发生的错 ——
+    量级读错（差三个数量级）、合并表与母公司表串行（实测某 A 股年报
+    「其他流动资产」一行出现 6 个取值）。
+    """
+
+    @staticmethod
+    def _S(ar, inv, ap, cur_a=None, cur_l=None):
+        S = _statements([("营业收入", 1000.0)], {Field.REVENUE: 1000.0})
+        rows = [("应收账款", ar), ("应付账款", ap)]
+        if inv is not None:
+            rows.append(("存货", inv))
+        if cur_a is not None:
+            rows.append(("流动资产合计", cur_a))
+        if cur_l is not None:
+            rows.append(("流动负债合计", cur_l))
+        S.balance = _set("balance", rows, {Field.ACCOUNTS_RECEIVABLE: ar,
+                                           Field.ACCOUNTS_PAYABLE: ap,
+                                           **({Field.INVENTORY: inv} if inv is not None else {})})
+        return S
+
+    def test_item_exceeding_total_is_caught(self):
+        """应收账款比流动资产合计还大 —— 一定是哪里错了（量级或串行）。"""
+        S = self._S(ar=9999.0, inv=10.0, ap=5.0, cur_a=100.0, cur_l=80.0)
+        msg = S.nwc_crosscheck()
+        self.assertIn("不自洽", msg)
+        self.assertIn("应收账款", msg)
+        self.assertIn("请核对", msg)
+
+    def test_payable_exceeding_current_liabilities_is_caught(self):
+        S = self._S(ar=10.0, inv=10.0, ap=9999.0, cur_a=100.0, cur_l=80.0)
+        msg = S.nwc_crosscheck()
+        self.assertIn("不自洽", msg)
+        self.assertIn("应付账款", msg)
+
+    def test_consistent_items_report_so(self):
+        S = self._S(ar=30.0, inv=20.0, ap=25.0, cur_a=100.0, cur_l=80.0)
+        self.assertIn("核对自洽", S.nwc_crosscheck())
+
+    def test_no_total_means_no_claim(self):
+        """合计取不到就**什么都不说** —— 不猜、不制造噪声。"""
+        S = self._S(ar=30.0, inv=20.0, ap=25.0)
+        self.assertEqual(S.nwc_crosscheck(), "")
+
+    def test_notes_show_basis_and_check(self):
+        S = self._S(ar=30.0, inv=20.0, ap=25.0, cur_a=100.0, cur_l=80.0)
+        S.unit = "千元"
+        note = S.history_notes().get("历史净营运资本占收入比", "")
+        self.assertIn("依据", note)
+        self.assertIn("应收账款", note)
+        self.assertIn("应付账款", note)
+        self.assertIn("核对自洽", note)
+
+
 class TestNotesCarryTheBasis(unittest.TestCase):
     def test_ebitda_note_shows_basis_and_check(self):
         """**极端值只有把依据摆出来才可解释** —— 这是这一轮真正要交付的东西。"""

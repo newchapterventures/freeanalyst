@@ -400,9 +400,9 @@ class Statements:
                    ("研发费用", ("Research and development", "研發開支", "研发开支",
                                  "研发费用", "研發費用")))
 
-    def _row_by_label(self, patterns: tuple[str, ...]) -> tuple[float, str] | None:
-        """按**行标签**取一行（不走科目映射，见 `_DERIVE_ADD` 的说明）。"""
-        for r in (self.income.rows if self.income else []):
+    def _row_in(self, st, patterns: tuple[str, ...]) -> tuple[float, str] | None:
+        """在**指定那张表**里按行标签取一行（不走科目映射，理由见 `_DERIVE_ADD`）。"""
+        for r in ((st.rows if st else []) or []):
             if r.value is None:
                 continue
             lab = r.label or ""
@@ -410,6 +410,10 @@ class Statements:
                 if p in lab:
                     return r.value, lab
         return None
+
+    def _row_by_label(self, patterns: tuple[str, ...]) -> tuple[float, str] | None:
+        """按**行标签**取一行（不走科目映射，见 `_DERIVE_ADD` 的说明）。"""
+        return self._row_in(self.income, patterns)
 
     def derive_operating_income(self) -> tuple[float | None, list[str]]:
         """用利润表其他行反算经营利润。返回 `(值, 用到的行名)`。
@@ -482,6 +486,38 @@ class Statements:
         return (f"与反算结果不一致（差 {diff / scale:+.2%}，无法归因到某一行）"
                 f"—— 该值未经交叉验证，请人工核对")
 
+    #: 净营运资本的「分项 vs 合计」校验用的标签（科目表里没有这两个合计，按行标签取）。
+    _CUR_A = ("流动资产合计", "流動資產合計", "Total current assets")
+    _CUR_L = ("流动负债合计", "流動負債合計", "Total current liabilities")
+
+    def nwc_crosscheck(self) -> str:
+        """净营运资本的「分项 vs 合计」校验 —— 抓三类真会发生的错：
+
+        ① **分项量级读错**（例如小了/大了三个数量级）
+        ② **合并表与母公司表串行**（实测某 A 股年报「其他流动资产」一行出现 6 个取值）
+        ③ 分项其实没取到，而使用者以为取到了
+
+        「分项 > 合计」是最硬的信号 —— 那是**算术上不可能**的事，任何口径都解释不了
+        （不像"对不上"，它没有"口径差异"的余地）。合计取不到时**什么都不说**，不猜。
+        """
+        bal = self.balance
+        hit_a = self._row_in(bal, self._CUR_A)
+        hit_l = self._row_in(bal, self._CUR_L)
+        cur_a = hit_a[0] if hit_a else None
+        cur_l = hit_l[0] if hit_l else None
+        inc_b = self.balance.fields if bal else {}
+        checks = ((inc_b.get(Field.ACCOUNTS_RECEIVABLE), "应收账款", cur_a),
+                  (inc_b.get(Field.INVENTORY), "存货", cur_a),
+                  (inc_b.get(Field.ACCOUNTS_PAYABLE), "应付账款", cur_l))
+        bad = [f"{name} 大于{'流动资产' if cap == cur_a else '流动负债'}合计"
+               for v, name, cap in checks if v is not None and cap and v > cap + abs(cap) * 0.02]
+        if bad:
+            return ("分项与合计不自洽（" + "；".join(bad) +
+                    "）—— 很可能是合并/母公司口径串行，或某个数读错了量级，请核对")
+        if cur_a and inc_b.get(Field.ACCOUNTS_RECEIVABLE) is not None:
+            return "与「流动资产合计 / 流动负债合计」核对自洽"
+        return ""
+
     def history_notes(self) -> dict[str, str]:
         """算出来了、但口径上要说明一句的（**不能默不作声**）。"""
         bal = self.balance.fields if self.balance else {}
@@ -505,6 +541,25 @@ class Statements:
                     "折旧摊销量级可疑，这一栏同时受影响（请核对）")
         if bal.get(Field.INVENTORY) is None and bal.get(Field.ACCOUNTS_RECEIVABLE) is not None:
             out["历史净营运资本占收入比"] = "未含存货（材料中无此科目）"
+        # **净营运资本也摆依据 + 与本表合计对一遍。**
+        # 分项超过合计是**算术上不可能**的事（不像"对不上"，它没有口径差异的余地），
+        # 能抓到量级读错和合并/母公司串行这两类真会发生的错。
+        ar = bal.get(Field.ACCOUNTS_RECEIVABLE)
+        nwc_parts: list[str] = []
+        unit = self.unit or ""
+        if ar is not None and bal.get(Field.ACCOUNTS_PAYABLE) is not None:
+            nwc_parts.append(
+                f"依据：应收账款 {ar:,.0f}{unit}"
+                + (f" + 存货 {bal[Field.INVENTORY]:,.0f}{unit}"
+                   if bal.get(Field.INVENTORY) is not None else "")
+                + f" − 应付账款 {bal[Field.ACCOUNTS_PAYABLE]:,.0f}{unit}")
+        nwc_check = self.nwc_crosscheck()
+        if nwc_check:
+            nwc_parts.append(nwc_check)
+        if nwc_parts:
+            joined = "；".join(nwc_parts)
+            prev = out.get("历史净营运资本占收入比", "")
+            out["历史净营运资本占收入比"] = f"{prev}；{joined}" if prev else joined
         if self.cash_flow and self.cash_flow.fields.get(Field.CAPEX) is not None:
             out["历史资本开支占收入比"] = "按「购建固定资产类支付的现金」口径"
 
