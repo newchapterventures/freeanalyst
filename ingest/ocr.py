@@ -321,6 +321,31 @@ def _write_cache(cache: Path, pages: dict[int, list[list[tuple[float, str]]]]) -
 #: 同一个列的 x 容差（归一化坐标，1.0 = 页宽）。
 _COL_TOL = 0.02
 
+#: 判定「左右两栏」时，两组标签列至少要隔这么远（归一化坐标）。
+#:
+#: 这个数是量出来的，不是拍的（某扫描件第 7 页实测）：
+#:   · 同一视觉列内的抖动：0.080 与 0.109（相差 0.029）、0.444～0.544（跨 0.10）
+#:   · 真两栏之间：左组最后一个标签列 0.156 → 右组第一个 0.444，相距 **0.288** ✓
+#:   · 单栏报表的干扰（中文合计行右对齐）：0.177 与 0.288，相距 **0.11** ✗
+#: 取 0.22 —— 比真栏间小、比抖动和合计行干扰都大。
+_TWO_SIDED_MIN_GAP = 0.22
+#: 同一个视觉列的抖动上限：标签起点在这以内就算同一栏（实测抖动最大 0.10）。
+_LABEL_MERGE_GAP = 0.15
+
+#: 判定「是不是资产负债表那种两栏」用的词表 —— **光看几何不够，要看内容**。
+#:
+#: 实测：只按坐标判，利润表/现金流量表的页也会满足"两组标签列 + 间距够"
+#: （第 6、10、13 页被误判 ✗），切下去把单栏报表的标签切走，利润表映射从 26/123 掉到 13/93。
+#: 而 T 型两栏只出现在**资产负债表**上，它的两侧用词是有特征的：
+#:   左边：资产、货币资金、应收账款、存货、预付款项…
+#:   右边：负债、应付账款、预收款项、合同负债、所有者权益…
+_ASSET_WORDS = ("资产", "货币资金", "应收账款", "应收票据", "存货", "预付款项",
+                "其他应收款", "流动资产")
+_LIAB_WORDS = ("负债", "应付账款", "应付票据", "预收款项", "合同负债",
+               "所有者权益", "股东权益", "应付职工薪酬", "应交税费")
+#: 两侧各至少要命中这么多词，才算"这就是资产负债表"
+_SIDED_WORDS_MIN = 2
+
 #: 「行次 / 附注」列里那些小整数的上限。中文财报的行次不会超过这个数。
 _MAX_ROW_NUMBER = 400
 
@@ -431,16 +456,98 @@ def split_two_sided(rows):
     if not centers:
         return [rows]
 
-    label_cols = _label_columns_x(rows, centers)
-    if len(label_cols) < 2:
+    # **切点由 `_two_sided_cut` 给**（切在右栏标签前一点点），
+    # 不要用"第二个标签列的中心" —— 标签起点有抖动，那个位置可能还在同一栏里。
+    cut_x = _two_sided_cut(rows, centers)
+    if cut_x is None:
         return [rows]
-
-    cut_x = centers[label_cols[1]]
     left, right = [], []
     for row in rows:
         left.append([c for c in row if c[0] < cut_x])
         right.append([c for c in row if c[0] >= cut_x])
     return [left, right]
+
+
+def _label_groups(rows, centers) -> list[list[int]]:
+    """把「标签列」按相邻距离合并成**视觉栏**。
+
+    为什么不能直接用 `_label_columns_x` 的结果：真材料里科目名的起点**有抖动**
+    （实测同一栏里出现 0.080 与 0.109 两个中心，都是 100% 科目名），
+    聚类会把它拆成两个列 —— 直接取"第二个标签列"会拿到**同一栏的第二个子列**，
+    于是判定"不是两栏"、永不切开（这个坑真踩过）。
+    """
+    cols = _label_columns_x(rows, centers)
+    groups: list[list[int]] = []
+    for c in cols:
+        if groups and centers[c] - centers[groups[-1][-1]] <= _LABEL_MERGE_GAP:
+            groups[-1].append(c)
+        else:
+            groups.append([c])
+    return groups
+
+
+def _two_sided_cut(rows, centers) -> float | None:
+    """两栏的话，从哪切？—— 切在**右侧那组标签列的起点**前面。
+
+    不取两组的中位点：左栏的值可能一直排到 0.415，而右栏标签从 0.444 开始，
+    中点 0.30 会落在**左栏自己的数字中间**，把左栏切掉一半。
+    切在右栏标签前一点点，左右各自完整 ✓
+    """
+    groups = _label_groups(rows, centers)
+    if len(groups) < 2:
+        return None
+    left_last, right_first = groups[0][-1], groups[1][0]
+    if centers[right_first] - centers[left_last] < _TWO_SIDED_MIN_GAP:
+        return None
+    return centers[right_first] - _COL_TOL
+
+
+def _sided_words_ok(rows, cut: float) -> bool:
+    """两侧的用词像不像资产负债表（左资产、右负债/权益）。
+
+    这条是补几何判据的短板：利润表和现金流量表也能满足"两组标签列 + 间距够"，
+    但它们的用词完全不同（营业收入/营业成本 vs 经营活动/筹资活动），
+    所以给两侧各挂一个词表 —— 命中不够就不许切。
+    """
+    left = "".join(t for r in rows for x, _, t in r if x < cut)
+    right = "".join(t for r in rows for x, _, t in r if x >= cut)
+    return (sum(1 for w in _ASSET_WORDS if w in left) >= _SIDED_WORDS_MIN
+            and sum(1 for w in _LIAB_WORDS if w in right) >= _SIDED_WORDS_MIN)
+
+
+def looks_two_sided(rows: list[list[tuple[float, str]]]) -> bool:
+    """这一页**是不是左右两栏**（T 型）—— 决定要不要按 x 切。
+
+    ## 为什么要先判断，而不是直接切
+
+    切栏这件事前人试过，**在三份材料上造成回归**（见 `rows_to_table` 的注释）：
+    中文财报的合计行是**右对齐**的（«货币资金 x=0.177» 与 «资产总计 x=0.288» 差 0.11），
+    一刀切下去会把单栏报表的合计行切走，勾稽从「平」变成「数据不足」。
+
+    所以判据必须**只在真的两栏时才成立**。实测（某扫描件第 7 页）两栏长这样：
+
+        应收账款 x≈0.08 | 0.26 | 0.31 | 0.42 ‖ 应付账款 x≈0.44～0.55 | 0.67 | 0.73 | 0.82
+        └──── 左栏（标签+值）────┘        └──────── 右栏（标签+值）────────┘
+
+    判据（三条同时成立才算两栏）：
+      ① 有两**组**以科目名为主的列（相邻抖动先合并成一栏，见 `_label_groups`）
+      ② 两组之间的水平距离 ≥ `_TWO_SIDED_MIN_GAP`（归一化坐标）
+      ③ 右半那组出现在足够多的行上（≥ 1/4 的行），不是个别游标
+    """
+    if not rows:
+        return False
+    norm = _norm_cells(rows)
+    centers = cluster_columns([[(x, t) for x, _, t in r] for r in norm])
+    if len(centers) < 3:
+        return False
+    cut = _two_sided_cut(norm, centers)
+    if cut is None:
+        return False
+    # **光看几何不够，还要看内容** —— 只按坐标判会把利润表/现金流量表也切了（实测误伤 3 页）。
+    if not _sided_words_ok(norm, cut):
+        return False
+    rows_with_right = sum(1 for r in norm if any(x >= cut and t.strip() for x, _, t in r))
+    return rows_with_right >= max(3, len(norm) // 4)
 
 
 def _is_numeric_cell(text: str) -> bool:
@@ -479,18 +586,24 @@ def rows_to_table(rows: list[list[tuple[float, str]]]) -> list[list[str]]:
     按 x 聚类会把它们分成两列，只取最左列就取空了 —— 于是所有合计行
     都变成「〔此行没有标签〕」，资产总计、负债合计全丢，**勾稽直接判不了**。
 
-    ## ⚠ 已知未解决：T 型（左右两栏）资产负债表
+    ## ⚠ T 型（左右两栏）资产负债表 —— 现在按判据切开了
 
     有些材料（实测某上市公司 2022 审计报告）的资产负债表是左右两栏，
-    一行里同时装着资产和负债。这时本函数会**把两边混进同一行**，
-    取值时拿到另一边的金额。
+    一行里同时装着资产和负债。不切的话两边混进同一行，取值会拿到**另一边的金额**
+    而且不报错。第 8 页那种更危险：左栏金额没认出来，只剩右边的两个数 ——
+    不切就会把负债的数配给「应收账款」。
 
-    试过按 x 切开（见 `split_two_sided`），但在已跑通的三份材料上
-    造成了回归（某非上市公司的现金勾稽从「平」变成「数据不足」），
-    所以**没有启用**。目前靠勾稽校验兜底 —— 混栏时勾稽会报
-    「数据不足」或「不平」，不会静默给出一个错数。
+    切栏前人试过一次，**因为误伤单栏报表被回退了**（中文合计行右对齐，
+    一刀切会把合计行切走，勾稽从「平」变成「数据不足」）。
+    所以现在**先判 `looks_two_sided()` 再切** —— 只在真是两栏时动手。
     """
-    return _one_block(_norm_cells(rows))
+    norm = _norm_cells(rows)
+    if looks_two_sided(rows):
+        out: list[list[str]] = []
+        for block in split_two_sided(rows):
+            out.extend(_one_block(_norm_cells(block)))
+        return out
+    return _one_block(norm)
 
 
 def _one_block(rows: list[list[tuple[float, str]]]) -> list[list[str]]:
