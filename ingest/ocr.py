@@ -43,6 +43,16 @@ import subprocess
 from pathlib import Path
 
 _SWIFT_SRC = Path(__file__).with_name("vision_ocr.swift")
+
+#: OCR 请求：是否开启语言纠正。**实测对金额没有影响**（开/关的 ok/repaired/suspect
+#: 完全一致：192 格 → ok 100 / repaired 88 / suspect 4），中文标签又要靠它，所以保持开。
+#: 别凭感觉去关它 —— 先跑 `bench/measure_ocr.py`。
+USE_LANGUAGE_CORRECTION = True
+
+#: 低于这个置信度的**数值格**会被打上 `？`（下游当可疑值）。默认 0 = 关闭。
+#: 实测 Vision 的自评置信度很弱：192 个金额格里只有 14 个低于 0.5，
+#: 而真正的错值（被替换/截断的数字）置信度往往很高 —— 开着抓不到目标，只会误报。
+LOW_CONFIDENCE = 0.0
 _CACHE_ROOT = Path(__file__).resolve().parent.parent / "cache" / "ocr"
 
 #: 严格的金额写法。**OCR 出来的数字必须完全符合它才认。**
@@ -262,7 +272,12 @@ def _runs(nums: list[int]) -> list[tuple[int, int]]:
 
 def _run_swift(pdf: Path, first: int, last: int,
                timeout: int) -> dict[int, list[list[tuple[float, str]]]]:
-    cmd = ["swift", str(_SWIFT_SRC), str(pdf), str(first), str(last)]
+    # 两个 OCR 参数由这里的常量控制，**都经过实测**（见 `bench/measure_ocr.py`）：
+    #   · 语言纠正：实测对金额没有任何影响（开/关的 ok/repaired/suspect 完全一致）→ 保持开
+    #   · 置信度下限：Vision 自评很弱（192 个金额格里只有 14 个低于 0.5），
+    #     开着会喊狼来了 → 默认 0（关闭）
+    cmd = ["swift", str(_SWIFT_SRC), str(pdf), str(first), str(last), "3.0",
+           "1" if USE_LANGUAGE_CORRECTION else "0", str(LOW_CONFIDENCE)]
     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     if proc.returncode != 0:
         raise RuntimeError(

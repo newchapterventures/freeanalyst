@@ -29,6 +29,25 @@ let pdfPath = args[1]
 let startPage = args.count > 2 ? (Int(args[2]) ?? 1) : 1
 let endPage = args.count > 3 ? (Int(args[3]) ?? 0) : 0
 let scale = CGFloat(Double(args.count > 4 ? args[4] : "3.0") ?? 3.0)
+//: 语言纠正开关（第 6 个参数）。**默认开 = 与改动前完全一致**，
+//: 免得 A/B 还没跑就先改了行为；实测之后再定默认值。
+let useCorrection = (args.count > 5 ? args[5] : "1") == "1"
+//: 置信度下限：低于它的**数值格**会被打上 `？` 标记（第 7 个参数，默认 0 = 关闭）。
+//:
+//: 为什么用 `？` 前缀而不是别的方式：这个项目里"可疑金额带 ？"已经是既有约定，
+//: 下游 `parse_amount` 见到 `？` 会返回 suspect —— 一个字都不用改就能接上。
+//: 阈值先给 0（不改变现有行为），等 A/B 实测出置信度分布再定。
+let lowConf = args.count > 6 ? (Double(args[6]) ?? 0.0) : 0.0
+
+/// 这一格看着是不是**数值**（金额/比例/编号）。
+/// 只要含数字、且不含中日韩文字，就当数值格 —— 标签不受影响，
+/// 因为我们**只给数值格**打标记。
+func looksNumeric(_ s: String) -> Bool {
+    let hasDigit = s.range(of: "[0-9]", options: .regularExpression) != nil
+    let hasCJK = s.range(of: "[\\u{4E00}-\\u{9FFF}\\u{3000}-\\u{303F}]",
+                         options: .regularExpression) != nil
+    return hasDigit && !hasCJK
+}
 
 guard let doc = PDFDocument(url: URL(fileURLWithPath: pdfPath)) else {
     FileHandle.standardError.write("打不开 PDF\n".data(using: .utf8)!)
@@ -61,6 +80,9 @@ struct Frag {
     let text: String
     let x: CGFloat
     let y: CGFloat
+    //: Vision 自己的置信度（0~1）。**别丢** —— 低置信度的金额要能被标出来，
+    //: 我们自己那套"形状校验"只能抓格式不对，抓不到"数字被换了一个"。
+    let conf: Double
 }
 
 var outPages: [[String: Any]] = []
@@ -71,7 +93,10 @@ for pageNo in first...last {
     let req = VNRecognizeTextRequest()
     req.recognitionLevel = .accurate
     req.recognitionLanguages = ["zh-Hans", "zh-Hant", "en-US"]
-    req.usesLanguageCorrection = true
+    // **语言纠正对数字是有害的**：它是按语言习惯猜字的，能把 `1,234,567.89`
+    // 这种长数字里的数字悄悄换掉（我们实测过：折旧摊销金额比真值小了三个量级）。
+    // 但中文科目名**需要**它。所以做成参数：默认开（保标签），读金额时可以关。
+    req.usesLanguageCorrection = useCorrection
 
     let handler = VNImageRequestHandler(cgImage: img, options: [:])
     do { try handler.perform([req]) } catch { continue }
@@ -80,8 +105,16 @@ for pageNo in first...last {
     for obs in (req.results ?? []) {
         guard let c = obs.topCandidates(1).first else { continue }
         let bb = obs.boundingBox                      // 左下原点，0..1
-        frags.append(Frag(text: c.string, x: bb.minX,
-                          y: 1.0 - (bb.minY + bb.height / 2)))   // 换成左上原点
+        // **低置信度的数值格打 `？`**：Vision 自己就知道它没把握，
+        // 而我们那套"形状校验"只能抓格式不对、抓不到"数字被换了一个"。
+        // 标上之后，下游会把它当可疑值处理（拒绝猜、并在报告里标出来）。
+        var text = c.string
+        if lowConf > 0, Double(c.confidence) < lowConf, looksNumeric(text) {
+            text = "？" + text
+        }
+        frags.append(Frag(text: text, x: bb.minX,
+                          y: 1.0 - (bb.minY + bb.height / 2),   // 换成左上原点
+                          conf: Double(c.confidence)))
     }
     frags.sort { $0.y < $1.y }
 
@@ -102,7 +135,7 @@ for pageNo in first...last {
         // 会落到不同栏 —— 在财务表上这是不可接受的静默错误。
         // 上层用 x 聚类成列，才对得上。
         ["cells": row.sorted { $0.x < $1.x }.map {
-            ["x": $0.x, "y": $0.y, "t": $0.text]
+            ["x": $0.x, "y": $0.y, "t": $0.text, "c": $0.conf]
         }]
     }
     outPages.append(["page": pageNo, "rows": rows])
