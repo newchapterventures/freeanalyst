@@ -158,6 +158,21 @@ _UNIT_WORD = (
 _UNIT_EN = (
     (r"in\s+thousands", "千美元"), (r"in\s+millions", "百万美元"),
 )
+#: **带货币的紧凑写法**：`RMB’000` / `RMB'000` / `US$’000` / `HK$’000` ——
+#: 港交所与 IFRS 报表页首就是这样标的。
+#:
+#: ## 必须排在 `_UNIT_EN` 前面（实测踩到）
+#: 某港股年报正文里另有一处 "in millions"（附注里另一段的口径），
+#: 而它的正表标的是 `RMB’000` → 整份材料的单位被判成**「百万美元」** ✗✗：
+#: **货币和量级两个都错**（实际是人民币千元）。单位错是 1000 倍级的静默错误，
+#: 所以判据要挑**最具体、最靠近正表**的那个，而不是先撞上谁算谁。
+_UNIT_HK = (
+    (re.compile(r"RMB\s*['’]?\s*0{3}\b", re.I), "千元"),
+    (re.compile(r"RMB\s*['’]?\s*0{6}\b", re.I), "百万元"),
+    (re.compile(r"(?:US\$|USD|美元)\s*['’]?\s*0{3}\b", re.I), "千美元"),
+    (re.compile(r"(?:HK\$|HKD|港币|港元)\s*['’]?\s*0{3}\b", re.I), "千港元"),
+    (re.compile(r"RMB\s+(?:in\s+)?million", re.I), "百万元"),
+)
 
 
 def detect_unit(text: str) -> tuple[str, str]:
@@ -168,7 +183,18 @@ def detect_unit(text: str) -> tuple[str, str]:
     if m:
         return m.group(1), f"正文里的「{m.group(0).strip()}」"
     head = text[:200_000]
+    # **带货币的紧凑写法优先**：`RMB’000` 比笼统的 "in millions" 具体得多，
+    # 而且通常就在正表页首（见 `_UNIT_HK` 的说明）。
+    for pat, unit in _UNIT_HK:
+        m2 = pat.search(head)
+        if m2:
+            return unit, f"正文里的「{m2.group(0).strip()}」"
     low = head.lower()
+    # **语言自洽的写法优先于笼统的英文短语。** 「人民币千元」「千元」出现在中文材料里，
+    # 比正文某处一句 "in millions" 具体得多；实测正是后者把港股那份判成了「百万美元」。
+    for word, unit in _UNIT_WORD:
+        if word in head:
+            return unit, f"正文里的「{word}」"
     for pat, unit in _UNIT_EN:
         if re.search(pat, low):
             return unit, f"英文材料里的「{pat}」"
