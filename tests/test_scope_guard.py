@@ -62,16 +62,18 @@ class TestConflictResolution(unittest.TestCase):
         from_pdf._resolve_conflicts(st, {cn.Field.INVENTORY: [(100.0, 57, True)]})
         self.assertEqual(st.conflicts, [])
 
-    def test_first_occurrence_wins(self):
-        """**取首次出现，不按「是不是合并页」判。**
+    def test_no_scale_evidence_falls_back_to_first_occurrence(self):
+        """**没有规模证据时退回"取首次出现"，方向不会被"是不是合并页"带反。**
 
-        试过更聪明的规则（按页判断合并 / 母公司，优先取合并那个）—— 不行。
-        母公司利润表里也有「归属于母公司所有者的净利润」，一样会被标成合并页，
+        历史（**试过、失败过**，别重蹈）：按页判断"是不是合并报表"、优先取合并那个 ——
+        不行。母公司利润表里也有「归属于母公司所有者的净利润」，一样会被标成合并页，
         一个「合并」标志在两类页上都成立，**区分度为零**。
         实测把 `营业收入` 从 172,054,171,890.91（合并）改判成了
         98,318,530,088.73（母公司），**方向正好反了**。
 
-        可靠的是文档结构：**中文年报里合并表永远排在母公司表前面**。
+        现在的规则是**按规模**（资产总计最大那页 → 通常即合并口径，见
+        `tests/test_conflict_scope.py`）。本用例**没有规模字段** → 走不到那条路 →
+        退回首次出现，且提示会写明"未能按规模比较"。
         """
         st = self._st()
         st.fields[cn.Field.REVENUE] = 172_054_171_890.91
