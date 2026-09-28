@@ -665,6 +665,11 @@ def questions(mat: Materials, *, growth_years: int = 5) -> list[Q]:
         return str(getattr(mat.statements, attr, "") or "") if mat.statements else ""
 
     rev = hist.get("历史实际收入")
+    # **净债务要不要问用户**：材料里推得出来就不问（能确定的事不让人打字），
+    # 推不出来就必须问 —— 否则引擎会因"核心输入缺失"整条链出不来报告（实测）。
+    _nd_val, _nd_why = _net_debt_derived(mat)
+    nd_ask = _nd_val is None
+    nd_why = _nd_why or "材料里取不到有息负债/现金科目"
     # 预测参数的参考值 —— **必须有"现在是多少"垫底**，否则等于让人凭空填。
     # 收入增长率推不出来（材料只给了一期，没有第二个年度可比）：
     # 那就是数据不足，说清楚，别拿"行业增速"之类的猜测顶上。
@@ -733,6 +738,11 @@ def questions(mat: Materials, *, growth_years: int = 5) -> list[Q]:
           reference=debt_ref),
         Q("equity", "股权价值（市值口径，WACC 用）", group="折现率",
           reference="由你提供 —— 市值口径，材料里没有（未上市更没有）"),
+        # **净债务：能推就不问，推不出来必须问**（实测：这里不问，整条链会断）。
+        # 引擎对"核心输入缺失"是硬报错的（净债务偏低 → 股权价值偏高 → 往好看的方向偏），
+        # 所以用户必须有个地方能填它 —— 否则材料里取不到借款/现金科目时无路可走。
+        *([Q("net_debt", "净债务（有息负债 − 现金）", group="折现率",
+             reference=f"由你提供 —— 材料里推不出：{nd_why}")] if nd_ask else []),
 
         # ── 预测：这里是判断，不是算 ──
         Q("growth", f"{growth_years} 年收入增长率（逗号分隔）", group="预测",
@@ -987,6 +997,28 @@ def _specs(a: Answer, unit: str = "") -> list[dict]:
     return _specs_of(_lst(a.value), a, unit)
 
 
+def _net_debt_derived(mat) -> tuple[float | None, str]:
+    """材料里能不能推出净债务。返回 `(值, 说明)`。
+
+    ## 为什么要单独判（实测：全链条在这里断）
+    净债务由「有息负债 − 现金」推（`derive.net_debt`）。推不出来时——
+    材料里没有借款/现金科目——**问答清单里原本没有这一项** ✗，
+    于是引擎按"核心输入缺失必须报错"抛异常，整条链路出不来报告。
+
+    引擎那条规矩是对的（净债务偏低 → 股权价值偏高 → **往好看的方向偏**），
+    缺的是**让用户能填**。这个函数就是用来决定"要不要问"。
+    """
+    st = getattr(mat, "statements", None)
+    bal = getattr(getattr(st, "balance", None), "fields", None)
+    if not bal:
+        return None, "材料里没有资产负债表，净债务推不出来"
+    from financials import derive
+    nd = derive.net_debt(bal)
+    if nd.value is not None:
+        return float(nd.value), (nd.note or "")
+    return None, (nd.note or "材料里取不到有息负债/现金科目")
+
+
 def build_config(mat: Materials, ans: dict[str, Answer],
                  *, growth_years: int = 5) -> tuple[dict, list[str]]:
     """把材料 + 回答拼成一份 `value.py` 认的配置。
@@ -1070,6 +1102,12 @@ def build_config(mat: Materials, ans: dict[str, Answer],
 
     dcf_ready = ("wacc" in cfg and not dcf_miss
                  and "base_revenue" in _facts_keys(mat))
+    # **净债务也是 DCF 的硬前提**：材料推不出来时，用户必须在问答清单里填
+    # （那一行只在推不出来时才出现）。两边都没有 → DCF 整块不跑，并在报告里说清缺什么。
+    _nd_val, _nd_why = _net_debt_derived(mat)
+    if not (has("net_debt") or _nd_val is not None):
+        missing.append(f"DCF · 净债务（材料里推不出：{_nd_why}；问答清单里也没填）")
+        dcf_ready = False
     if dcf_ready and (not years or len(gm) != years):
         missing.append(f"预测 · ebitda_margin 给了 {len(gm)} 个，"
                        f"增长率给了 {years} 个（年数对不上）")
@@ -1115,6 +1153,13 @@ def build_config(mat: Materials, ans: dict[str, Answer],
             "nwc_pct_revenue": _spec(ans["nwc_pct_revenue"]),
             "terminal_growth": _spec(ans["terminal_growth"]),
         }
+        # **净债务接进配置**：用户填了就优先用（`apply_facts` 的判据是 `key in target`，
+        # 已在配置里就不覆盖 —— 实测）；没填就让 `apply_facts` 用材料推出来的
+        # （事实类，来源可核对到行）。
+        # 两边都没有的情形由下面的 `dcf_ready` 挡住，**不是在这里硬塞一个 0** ——
+        # 净债务偏低会让股权价值偏高，正是"往好看的方向偏"。
+        if has("net_debt"):
+            cfg["dcf"]["net_debt"] = _spec(ans["net_debt"], unit=unit)
         if has("exit_multiple"):
             em = _num_text(ans["exit_multiple"].value)
             if em is None:
@@ -1152,6 +1197,16 @@ def build_config(mat: Materials, ans: dict[str, Answer],
             "multiple_mid": _spec(ans["multiple_mid"]),
             "multiple_high": _spec(ans["multiple_high"]),
         }
+        # **净债务在乘数法里也要用**（EV = 市值 + 净债务 − 少数股东权益）——
+        # 实测漏了这一处：DCF 那条接上了，乘数法仍然报「假设「净债务」缺失」✗。
+        # `apply_facts` 会填它（事实类），但它见"已在配置里"就不覆盖，
+        # 所以用户填的那份要在这里也放一次。
+        if has("net_debt"):
+            cfg["multiples"]["net_debt"] = _spec(ans["net_debt"], unit=unit)
+        elif _net_debt_derived(mat)[0] is None:
+            missing.append("乘数法 · 净债务（材料里推不出；问答清单里也没填）"
+                           "—— 没有它 EV 与股权价值之间无法换算")
+            cfg.pop("multiples", None)
 
     # ---------- 反向估值 ----------
     if has("ask_price"):
