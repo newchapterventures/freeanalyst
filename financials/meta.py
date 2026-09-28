@@ -247,10 +247,33 @@ _PERIOD_EN = re.compile(
     rf"(?:{_PERIOD_MONTH}\.?\s+\d{{1,2}},\s*(?:19|20)\d{{2}}"
     rf"|\d{{1,2}}\s+{_PERIOD_MONTH}\.?,?\s+(?:19|20)\d{{2}})")
 
+#: **中文数字年份**：审计报告和传统排版写「二〇二四年度」「二零二四年十二月三十一日」。
+#: 实测一份审计报告的期间**只有这种写法** → 期间判不出来 → 估值基准日退化成「1…N」占位，
+#: 报告里多一条本可避免的缺口 ✗。
+_CN_YEAR = re.compile(r"([〇零一二三四五六七八九]{2,4})\s*年")
+#: 只认年报那套小写中文数字。**不认「壹贰叁」大写** —— 那是金额的写法，不是年份。
+_CN_DIGIT = {"〇": "0", "零": "0", "一": "1", "二": "2", "三": "3", "四": "4",
+             "五": "5", "六": "6", "七": "7", "八": "8", "九": "9"}
+
+
+def _cn_year(s: str) -> str:
+    """「二〇二四」→「2024」。凑不成 19xx/20xx 就返回空（**不猜**）。"""
+    d = "".join(_CN_DIGIT.get(c, "") for c in s)
+    return d if len(d) == 4 and d[:2] in ("19", "20") else ""
+
 
 def detect_period(text: str) -> str:
     """从材料正文里认报表期间（资产负债表日）。**认不出返回空。**"""
     if not text:
         return ""
     m = _PERIOD_CN.search(text) or _PERIOD_EN.search(text)
-    return m.group(0) if m else ""
+    if m:
+        return m.group(0)
+    m2 = _CN_YEAR.search(text)
+    if m2:
+        y = _cn_year(m2.group(1))
+        if y:
+            # **只说材料写了什么**：原表只写年度，就回年度 ——
+            # 编一个「12月31日」比不给更坏（价格、期间对齐都会跟着错）。
+            return f"{y}年（原表写作「{m2.group(0).strip()}」）"
+    return ""

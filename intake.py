@@ -1066,6 +1066,10 @@ def build_config(mat: Materials, ans: dict[str, Answer],
 
     unit = raw("unit", mat.unit) or ""
     missing: list[str] = []
+    # **估值基准日默认用材料自己的报表期间** —— 工具明明知道它（`statements.period`），
+    # 却一直留空，于是预测年份标签退化成「1…N」并在报告里报一条缺口 ✗。
+    # 报表期间本来就是"这份材料站在哪一天"，作为基准日的默认值最自然不过。
+    _period = getattr(getattr(mat, "statements", None), "period", "") or ""
     cfg: dict = {
         "target": raw("target", mat.label),
         "unit": unit,
@@ -1073,7 +1077,7 @@ def build_config(mat: Materials, ans: dict[str, Answer],
             "purpose": raw("purpose", "并购定价"),
             "stance": raw("stance", "买方"),
             "stage": raw("stage", "成熟企业"),
-            "valuation_date": raw("valuation_date", ""),
+            "valuation_date": raw("valuation_date", _period),
             "currency": raw("currency", "CNY"),
             "equity_scope": raw("equity_scope", "100%"),
         },
