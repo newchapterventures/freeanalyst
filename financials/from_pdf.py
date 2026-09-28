@@ -279,6 +279,50 @@ def _fill(st: stm.StatementSet, doc: ip.PdfDocument, lo: int, hi: int,
     _resolve_conflicts(st, seen)
 
 
+#: 资产总计的**各种键**：`seen` 的键有时是 `Field` 枚举、有时是字符串
+#: （实测某 A 股审计报告就是字符串，导致规模法完全没生效、退化成"未能按规模比较" ✗）。
+_TOTAL_ASSETS_KEYS = ("资产总计", "资产合计", "总资产", "Total Assets")
+#: 资产总计不足以比较两页时的**退路** —— 它们与规模同向（合并那页都更大）。
+#: ⚠️ **只在同一字段内比较**，绝不拿"资产"和"负债"互相排大小。
+_SCALE_FALLBACK_KEYS = ("负债合计", "Total Liabilities", "所有者权益合计",
+                        "股东权益合计", "Total Equity",
+                        "负债和所有者权益总计", "Total Liabilities and Equity")
+
+
+def _is_total_assets(f: object) -> bool:
+    """这个键是不是「资产总计」？**枚举与字符串都认**。"""
+    if f is cn.Field.TOTAL_ASSETS:
+        return True
+    return getattr(f, "value", f) in _TOTAL_ASSETS_KEYS
+
+
+def _page_scale(seen: dict[object, list[tuple[float, int, bool]]]
+                ) -> tuple[dict[int, float], str]:
+    """每页的「规模」+ **用的是哪个字段**。返回 `(页码→规模, 字段名)`。
+
+    用途见 `_resolve_conflicts`。取绝对值，所以被印成负数也不影响比较。
+
+    ## 为什么要退路（实测）
+    某 A 股审计报告的**资产总计只在一页上抽到**（另一页没抽到）→ 比较不了 → 规则不生效。
+    所以依次试「资产总计」→「负债合计」→「所有者权益合计」等，
+    **哪一个字段自己覆盖了两页以上，就用它**。
+    一个字段覆盖不了就换下一个，**永不跨字段混比**（拿资产和负债排大小是没意义的）。
+
+    **字段名一并返回**：提示里要说"取**X**最大那一页的"，说错字段等于编依据。
+    """
+    for keys in (_TOTAL_ASSETS_KEYS, _SCALE_FALLBACK_KEYS):
+        for f, pairs in seen.items():
+            name = getattr(f, "value", f)
+            if name not in keys:
+                continue
+            m: dict[int, float] = {}
+            for v, pg, _flag in pairs:
+                m[pg] = max(m.get(pg, 0.0), abs(v))
+            if len(m) >= 2:
+                return m, str(name)
+    return {}, ""
+
+
 def _resolve_conflicts(st: stm.StatementSet,
                        seen: dict[object, list[tuple[float, int, bool]]]) -> None:
     """同一个字段出现多个不同取值时的裁决。
@@ -297,38 +341,52 @@ def _resolve_conflicts(st: stm.StatementSet,
     出来一个 1790 亿的「所有者权益」，而真值是 2540 亿。
     **勾稽不会不平**，因为这个字段根本不参与勾稽。
 
-    ## 裁决规则：**取首次出现，并把另一个值报出来**
+    ## 裁决规则：**按规模取自哪一页**（原先只是"取首次出现"）
+    同一科目在多页有值时，用**该页的资产总计**当尺子：合并 = 母公司 + 子公司 − 抵销，
+    所以合并那一页的资产总计**通常**更大。取最大那一页的值。
 
-    试过更聪明的规则（按页判断是不是合并报表，优先取合并那个）—— **不行**。
-    母公司利润表里也有「归属于母公司所有者的净利润」，一样会被标成合并页，
-    于是一个「合并」标志在两类页上都成立，**区分度为零**。
-    实测把 `营业收入` 从 172,054,171,890.91（合并）改判成了
-    98,318,530,088.73（母公司），**方向正好反了**。
+    ⚠️ 这是**量级证据**，不是页序约定。"中文年报里合并表永远排在母公司表前面"
+    只是**惯例** —— 拿到排反的材料就不成立，而且它**不成文、不可核对**。
+    也**不是**"按页判断是不是合并报表"（那条真试过、真失败过，见上）。
 
-    可靠的是文档结构本身：
+    比不了规模时（那一页没取到资产总计）**退回首次出现，并明说没能比较** ——
+    不装作有依据。
 
-        **中文年报里，合并表永远排在母公司表前面。**
-
-    所以一个连续页范围里，同一个科目**第一次出现**就是合并口径。
-
-    ⚠️ 这条成立的前提是**串表已经被 `field_statement` 挡住** ——
-    750 亿那个 bug 正是「没挡住的外表字段成了第一个」。
-
-    所以另一个值**不丢**：报出来，让人能核对。
+    另一个值**不丢**：报出来，让人能核对。
     """
+    scale, scale_name = _page_scale(seen)
+    big_page = max(scale, key=lambda p: scale[p]) if len(scale) >= 2 else None
+
     for f, pairs in seen.items():
         vals = {round(v, 2) for v, _, _ in pairs}
         if len(vals) <= 1:
             continue
 
         chosen = pairs[0]
+        if big_page is not None:
+            on_big = [p for p in pairs if p[1] == big_page
+                      and round(p[0], 2) != round(chosen[0], 2)]
+            if on_big:
+                chosen = on_big[0]
+                why = (f"取**{scale_name}最大那一页**的（通常即合并口径，"
+                       f"第 {big_page} 页{scale_name}最大）")
+            else:
+                why = (f"取**首次出现**的（第 {big_page} 页{scale_name}最大，"
+                       "与首次出现一致）")
+        else:
+            why = "取**首次出现**的（**未能按规模比较**，请核对是否合并口径）"
+
         st.fields[f] = chosen[0]
-        others = "；".join(f"{b[0]:,.2f}（第 {b[1]} 页）"
-                          for b in pairs[1:4] if round(b[0], 2) != round(chosen[0], 2))
+        # **另一个值不丢** —— 必须从**全部**候选里排除选中那个，
+        # 不能用 `pairs[1:4]`：选中项不再必然是第一个（规模法可能选后面那个页），
+        # 那样会把"第一个值"整条漏掉（这个坑真踩过，被测试抓到）。
+        rest = [b for b in pairs if round(b[0], 2) != round(chosen[0], 2)]
+        others = "；".join(f"{b[0]:,.2f}（第 {b[1]} 页）" for b in rest[:3])
+        if len(rest) > 3:
+            others += f"…（另有 {len(rest) - 3} 个）"
         st.conflicts.append(
             f"「{getattr(f, 'value', str(f))}」出现 {len(vals)} 个取值，"
-            f"取**首次出现**的 {chosen[0]:,.2f}（第 {chosen[1]} 页）"
-            f"—— 年报里合并表排在母公司表前面。其余：{others}")
+            f"{why} {chosen[0]:,.2f}（第 {chosen[1]} 页）。其余：{others}")
 
 
 def evidence_text(page_text: str, statements, toc_text: str = "") -> str:
