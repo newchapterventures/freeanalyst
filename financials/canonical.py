@@ -344,11 +344,21 @@ MAPPINGS: tuple[Mapping, ...] = (
             ("DepreciationDepletionAndAmortization", "DepreciationAndAmortization",
              "DepreciationAmortizationAndAccretionNet")),
     Mapping(Field.OPERATING_INCOME, ("营业利润", "营业利润（亏损）", "经营溢利",
-                                     "营业溢利", "营业利润(亏损以“-”号填列)"),
+                                     "营业溢利", "营业利润(亏损以“-”号填列)",
+                                     # 繁体 + **亏损形态**。港交所年报实测：
+                                     # `Loss from operations 經營虧損` —— 之前只补了
+                                     # 「經營**溢利**」，亏损年份整行认不出来，
+                                     # 于是 EBITDA 报"数据不足"（用繁体年报的公司亏损期很常见）。
+                                     "經營溢利", "營業溢利",
+                                     "經營虧損", "營業虧損", "经营亏损", "营业亏损",
+                                     "經營虧損淨額", "經營溢利淨額"),
             ("OperatingIncomeLoss",)),
     # 英文人读名（港交所/美股 PDF 里是这么写的，双语行拆开后也走精确匹配）
     Mapping(Field.OPERATING_INCOME, ("Operating profit", "Operating income",
-                                     "Profit from operations", "Operating profit (loss)")),
+                                     "Profit from operations", "Operating profit (loss)",
+                                     # 港交所双语行的英文侧就是这样写的
+                                     "Loss from operations", "Operating loss",
+                                     "Profit (loss) from operations")),
     Mapping(Field.ID_DA, ("Depreciation and amortisation", "Depreciation and amortization",
                           "Depreciation, amortisation and impairment",
                           "Depreciation of property, plant and equipment")),
@@ -356,13 +366,24 @@ MAPPINGS: tuple[Mapping, ...] = (
             ("InterestExpense", "InterestExpenseNonoperating")),
     Mapping(Field.INTEREST_INCOME, ("利息收入",), ("InvestmentIncomeInterest",)),
     Mapping(Field.PRETAX_INCOME,
-            ("利润总额", "税前利润", "所得税前利润"),
+            ("利润总额", "税前利润", "所得税前利润",
+             # 繁体 / 亏损形态（港交所：`Loss before taxation 除稅前虧損`）
+             "除稅前虧損", "除税前亏损", "稅前虧損", "税前亏损",
+             "除稅前溢利", "除税前溢利"),
             ("IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
              "IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments")),
+    # 英文人读名（港交所双语行的英文侧、美股 PDF）
+    Mapping(Field.PRETAX_INCOME, ("Profit before taxation", "Loss before taxation",
+                                  "Profit before tax", "Loss before tax")),
     Mapping(Field.INCOME_TAX, ("所得税费用", "所得税"),
             ("IncomeTaxExpenseBenefit",)),
-    Mapping(Field.NET_INCOME, ("净利润", "净利润（亏损）", "归属于母公司股东的净利润"),
+    Mapping(Field.NET_INCOME, ("净利润", "净利润（亏损）", "归属于母公司股东的净利润",
+                               # 繁体 / 亏损形态（港交所：`Loss for the year 年度虧損`）
+                               "年度虧損", "年度亏损", "年內虧損", "本年度虧損",
+                               "年度溢利", "年度利润"),
             ("NetIncomeLoss", "ProfitLoss")),
+    Mapping(Field.NET_INCOME, ("Profit for the year", "Loss for the year",
+                               "Profit for the period", "Loss for the period")),
 
     # ================= 旧「行业会计制度」的科目 =================
     # 中小企业的报表常是这个格式。名字对不上就是整张表「未映射」，
