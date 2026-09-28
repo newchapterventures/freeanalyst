@@ -126,6 +126,7 @@
     <a href="#usage" data-zh="使用方法" data-en="How to use"></a>
     <a href="#debug" data-zh="如何调试" data-en="Debugging"></a>
     <a href="#byom" data-zh="接入自己的大模型" data-en="Bring your own model"></a>
+    <a href="#references" data-zh="参考值与缺数" data-en="References &amp; gaps"></a>
   </div>
 
 <!-- ══════════════════════════ 中文 ══════════════════════════ -->
@@ -342,6 +343,29 @@ python3 freeanalyst.py ask "调整后 EBITDA 是怎么算的？"</pre>
   </ul>
   <p><b>建议的做法</b>：机密标的只用本地模型；闭源模型用在公开材料（如上市公司年报）
      或脱敏片段上。一句话原则 —— <b>模型的自由度越高，能碰到的数据就要越少</b>。</p>
+  <h2 id="references"><span class="idx">08</span>参考值从哪来 · 缺数怎么读</h2>
+  <p>估值要用的一些输入，引擎会先从材料里推一个<b>参考值</b>放在界面上（例如折旧摊销占收入比）。
+     推得出来就直接给数；推不出来时会写明<b>缺在哪一步</b> —— 因为三种缺法的处理方式完全不同：</p>
+  <table>
+    <thead><tr><th>界面上的写法</th><th>含义</th><th>怎么处理</th></tr></thead>
+    <tbody>
+      <tr><td>现金流量表中没有「折旧/摊销」科目行</td>
+          <td>材料可能未列示，或该写法未覆盖</td>
+          <td>换科目写法，或由你填</td></tr>
+      <tr><td>「应付账款」所在行已识别，但未取到数值</td>
+          <td><b>扫描件常见</b>：科目名对得上，数值未抽出</td>
+          <td>属取数问题，不是缺科目</td></tr>
+      <tr><td>现金流量表未识别</td>
+          <td>这份材料没有可用的正表</td>
+          <td>由你填</td></tr>
+    </tbody>
+  </table>
+  <p>能自动推出来的（均由报表直接读出，<b>不经模型</b>）：折旧摊销、资本开支、净营运资本、
+     EBITDA 四项历史比率，各给<b>当期</b>参考值。<b>预测期怎么走是你的判断</b> ——
+     引擎只报历史参考，不替你定假设。也正因如此，逐年序列（如「5 年 EBITDA 率」）要由你给：
+     单份年报通常只有当期与上年。</p>
+  <p>读不出来的（属公司之外的数据，<b>工具不编</b>）：无风险利率、股权风险溢价、去杠杆 beta、
+     永续增长率（需长期名义 GDP 增速）、市值口径的股权价值。</p>
 </div>
 
 <!-- ══════════════════════════ English ══════════════════════════ -->
@@ -569,6 +593,34 @@ python3 freeanalyst.py ask "How is adjusted EBITDA defined?"</pre>
   <p><b>Suggested practice</b>: confidential targets on local models only; use closed-source models
      for public materials (e.g. listed-company annual reports) or redacted excerpts. One principle:
      <b>the more freedom a model has, the less data it should see</b>.</p>
+
+  <h2 id="references-en"><span class="idx">08</span>Where reference values come from · how to read a gap</h2>
+  <p>For several valuation inputs the engine first derives a <b>reference value</b> from the materials
+     (e.g. D&amp;A as a share of revenue). Where it can be derived you get the number; where it cannot,
+     the interface states <b>which step</b> is missing — because the three cases call for different
+     action:</p>
+  <table>
+    <thead><tr><th>What you see</th><th>Meaning</th><th>What to do</th></tr></thead>
+    <tbody>
+      <tr><td>No depreciation / amortisation line in the cash-flow statement</td>
+          <td>The material may not show it, or the label is not covered</td>
+          <td>Try another wording, or enter it yourself</td></tr>
+      <tr><td>The accounts-payable line was recognised but no value was extracted</td>
+          <td><b>Common with scanned files</b>: the label matches, the number did not come through</td>
+          <td>An extraction problem, not a missing account</td></tr>
+      <tr><td>Cash-flow statement not recognised</td>
+          <td>The material has no usable statement</td>
+          <td>Enter it yourself</td></tr>
+    </tbody>
+  </table>
+  <p>Derived automatically (read straight off the statements, <b>never by a model</b>): D&amp;A, capex,
+     net working capital and EBITDA — each as a <b>current-period</b> reference.
+     <b>How the forecast years move is your judgement</b>: the engine reports history only and never
+     sets your assumptions. That is also why a year-by-year series (e.g. a five-year EBITDA margin)
+     must come from you — a single annual report usually carries only the current and prior year.</p>
+  <p>Not derivable (data outside the company; <b>the tool will not invent it</b>): risk-free rate,
+     equity risk premium, unlevered beta, terminal growth (needs long-run nominal GDP growth), and
+     market-value equity.</p>
 </div>
 
   <footer>

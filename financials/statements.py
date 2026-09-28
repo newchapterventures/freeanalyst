@@ -319,47 +319,45 @@ class Statements:
             st = self._status(cf, Field.ID_DA, Field.DEPRECIATION_AMORTIZATION)
             if st == self._ST_NO_TABLE:
                 out["历史折旧摊销占收入比"] = out["历史 EBITDA 率"] = \
-                    "现金流量表没被识别出来 —— 折旧摊销通常在那张表的间接法段里"
+                    "现金流量表未识别 —— 折旧摊销通常列示于该表的间接法段"
             elif st == self._ST_MISSING:
                 out["历史折旧摊销占收入比"] = out["历史 EBITDA 率"] = \
-                    "现金流量表里没找到「折旧/摊销」这一行（可能确实没印，也可能写法没见过）"
+                    "现金流量表中没有「折旧/摊销」科目行（材料可能未列示，或该写法未覆盖）"
             else:
                 out["历史折旧摊销占收入比"] = out["历史 EBITDA 率"] = \
-                    "「折旧/摊销」这行认出来了，但没抽到数字（扫描件常见；科目名不用改，取数要修）"
+                    "「折旧/摊销」所在行已识别，但未取到数值（扫描件常见）"
 
         oi = inc.fields.get(Field.OPERATING_INCOME) if inc else None
         if oi is None:
             st = self._status(inc, Field.OPERATING_INCOME)
-            why = {"no-table": "利润表没被识别出来",
-                   "missing": "利润表里没找到「营业利润」这一行",
-                   "no-value": "「营业利润」这行认出来了，但没抽到数字（扫描件常见）"}[st]
+            why = {"no-table": "利润表未识别",
+                   "missing": "利润表中没有「营业利润」科目行",
+                   "no-value": "「营业利润」所在行已识别，但未取到数值（扫描件常见）"}[st]
             out["历史 EBITDA 率"] = why
-        elif da is not None and "历史 EBITDA 率" not in out:
-            pass
 
         if cf is None:
-            out["历史资本开支占收入比"] = "现金流量表没被识别出来"
+            out["历史资本开支占收入比"] = "现金流量表未识别"
         elif self._status(cf, Field.CAPEX) != self._ST_OK:
             st = self._status(cf, Field.CAPEX)
             out["历史资本开支占收入比"] = (
-                "现金流量表里没找到「购建固定资产、无形资产和其他长期资产支付的现金」这一行"
+                "现金流量表中没有「购建固定资产、无形资产和其他长期资产支付的现金」科目行"
                 if st == self._ST_MISSING else
-                "资本开支这行认出来了，但没抽到数字（扫描件常见）")
+                "资本开支所在行已识别，但未取到数值（扫描件常见）")
         if bal is None:
-            out["历史净营运资本占收入比"] = "资产负债表没被识别出来"
+            out["历史净营运资本占收入比"] = "资产负债表未识别"
         else:
             ar_st = self._status(bal, Field.ACCOUNTS_RECEIVABLE)
             ap_st = self._status(bal, Field.ACCOUNTS_PAYABLE)
             if ar_st != self._ST_OK or ap_st != self._ST_OK:
                 bad = []
                 if ar_st != self._ST_OK:
-                    bad.append("应收账款" + ("没找到这一行" if ar_st == self._ST_MISSING
-                                          else "认出来了但没抽到数字"))
+                    bad.append("应收账款" + ("缺少该科目行" if ar_st == self._ST_MISSING
+                                          else "该行已识别但未取到数值"))
                 if ap_st != self._ST_OK:
-                    bad.append("应付账款" + ("没找到这一行" if ap_st == self._ST_MISSING
-                                          else "认出来了但没抽到数字"))
+                    bad.append("应付账款" + ("缺少该科目行" if ap_st == self._ST_MISSING
+                                          else "该行已识别但未取到数值"))
                 out["历史净营运资本占收入比"] = (
-                    "营运资本要「应收 + 存货 − 应付」，缺：" + "；".join(bad))
+                    "营运资本需「应收账款 + 存货 − 应付账款」，缺：" + "；".join(bad))
         return out
 
     def history_notes(self) -> dict[str, str]:
@@ -367,7 +365,7 @@ class Statements:
         bal = self.balance.fields if self.balance else {}
         out: dict[str, str] = {}
         if bal.get(Field.INVENTORY) is None and bal.get(Field.ACCOUNTS_RECEIVABLE) is not None:
-            out["历史净营运资本占收入比"] = "未含存货（材料里没有这一项）"
+            out["历史净营运资本占收入比"] = "未含存货（材料中无此科目）"
         if self.cash_flow and self.cash_flow.fields.get(Field.CAPEX) is not None:
             out["历史资本开支占收入比"] = "按「购建固定资产类支付的现金」口径"
         return out

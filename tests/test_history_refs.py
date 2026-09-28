@@ -150,7 +150,8 @@ class TestReasonsInsteadOfBareNotEnough(unittest.TestCase):
         r = _set(drop=("da",)).history_reasons()
         msg = r["历史折旧摊销占收入比"]
         self.assertTrue(msg, "缺折旧摊销必须给原因")
-        self.assertTrue(any(k in msg for k in ("没找到", "没抽到", "没被识别")), msg)
+        # 正式措辞，不用"没找到/没认出来"这类口语
+        self.assertTrue(any(k in msg for k in ("没有", "未取到", "未识别")), msg)
 
     def test_says_which_nwc_part_is_missing(self):
         r = _set(drop=("ap",)).history_reasons()
@@ -163,13 +164,13 @@ class TestReasonsInsteadOfBareNotEnough(unittest.TestCase):
         self.assertIn("现金流量表", r["历史资本开支占收入比"])
 
     def test_recognized_but_valueless_row_is_a_different_reason(self):
-        """**科目名认出来了、但没抽到数字** —— 这是扫描件的常态，与"没这一行"要分开说。"""
+        """**科目名已识别、但未取到数值** —— 这是扫描件的常态，与"缺少该科目行"要分开说。"""
         cf = _stmt([])
         cf.rows.append(stm.StatementRow("购建固定资产支付的现金", None, Field.CAPEX, "test"))
         s = _set()
         s.cash_flow = cf
         r = s.history_reasons()
-        self.assertIn("没抽到数字", r["历史资本开支占收入比"])
+        self.assertIn("未取到数值", r["历史资本开支占收入比"])
 
 
 @unittest.skipUnless((FITBIT / "R2.htm").exists(), "需要 Fitbit 10-K 材料")
