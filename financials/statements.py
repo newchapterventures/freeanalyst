@@ -384,6 +384,104 @@ class Statements:
                     "营运资本需「应收账款 + 存货 − 应付账款」，缺：" + "；".join(bad))
         return out
 
+    # ── 经营利润的反算（用利润表**其他行**把它推出来）─────────────────────────
+    #
+    # **为什么按行标签找、而不是用科目映射**：这一整套反算的用途，就是检查
+    # "映射取到的数对不对" —— 用同一套映射去验，等于**自证清白**：
+    # 映射错了照样"验证通过"。所以这里只认**行上的文字**。
+    _DERIVE_ADD = (("毛利", ("Gross Profit", "毛利", "毛利润")),
+                   ("其他收入", ("Other revenue", "其他收入", "其他业务收入", "其他業務收入")),
+                   ("其他损益净额", ("Other net loss", "其他虧損淨額", "其他亏损净额",
+                                 "Other net gain", "其他淨收益", "其他净收益")))
+    _DERIVE_SUB = (("销售费用", ("Selling and marketing", "銷售及營銷", "销售及营销",
+                                 "销售费用", "銷售費用")),
+                   ("管理费用", ("General and administration", "一般及行政",
+                                 "管理费用", "管理費用")),
+                   ("研发费用", ("Research and development", "研發開支", "研发开支",
+                                 "研发费用", "研發費用")))
+
+    def _row_by_label(self, patterns: tuple[str, ...]) -> tuple[float, str] | None:
+        """按**行标签**取一行（不走科目映射，见 `_DERIVE_ADD` 的说明）。"""
+        for r in (self.income.rows if self.income else []):
+            if r.value is None:
+                continue
+            lab = r.label or ""
+            for p in patterns:
+                if p in lab:
+                    return r.value, lab
+        return None
+
+    def derive_operating_income(self) -> tuple[float | None, list[str]]:
+        """用利润表其他行反算经营利润。返回 `(值, 用到的行名)`。
+
+        两种印法都要认（**实测两种都见过**）：
+          · A 股把费用印成**正数** → 要减
+          · 港交所/IFRS 印成**负数**（本身已带符号）→ 直接加
+        判据是费用行的符号本身（多数为负 = 已带符号），不写死某一家的格式。
+        """
+        adds, used = 0.0, []
+        for name, pats in self._DERIVE_ADD:
+            hit = self._row_by_label(pats)
+            if hit:
+                adds += hit[0]
+                used.append(name)
+        subs = [(n, hit) for n, pats in self._DERIVE_SUB
+                if (hit := self._row_by_label(pats))]
+        gross = self._row_by_label(self._DERIVE_ADD[0][1])
+        if gross is None or not subs:
+            return None, []
+        used += [n for n, _ in subs]
+        signed = sum(1 for _, (v, _l) in subs if v < 0)
+        if signed * 2 > len(subs):                            # 多数为负 → 已带符号
+            total = adds + sum(v for _n, (v, _l) in subs)
+        else:                                                 # 正数 → 是绝对额，要减
+            total = adds - sum(abs(v) for _n, (v, _l) in subs)
+        return total, used
+
+    def _attribute_gap(self, gap: float) -> str:
+        """差额与哪一行吻合 —— **差额常常自己指认嫌疑人**。
+
+        实测：第一次反算差 17 个百分点，而 17% 正好等于「其他亏损净额」那一行 →
+        立刻知道是我的式子少列了一行，而不是材料有问题。
+        三张表都扫：闯祸的行未必在利润表里。
+        """
+        if not gap:
+            return ""
+        for st in (self.income, self.cash_flow, self.balance):
+            for r in (st.rows if st else []):
+                if r.value is None:
+                    continue
+                if abs(abs(r.value) - gap) <= max(abs(gap) * 0.02, 1.0):
+                    return (r.label or "").strip()[:24]
+        return ""
+
+    def operating_income_crosscheck(self) -> str:
+        """经营利润的反算结论。
+
+        **只报状态，不替人拍板**：两个独立来源一致 → 说一致；
+        不一致 → 说差多少、差额像哪一行；归不上任何行 → 明说"未经交叉验证"。
+        工具唯一的判断力来源是材料自己的算术，算术对不上时它就没有依据了 ——
+        所以绝不静默选一个、绝不取平均、绝不把对不上的那个丢掉。
+        """
+        inc = self.income.fields if self.income else {}
+        op = inc.get(Field.OPERATING_INCOME)
+        derived, used = self.derive_operating_income()
+        if op is None or derived is None or not used:
+            return ""
+        op = float(op)
+        derived = float(derived)
+        rev = inc.get(Field.REVENUE)
+        scale = abs(rev) or abs(op) or 1.0
+        diff = derived - op
+        if abs(diff) <= max(scale * 0.005, 1.0):
+            return f"按「{' + '.join(used)}」反算一致 —— 两个来源互相印证"
+        who = self._attribute_gap(abs(diff))
+        if who:
+            return (f"与反算结果不一致（差 {diff / scale:+.2%}，差额与「{who}」吻合）"
+                    f"—— 请确认该行是否应计入经营利润")
+        return (f"与反算结果不一致（差 {diff / scale:+.2%}，无法归因到某一行）"
+                f"—— 该值未经交叉验证，请人工核对")
+
     def history_notes(self) -> dict[str, str]:
         """算出来了、但口径上要说明一句的（**不能默不作声**）。"""
         bal = self.balance.fields if self.balance else {}
@@ -409,6 +507,24 @@ class Statements:
             out["历史净营运资本占收入比"] = "未含存货（材料中无此科目）"
         if self.cash_flow and self.cash_flow.fields.get(Field.CAPEX) is not None:
             out["历史资本开支占收入比"] = "按「购建固定资产类支付的现金」口径"
+
+        # **把 EBITDA 率的取数依据摆出来，并自己反算一遍。**
+        # 亏得深的公司负 EBITDA 率是真实的（实测某港股 −235%，是真的）——
+        # 极端值只有把依据摆出来才可解释；而"反算一致"比"看着像"硬得多。
+        # 反算不可得时**什么都不说**（不猜、不噪声）。
+        inc = self.income.fields if self.income else {}
+        op = inc.get(Field.OPERATING_INCOME)
+        parts: list[str] = []
+        if op is not None and da is not None:
+            unit = self.unit or ""
+            parts.append(f"依据：营业利润 {op:,.0f}{unit} + 折旧摊销 {da:,.0f}{unit}")
+        check = self.operating_income_crosscheck()
+        if check:
+            parts.append(check)
+        if parts:
+            joined = "；".join(parts)
+            prev = out.get("历史 EBITDA 率", "")
+            out["历史 EBITDA 率"] = f"{prev}；{joined}" if prev else joined
         return out
 
     def history(self) -> dict[str, float | None]:
