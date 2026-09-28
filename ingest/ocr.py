@@ -38,9 +38,22 @@ import hashlib
 import json
 import platform
 import re
+import os
 import shutil
 import subprocess
 from pathlib import Path
+
+#: 数值格二次识别：把金额格单独裁出来放大、只用数字设置（en-US、关语言纠正）再认一遍；
+#: 两遍不一致 → 采纳第二遍并标可疑。
+#:
+#: **默认关。实测零收益**（`bench/measure_ocr.py` 记了完整过程）：
+#: 某 192 dpi 扫描件第 72-73 页，试了 72 格、认出来 62 格、**与第一遍不一致 0 格** ——
+#: 包括那些被读错的金额（被吞掉几个量级的那种），两遍读的是**同一个错**。
+#: Vision 整页那遍本来就已经看到了每个字符，裁出来放大没有带来新信息。
+#: 留着它是因为换一份材料（比如原生矢量页）值得再量一遍 —— 但**没有实测支持就不开**，
+#: 每页多 72 次识别是白付的成本。
+SECOND_PASS = os.environ.get("FREANALYST_OCR_SECOND", "0") != "0"
+
 
 _SWIFT_SRC = Path(__file__).with_name("vision_ocr.swift")
 
@@ -277,7 +290,8 @@ def _run_swift(pdf: Path, first: int, last: int,
     #   · 置信度下限：Vision 自评很弱（192 个金额格里只有 14 个低于 0.5），
     #     开着会喊狼来了 → 默认 0（关闭）
     cmd = ["swift", str(_SWIFT_SRC), str(pdf), str(first), str(last), "3.0",
-           "1" if USE_LANGUAGE_CORRECTION else "0", str(LOW_CONFIDENCE)]
+           "1" if USE_LANGUAGE_CORRECTION else "0", str(LOW_CONFIDENCE),
+           "1" if SECOND_PASS else "0"]
     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     if proc.returncode != 0:
         raise RuntimeError(

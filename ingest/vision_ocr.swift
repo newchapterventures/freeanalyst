@@ -49,6 +49,71 @@ func looksNumeric(_ s: String) -> Bool {
     return hasDigit && !hasCJK
 }
 
+//: 数值格**再认一遍**（第 8 个参数，**默认 0 = 关闭** —— 实测零收益）。
+//:
+//: 第一遍看的是整页：格子挨得近时，Vision 会把相邻栏的数字并进一格，或者把长数字
+//: 中间的几位吞掉 —— 而**吞掉之后形状仍然合法**（`1,234,567,890.12` → `1,234,567.12`），
+//: 任何形状校验都抓不到。实测某 104 页扫描件的折旧摊销就是这么错的（差三个量级）。
+//:
+//: 第二遍把这一格**单独裁出来、放大、只用数字设置**再认一次：
+//:   · 只看这一格 → 没有邻栏干扰
+//:   · recognitionLanguages 只留 en-US → 不再把负号认成汉字「一」（实测会出现）
+//:   · 关语言纠正 → 不按语言习惯猜数字
+//:
+//: **但实测下来它没用**：那份材料第 72-73 页试了 72 格、认出来 62 格、
+//: **与第一遍不一致 0 格** —— 被读错的金额，两遍读的是同一个错。
+//: 原因也量清楚了：那份扫描件原始就是 192 dpi，而我们按 3.0 倍渲染 = 216 dpi，
+//: **早就在原始像素之上**，放大只是插值、没有新信息。
+//: 所以默认关闭；留着是为了换一份材料（原生矢量页）能再量一遍 —— 没有实测支持就不开。
+let secondPass = (args.count > 7 ? args[7] : "0") == "1"
+
+//: 裁剪时向外扩一点边（归一化）。贴着字形裁会把笔画切掉，反而认不出。
+let cropPad: CGFloat = 0.004
+
+func recognizeNumber(in image: CGImage, box: CGRect) -> (String, Double)? {
+    let W = CGFloat(image.width), H = CGFloat(image.height)
+    // Vision 的 boundingBox 原点在**左下**，CGImage.cropping 的原点在**左上** → 翻 y
+    let x0 = max(0, (box.minX - cropPad) * W)
+    let y0 = max(0, (1.0 - box.maxY - cropPad) * H)
+    let w = min(W - x0, (box.width + cropPad * 2) * W)
+    let h = min(H - y0, (box.height + cropPad * 2) * H)
+    guard w > 3, h > 3, let crop = image.cropping(
+        to: CGRect(x: x0, y: y0, width: w, height: h)) else { return nil }
+    // 放大 3 倍再认：扫描件上的密集数字，放大后笔画分得开
+    let up = 3, uw = Int(w) * up, uh = Int(h) * up
+    guard uw > 4, uh > 4,
+          let ctx = CGContext(data: nil, width: uw, height: uh, bitsPerComponent: 8,
+                              bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+                              bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue) else {
+        return nil
+    }
+    ctx.interpolationQuality = .high
+    ctx.draw(crop, in: CGRect(x: 0, y: 0, width: uw, height: uh))
+    guard let big = ctx.makeImage() else { return nil }
+
+    let r = VNRecognizeTextRequest()
+    r.recognitionLevel = .accurate
+    r.recognitionLanguages = ["en-US"]      // 纯数字，不让中文规则来猜
+    r.usesLanguageCorrection = false
+    r.minimumTextHeight = 0.0
+    let hd = VNImageRequestHandler(cgImage: big, options: [:])
+    do { try hd.perform([r]) } catch { return nil }
+    guard let o = (r.results ?? []).first, let c = o.topCandidates(1).first else { return nil }
+    return (c.string, Double(c.confidence))
+}
+
+/// 比对两遍读法时把"格式差异"抹平：`1,234.50` 与 `1234.50` 算一致。
+/// 只比内容，不比千分位/空格 —— 否则每格都会"不一致"。
+func sameNumber(_ a: String, _ b: String) -> Bool {
+    func norm(_ s: String) -> String {
+        s.replacingOccurrences(of: ",", with: "")
+         .replacingOccurrences(of: " ", with: "")
+         .replacingOccurrences(of: "，", with: "")
+         .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    return norm(a) == norm(b)
+}
+
 guard let doc = PDFDocument(url: URL(fileURLWithPath: pdfPath)) else {
     FileHandle.standardError.write("打不开 PDF\n".data(using: .utf8)!)
     exit(1)
@@ -86,6 +151,9 @@ struct Frag {
 }
 
 var outPages: [[String: Any]] = []
+//: 二次识别的计数（只写到 stderr）：**不做这一步就分不清**
+//: “二次识别没用”和“二次识别根本没跑” —— 后者是假阴性，会骗我们放弃一条有效的路。
+var secondTried = 0, secondOk = 0, secondDiff = 0
 
 for pageNo in first...last {
     guard let page = doc.page(at: pageNo - 1), let img = renderPage(page) else { continue }
@@ -111,6 +179,18 @@ for pageNo in first...last {
         var text = c.string
         if lowConf > 0, Double(c.confidence) < lowConf, looksNumeric(text) {
             text = "？" + text
+        }
+        // **数值格再认一遍**：单独裁出来放大、只用数字设置。
+        // 一致就照第一遍（不折腾格式）；不一致就采纳第二遍并打 `？` → 下游当可疑值。
+        if secondPass, looksNumeric(text) {
+            secondTried += 1
+            if let (again, _) = recognizeNumber(in: img, box: bb) {
+                secondOk += 1
+                if !sameNumber(again, text) {
+                    text = "？" + again
+                    secondDiff += 1
+                }
+            }
         }
         frags.append(Frag(text: text, x: bb.minX,
                           y: 1.0 - (bb.minY + bb.height / 2),   // 换成左上原点
@@ -142,6 +222,11 @@ for pageNo in first...last {
 }
 
 let payload: [String: Any] = ["pages": outPages]
+if secondPass {
+    FileHandle.standardError.write(
+        "二次识别: 试了 \(secondTried) 格 · 认出来 \(secondOk) · 与第一遍不一致 \(secondDiff)\n"
+            .data(using: .utf8)!)
+}
 if let data = try? JSONSerialization.data(withJSONObject: payload, options: []),
    let text = String(data: data, encoding: .utf8) {
     print(text)
