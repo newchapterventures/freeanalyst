@@ -434,6 +434,29 @@
     <div id="srvNote" class="notice quiet hide" style="margin:14px 0 0" data-i18n="s2.srvnote"></div>
   </div>
 
+  <div class="card hide" id="card4">
+    <h2><span class="idx">04</span><span data-i18n="s4.title"></span>
+        <small data-i18n="s4.sub"></small></h2>
+    <div class="notice" style="margin-bottom:14px" data-i18n-html="s4.notice"></div>
+    <div class="grid2">
+      <label><span data-i18n="s4.tickers"></span>
+        <input id="cTickers" placeholder="LEA, MGA, BWA"></label>
+      <label><span data-i18n="s4.metric"></span>
+        <select id="cMetric">
+          <option value="revenue_cagr" data-i18n="s4.m.cagr"></option>
+          <option value="ebitda_margin" data-i18n="s4.m.margin"></option>
+          <option value="revenue_scale" data-i18n="s4.m.scale"></option>
+        </select></label>
+      <label><span data-i18n="s4.years"></span><input id="cYears" value="3"></label>
+      <label><span data-i18n="s4.asof"></span><input id="cAsof" placeholder="2024-12-31"></label>
+    </div>
+    <div style="margin-top:14px">
+      <button class="act amber" id="cBtn" onclick="comps()" data-i18n="s4.btn"></button>
+    </div>
+    <div id="cMsg" class="mut" style="margin-top:10px;font-size:12px"></div>
+    <div id="cOut"></div>
+  </div>
+
   <div class="card need hide" id="card5">
     <h2><span class="idx">05</span><span data-i18n="s5.title"></span>
         <small data-i18n="s5.sub"></small></h2>
@@ -493,10 +516,22 @@ const I18N = {
     "onb.3.b": "<p>估值这一步<b>一行代码也不靠模型</b> —— 识别、勾稽、DCF、乘数全是程序算的。所以这台机器不装任何模型，也能拿到完整报告。</p><p>只有想「读了材料回答问题」才需要模型。要装的话，在右上角 ⚙ 模型设置里点一下就下载，按你的内存给建议；<b>目前本机模型还没达到我们的质量门槛，只能当辅助</b>（答案要对着原文核）。</p>",
     "pill.arith": "算术由代码执行 · 不交由模型",
     "pill.declare": "输入缺失即声明 · 不作假设",
+    "s4.title": "可比公司", "s4.sub": "同行基本面对照 —— 取数、对照、留痕",
+    "s4.notice": "<b>这一步给的是基本面分布，不是倍数。</b>EDGAR 有财报、<b>没有股价</b> —— 市值 / EV / EV·EBITDA 取不到（要做倍数得再接一个价格源，那个源还没接）。<b>目前只支持美股。</b>样本不足 3 家时，<b>不给中位数当结论</b>。",
+    "s4.tickers": "可比公司代码（美股，逗号分隔）",
+    "s4.metric": "对照指标",
+    "s4.m.cagr": "近三年收入 CAGR", "s4.m.margin": "EBITDA 率", "s4.m.scale": "营业收入规模",
+    "s4.years": "年数（CAGR 用）", "s4.asof": "基准日（只用该日已披露的财报，可留空）",
+    "s4.btn": "取同行基本面",
+    "s4.fetching": "正在取数 —— 走 SEC 公开接口，逐家取，请稍候…",
+    "s4.n": "样本 {n} 家",
+    "s4.thin": "⚠ 样本只有 {n} 家 —— 不足 3 家不给中位数当结论（2 家的「中位数」没有意义）。下列数值仅作单家参考。",
+    "s4.stat": "P25 / 中位 / P75", "s4.range": "区间", "s4.gaps": "取不到的：",
+    "s4.none": "这批代码一家都没取到 —— 换代码，或留空。留空不是缺陷：拿不到同行分布时，不凑一个参照系才是对的。",
     "step.1": "载入材料", "step.2": "报表识别与勾稽校验",
-    "step.3": "行业建议 · 未接入", "step.4": "可比公司 · 未接入",
+    "step.3": "行业建议 · 未接入", "step.4": "可比公司",
     "step.5": "估值假设", "step.6": "估值结论",
-    "notice.scope": "<b>本期实现第 1、2、5、6 步。</b>第 3、4 步（行业建议、可比公司选取）尚需接入流程层，<b>还没做</b> —— 不呈现为可用功能。可比公司参数可在第 5 步的可选输入中提供，该路径已贯通。",
+    "notice.scope": "<b>本期实现第 1、2、5、6 步，以及第 4 步（可比公司 · 只做基本面）。</b>第 3 步（行业建议）尚需接入流程层，<b>还没做</b> —— 不呈现为可用功能。可比公司参数也可在第 5 步的可选输入中提供，该路径已贯通。",
     "s1.title": "载入尽调材料", "s1.sub": "标的材料目录，或单一 PDF 文件",
     "s1.ph": "/path/to/target/materials/　或　目标公司 2024 年度审计报告.pdf",
     "s1.btn": "解析材料",
@@ -561,9 +596,9 @@ const I18N = {
     "pill.arith": "Arithmetic executed in code, never by the model",
     "pill.declare": "Missing inputs are declared, never assumed",
     "step.1": "Load materials", "step.2": "Extraction & reconciliation",
-    "step.3": "Industry guidance · not wired", "step.4": "Comparables · not wired",
+    "step.3": "Industry guidance · not wired", "step.4": "Comparables",
     "step.5": "Valuation assumptions", "step.6": "Valuation conclusion",
-    "notice.scope": "<b>Steps 1, 2, 5 and 6 are implemented in this build.</b> Steps 3 and 4 (industry guidance, comparable selection) require the workflow layer and are <b>not built</b> — they are not presented as available. Comparable inputs can be supplied under Step 5; that path is wired.",
+    "notice.scope": "<b>Steps 1, 2 and 5, 6 plus Step 4 (comparables, fundamentals only) are implemented in this build.</b> Step 3 (industry guidance) requires the workflow layer and is <b>not built</b> — it is not presented as available. Comparable inputs can also be supplied under Step 5; that path is wired.",
     "s1.title": "Load due diligence materials", "s1.sub": "Target material folder, or a single PDF",
     "s1.ph": "/path/to/target/materials/　or　Target FY2024 audit report.pdf",
     "s1.btn": "Parse materials",
@@ -596,6 +631,19 @@ const I18N = {
     "s5.title": "Valuation assumptions", "s5.sub": "Inputs only you can provide — the engine will not set them for you",
     "s5.notice": "Append a source to each figure: <code>0.10 @management plan p.12</code>. Prefix the source with <code>高:</code>/<code>中:</code>/<code>低:</code> to set confidence (engine syntax remains Chinese). <b>No source is treated as low confidence</b> and appears under the report's weak points. \"Reference\" shows historical values, <b>not recommended inputs</b>.",
     "s5.btn": "Generate valuation report",
+    "s4.title": "Comparable companies", "s4.sub": "Peer fundamentals — fetch, compare, keep the trail",
+    "s4.notice": "<b>This step gives fundamentals, not multiples.</b> EDGAR has filings but <b>no share prices</b> — market cap / EV / EV·EBITDA cannot be derived (multiples would need a price source, not wired yet). <b>US listings only for now.</b> With fewer than 3 peers, <b>no median is presented as a conclusion</b>.",
+    "s4.tickers": "Peer tickers (US, comma-separated)",
+    "s4.metric": "Metric",
+    "s4.m.cagr": "3-year revenue CAGR", "s4.m.margin": "EBITDA margin",
+    "s4.m.scale": "Revenue scale",
+    "s4.years": "Years (for CAGR)", "s4.asof": "As-of date (filings disclosed by then; may be blank)",
+    "s4.btn": "Fetch peer fundamentals",
+    "s4.fetching": "Fetching via SEC public endpoints, one by one…",
+    "s4.n": "{n} peer(s)",
+    "s4.thin": "⚠ Only {n} peer(s) — with fewer than 3, no median is presented as a conclusion (a median of two means nothing). The figures below are single-company references only.",
+    "s4.stat": "P25 / median / P75", "s4.range": "Range", "s4.gaps": "Not available:",
+    "s4.none": "None of these tickers returned data — change them, or leave the field blank. Blank is not a defect: when peers cannot be obtained, not inventing a benchmark is the right answer.",
     "s6.title": "Valuation conclusion", "s6.termbar": "Valuation report · every conclusion traceable",
     "out.prefix": "Artifacts: ",
     "miss.head": "The following inputs were not provided, so the corresponding blocks were not run (they did not run and return nothing)",
@@ -739,9 +787,11 @@ function demo(){
   $("scanMsg").innerHTML = '<span class="mut">' + t("demo.msg") + '</span>';
   rerender();
   $("s2").className = "step on";
+  $("s4").className = "step on";
   $("s5").className = "step need on";
   $("s6").className = "step on";
   $("card2").classList.remove("hide");
+  $("card4").classList.remove("hide");
   $("card5").classList.remove("hide");
   $("outDir").textContent = t("out.prefix") + "out/target/";
   $("report").textContent = DEMO_REPORT;
@@ -822,9 +872,11 @@ function scan(){
     $("scanMsg").innerHTML = t("s1.ok") + ' <span class="mut">· ' + esc(d.label) + '</span>';
     rerender();
     $("s2").className = "step on";
+    $("s4").className = "step on";
     $("s5").className = "step need on";
     $("s6").className = "step on";
     $("card2").classList.remove("hide");
+    $("card4").classList.remove("hide");
     $("card5").classList.remove("hide");
     $("srvNote").classList.remove("hide");
     $("card2").scrollIntoView({behavior:"smooth", block:"start"});
@@ -834,11 +886,79 @@ function scan(){
   });
 }
 
+// ─── 第 4 步 · 可比公司（**只做基本面**）────────────────────────────────
+// 边界是硬的：EDGAR 有财报、**没有股价** → 市值 / EV / EV·EBITDA 取不到，
+// 所以这一步**不产生倍数**，只给同行的基本面分布（增速 / 率 / 规模）。
+// 样本 < 3 家时界面**不把中位数当结论** —— 纪律来自 comps_workflow。
+function fmtNum(v, fmt){
+  if(v === null || v === undefined || isNaN(v)) return "—";
+  if(String(fmt).indexOf("f") >= 0)
+    return Number(v).toLocaleString(undefined, {maximumFractionDigits: 0});
+  return (Number(v) * 100).toFixed(String(fmt) === ".1%" ? 1 : 2) + "%";
+}
+
+async function comps(){
+  const tickers = ($("cTickers").value || "").trim();
+  if(!tickers){
+    $("cMsg").innerHTML = '<span class="bad">' + esc(t("s4.tickers")) + '</span>';
+    return;
+  }
+  $("cBtn").disabled = true;
+  $("cOut").innerHTML = "";
+  $("cMsg").innerHTML = '<span class="warn">' + esc(t("s4.fetching")) + '</span>';
+  try{
+    const out = await post("/api/comps", {tickers: tickers,
+      metric: $("cMetric").value, years: $("cYears").value || 3,
+      as_of: ($("cAsof").value || "").trim()});
+    $("cBtn").disabled = false;
+    if(!out.ok){
+      $("cMsg").innerHTML = '<span class="bad">' + esc(out.error || "") + '</span>';
+      return;
+    }
+    STATE.comps = out;
+    $("cMsg").innerHTML = "";
+    renderComps();
+  }catch(e){
+    $("cBtn").disabled = false;
+    $("cMsg").innerHTML = '<span class="bad">' + esc(String(e)) + '</span>';
+  }
+}
+
+function renderComps(){
+  const d = STATE.comps;
+  if(!d) return;
+  if(!d.n){
+    $("cOut").innerHTML = '<div class="notice issue">' + esc(t("s4.none")) + '</div>';
+    return;
+  }
+  let h = "";
+  if(!d.enough) h += '<div class="notice issue" style="margin-bottom:12px">' +
+      esc(t("s4.thin").replace("{n}", d.n)) + '</div>';
+  h += '<table><thead><tr><th>' + esc(d.title) + '</th><th class="num">' +
+       esc(t("s4.metric")) + '</th></tr></thead><tbody>';
+  for(const r of d.rows)
+    h += '<tr><td>' + esc(r.label) + '</td><td class="num">' +
+         fmtNum(r.value, d.fmt) + '</td></tr>';
+  h += '</tbody></table>';
+  h += '<div class="mut" style="margin-top:10px;font-size:12px">' +
+       esc(t("s4.n").replace("{n}", d.n)) + " · " + esc(t("s4.stat")) + "：" +
+       fmtNum(d.p25, d.fmt) + " / " + fmtNum(d.median, d.fmt) + " / " +
+       fmtNum(d.p75, d.fmt) +
+       (d.lo === null ? "" : " · " + esc(t("s4.range")) + "：" +
+        fmtNum(d.lo, d.fmt) + " – " + fmtNum(d.hi, d.fmt)) +
+       (d.source ? " · " + esc(d.source) : "") + '</div>';
+  if((d.gaps || []).length)
+    h += '<div class="notice quiet" style="margin-top:12px">' + esc(t("s4.gaps")) +
+         '<br>' + d.gaps.map(g => "· " + esc(g)).join("<br>") + '</div>';
+  $("cOut").innerHTML = h;
+}
+
 // 有数据时按当前语言重绘（切语言也走这里）
 function rerender(){
   const d = STATE.data;
   if(!d) return;
   renderTables(d); renderChecks(d); renderMeta(d); renderUnit(d); renderQuestions(d);
+  renderComps();
 }
 
 function renderTables(d){
