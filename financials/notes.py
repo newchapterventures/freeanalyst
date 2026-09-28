@@ -74,6 +74,33 @@ _DA_PREFIXES: tuple[tuple[str, str], ...] = (
 
 #: 金额 —— 带千分位和小数，或括号负数
 _AMOUNT = re.compile(r"\(?-?[\d,]+(?:\.\d+)?\)?")
+#: OCR 常把负号认成汉字「一」（附注里写「以“一”号填列」就是这个原因）。
+#: 只在**紧贴在数字前**时才当负号 —— 否则会把正文里的「一」误伤。
+_DASH_VARIANTS = "一－–—‐−"
+
+#: 间接法恒等式的两端与各调节项。
+#:   净利润 + Σ调节项 = 经营活动产生的现金流量净额
+#: 这条恒等式**是页面内勾稽的抓手**：任何一个数字被 OCR 读错（哪怕是
+#: `1,234,567,890.12` → `1,234,567.12` 这种形状完全合法的错），恒等式就不平 ——
+#: 不需要知道真值就能发现 ✗。实测某 104 页扫描件就是这么发现 D&A 量级不对的。
+_INDIRECT_ITEMS: tuple[tuple[str, str], ...] = (
+    ("资产减值准备", "资产减值准备"),
+    ("信用减值损失", "信用减值损失"),
+    ("处置固定资产", "处置固定资产损失"),
+    ("固定资产报废损失", "固定资产报废损失"),
+    ("公允价值变动", "公允价值变动损失"),
+    ("财务费用", "财务费用"),
+    ("投资损失", "投资损失"),
+    ("递延所得税资产减少", "递延所得税资产减少"),
+    ("递延所得税负债增加", "递延所得税负债增加"),
+    ("存货的减少", "存货的减少"),
+    ("经营性应收项目的减少", "经营性应收项目的减少"),
+    ("经营性应付项目的增加", "经营性应付项目的增加"),
+)
+#: 恒等式的起点
+_INDIRECT_START = ("净利润", "净亏损")
+#: 恒等式的终点
+_INDIRECT_TARGET = ("经营活动产生的现金流量净额", "经营活动现金流量净额")
 #: 数字插在标签里时，标签会被截成「…固定资产折旧、油气资产折耗、生产」
 #: 这种样子，末尾是一个中文字。允许前缀后面跟**少量非数字字**再出现金额。
 
@@ -87,6 +114,17 @@ class DepreciationAmortisation:
     #: 抽到的原文行，便于人工复核
     evidence: list[str] = field(default_factory=list)
     note: str = ""
+    #: 间接法恒等式的核对结果（页面内勾稽）
+    reconcile: IndirectReconcile | None = None
+
+    @property
+    def suspect(self) -> bool:
+        """这个 D&A **有理由被怀疑**吗（恒等式不平）。
+
+        不删数、不改成 0，只是标出来 —— 拿一个错的数去算 EBITDA，
+        比留下一处"请核对"糟糕得多。
+        """
+        return bool(self.reconcile and self.reconcile.checked and not self.reconcile.ok)
 
     @property
     def total(self) -> float | None:
@@ -99,6 +137,11 @@ class DepreciationAmortisation:
                f"（取自第 {'、'.join(str(p) for p in self.pages)} 页附注）"]
         for k, v in self.components.items():
             out.append(f"      {k}  {v:,.2f}")
+        # **可疑就要写在数旁边。** 取到了数不等于数是对的：中间那一步 OCR 认知错误
+        # （`1,234,567,890.12` → `1,234,567.12`）形状完全合法，只有页面内勾稽能发现。
+        if self.suspect and self.reconcile:
+            out.append(f"      ⚠ 间接法恒等式不平（差 {self.reconcile.diff:,.2f}{unit}）"
+                       "—— 这一段数字很可能被 OCR 读错，**请人工核对后再用**")
         return "\n".join(out)
 
 
@@ -143,6 +186,123 @@ def _expand_recon_window(pages: list[int], doc: ip.PdfDocument) -> list[int]:
             else:
                 break
     return sorted(keep)
+
+
+#: 恒等式允许多大的差：以 CFO 的 0.05% 为准，另有 1 元下限。
+#: 不必卡到 0 —— 报表本身可能有舍入，但**一个被读错的数字**远大于这个量级。
+_RECON_TOL_REL = 0.0005
+
+
+def _amount_after_pos(text: str, prefix: str) -> tuple[float, int] | None:
+    """`prefix` 之后第一个金额**及其位置**。
+
+    返回位置是为了去重：`固定资产折旧、投资性房地产折旧` 这一行会被
+    「固定资产折旧」和「投资性房地产折旧」两个前缀同时命中，取到**同一个数** ——
+    不去重就重复计数（实测把 D&A 从 22.6 亿算成 41.5 亿，而且不报错）。
+    `extract_da` 里早有这个防护，新写的核对函数也必须带上。
+    """
+    idx = text.find(prefix)
+    if idx < 0:
+        return None
+    after = text[idx + len(prefix):idx + len(prefix) + 48]
+    m = _AMOUNT.search(after)
+    if not m:
+        return None
+    raw = m.group(0)
+    before = after[m.start() - 1] if m.start() > 0 else ""
+    neg = raw.startswith("(") or raw.startswith("-") or before in _DASH_VARIANTS
+    core = raw.strip("()").lstrip("-").replace(",", "")
+    if not core:
+        return None
+    try:
+        v = float(core)
+    except ValueError:
+        return None
+    return (-v if neg else v), idx + len(prefix) + m.start()
+
+
+def _amount_after(text: str, prefix: str) -> float | None:
+    """`prefix` 之后第一个金额。**负号被 OCR 认成「一」时也认得出来。**
+
+    实测：OCR 把 `-17,234,379.37` 的负号认成汉字「一」（附注里那句
+    「以“一”号填列」自己就说明了这个习惯）。不处理的话，调节段里所有负数
+    都会被当成正数 —— 恒等式必然不平，而这个"不平"是**我们自己造成的**，
+    不能拿去指控材料。
+    """
+    hit = _amount_after_pos(text, prefix)
+    return hit[0] if hit else None
+
+
+def _amount_after_multi(text: str, prefixes: tuple[str, ...]) -> float | None:
+    for p in prefixes:
+        v = _amount_after(text, p)
+        if v is not None:
+            return v
+    return None
+
+
+@dataclass
+class IndirectReconcile:
+    """间接法恒等式的核对结果。"""
+
+    #: 净利润 + Σ调节项 − 经营活动产生的现金流量净额
+    diff: float | None = None
+    #: 认到的调节项个数
+    items: int = 0
+    net_profit: float | None = None
+    cfo: float | None = None
+
+    @property
+    def checked(self) -> bool:
+        return self.diff is not None and bool(self.cfo)
+
+    @property
+    def ok(self) -> bool:
+        if not self.checked:
+            return False
+        assert self.cfo is not None and self.diff is not None
+        return abs(self.diff) <= max(1.0, abs(self.cfo) * _RECON_TOL_REL)
+
+
+def reconcile_indirect(text: str) -> IndirectReconcile:
+    """用报表**自己的恒等式**反查数字有没有被 OCR 读错。
+
+    ## 为什么需要它（实测）
+
+    有一类错，形状校验永远抓不到：`1,234,567,890.12` 被读成 `1,234,567.12` ——
+    它依然是一个合法金额，只是小了三个量级。实测某 104 页扫描件的折旧摊销
+    就是这么错的（不到收入的 0.1%，而它是一家矿业公司）。
+
+    抓手是补充资料自己的恒等式：
+
+        净利润 + Σ调节项（含折旧摊销）= 经营活动产生的现金流量净额
+
+    十几个数字必须**同时对**，才可能平 —— 错一个就露馅，而且**不需要知道真值**。
+    这正是"用报表内部逻辑发现 OCR 错"，比任何形状规则都硬。
+    """
+    out = IndirectReconcile()
+    net = _amount_after_multi(text, _INDIRECT_START)
+    cfo = _amount_after_multi(text, _INDIRECT_TARGET)
+    if net is None or cfo is None:
+        return out
+    total = net
+    n = 0
+    # **按位置去重**：一行挂多个前缀时（`固定资产折旧、投资性房地产折旧`），
+    # 两个前缀会取到同一个数 —— 不去重就重复计数。见 `_amount_after_pos`。
+    claimed: set[int] = set()
+    for prefix, _label in _DA_PREFIXES + _INDIRECT_ITEMS:
+        hit = _amount_after_pos(text, prefix)
+        if hit is None:
+            continue
+        v, pos = hit
+        if pos in claimed:
+            continue
+        claimed.add(pos)
+        total += v
+        n += 1
+    out.net_profit, out.cfo, out.items = net, cfo, n
+    out.diff = total - cfo
+    return out
 
 
 def extract_da(doc: ip.PdfDocument) -> DepreciationAmortisation:
@@ -204,6 +364,14 @@ def extract_da(doc: ip.PdfDocument) -> DepreciationAmortisation:
             snippet = (prefix + after[:m.end()]).replace("\n", " ")
             out.evidence.append(f"第{n}页: {snippet[:90]}")
 
-    if not out.components:
+    # **页面内勾稽**：用间接法恒等式反查这一段数字有没有被读错。
+    # 十几个数必须同时对才可能平 —— 错一个就露馅，而且不需要知道真值。
+    window = "\n".join((by_number[n].text or "") for n in pages if n in by_number)
+    rec = reconcile_indirect(window)
+    out.reconcile = rec
+    if rec.checked and not rec.ok:
+        out.note = ("附注调节段不平（间接法恒等式对不上）—— "
+                    "这一段数字很可能被 OCR 读错，请人工核对后再用")
+    if not out.components and not out.note:
         out.note = f"找到调节段（第 {pages} 页）但没解析出折旧摊销行"
     return out

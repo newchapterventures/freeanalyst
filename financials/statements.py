@@ -392,7 +392,13 @@ class Statements:
         # 0.1%，而它是一家矿业公司 —— 数字取到了却是错的，而且不会让任何校验不平。
         rev = self.income.fields.get(Field.REVENUE) if self.income else None
         da = self.da_total()
-        if da and rev:
+        # **页面内勾稽的结论优先**：恒等式不平说明这一段数字被读错了 ——
+        # 这比"量级看起来不对"更硬（它是材料自己的算术在说话）。
+        if getattr(self.da, "suspect", False):
+            why = getattr(self.da, "note", "") or "附注调节段不平"
+            out["历史折旧摊销占收入比"] = f"取数可疑 —— {why}"
+            out["历史 EBITDA 率"] = f"取数可疑（折旧摊销）—— {why}"
+        elif da and rev:
             ratio = da / rev
             if not (self._DA_TO_REV_MIN <= ratio <= self._DA_TO_REV_MAX):
                 out["历史折旧摊销占收入比"] = (
