@@ -133,5 +133,73 @@ class TestHideUtilityAlwaysWins(unittest.TestCase):
         self.assertIn('e.target === el', page, "点空白处关闭那条要真的按目标判断")
 
 
+def _lang_blocks(src: str) -> dict[str, str]:
+    """把说明文件页的中文块 / 英文块切开。
+
+    切完**要截到下一个语言块为止** —— 否则中文块会一直吃到文件尾，
+    把英文块的标题也算进来（第一版就是这么错的，测试两边都看同一批 id，永远相等）。
+    """
+    out: dict[str, str] = {}
+    for tag in ("zh", "en"):
+        marker = f'<div class="lang-{tag}'
+        if marker not in src:
+            continue
+        rest = src.split(marker, 1)[1]
+        cut = len(rest)
+        for other in ("zh", "en"):
+            m = f'<div class="lang-{other}'
+            if m in rest:
+                cut = min(cut, rest.index(m))
+        out[tag] = rest[:cut]
+    return out
+
+
+class TestDocLanguageBlocks(unittest.TestCase):
+    """中文别插进英文块（真错过一次，而且肉眼看不出来）。
+
+    2026-09-24：给说明文件页加「08 参考值从哪来 · 缺数怎么读」时，我把**中文那节**
+    插进了 `<div class="lang-en">` 里 —— 锚点 `<h2 id="features-en">` 就在英文块内。
+    后果：英文视图里会蹦出一整节中文（这个项目一直在防的"中英混屏"），
+    而 `check_ui` 的中英块检查只看"两块都在不在"，查不出**错位**。
+
+    这里钉一条不会误伤的规则：**英文块里的标题不许出现中日韩字符**。
+    （正文里的中文示例是合理的 —— 比如举「购建固定资产」这种科目写法 —— 所以只管标题。）
+    """
+
+    def test_english_headings_have_no_cjk(self):
+        src = (ROOT / "webapp_doc.html").read_text(encoding="utf-8")
+        blocks = _lang_blocks(src)
+        self.assertIn("en", blocks, "找不到英文块")
+        en = blocks["en"].split("<script", 1)[0]
+        bad = []
+        for m in re.finditer(r"<h[23][^>]*>(.*?)</h[23]>", en, re.S):
+            title = re.sub(r"<[^>]+>", "", m.group(1)).strip()
+            if re.search(r"[\u3000-\u9fff\uff00-\uffef]", title):
+                bad.append(title)
+        self.assertFalse(bad, f"英文块里的标题是中文：{bad}")
+
+    def test_chinese_headings_are_chinese(self):
+        src = (ROOT / "webapp_doc.html").read_text(encoding="utf-8")
+        zh = _lang_blocks(src).get("zh", "")
+        titles = [re.sub(r"<[^>]+>", "", m.group(1)).strip()
+                  for m in re.finditer(r"<h[23][^>]*>(.*?)</h[23]>", zh, re.S)]
+        self.assertTrue(any(re.search(r"[\u4e00-\u9fff]", x) for x in titles),
+                        "中文块里一个中文标题都没有 —— 块可能被切错了")
+
+    def test_both_blocks_have_the_same_section_ids(self):
+        """中英两块的**节**必须一一对应（缺一节就是没写完 —— 说明书最容易只写一半）。
+
+        只比 `<h2 id=...>`（节标题）—— 页脚那些 `ver`/`verline` 是共用元素，
+        不是节，比它们会误报。
+        """
+        src = (ROOT / "webapp_doc.html").read_text(encoding="utf-8")
+        blocks = _lang_blocks(src)
+        zh_ids = set(re.findall(r'<h2 id="([a-z-]+)"', blocks.get("zh", "")))
+        en_ids = set(re.findall(r'<h2 id="([a-z-]+)"', blocks.get("en", "")))
+        en_top = {i[:-3] for i in en_ids if i.endswith("-en")}
+        self.assertFalse(zh_ids - en_top, f"只有中文、没有英文的节：{sorted(zh_ids - en_top)}")
+        self.assertFalse(en_top - zh_ids, f"只有英文、没有中文的节：{sorted(en_top - zh_ids)}")
+
+
 if __name__ == "__main__":
     unittest.main()
