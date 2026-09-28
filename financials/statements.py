@@ -518,6 +518,34 @@ class Statements:
             return "与「流动资产合计 / 流动负债合计」核对自洽"
         return ""
 
+    #: 资本开支的**上界**：投资活动现金流出小计（行标签取）。
+    #:
+    #: 为什么可以用它当界：资本开支是"投资活动现金流出"的**组成项**，
+    #: 流出小计必然不小于它 —— 这是逻辑上必然成立的，没有口径差异的余地。
+    #: **不能用「投资活动产生的现金流量净额」当界**：那是净额，资本开支完全可能大于它
+    #: （净额里还减了流入），拿它当界会误报 —— 会误报的校验比没有校验更坏。
+    _CF_OUTFLOW = ("投资活动现金流出小计", "投資活動現金流出小計",
+                   "投资活动流出的现金小计", "投資活動流出之現金小計")
+
+    def capex_crosscheck(self) -> str:
+        """资本开支的**上界校验** —— 唯一的第二条路（见 `_CF_OUTFLOW`）。
+
+        它的正式来源只有一处（现金流量表「购建固定资产类支付的现金」），
+        所以这里不是"两个来源对一对"，而是**拿一个必然成立的界去卡它**：
+        超过投资活动流出小计，就一定是取错了（量级读错、或合并/母公司串行）。
+        界取不到时**什么都不说**。
+        """
+        cf = self.cash_flow.fields if self.cash_flow else {}
+        capex = cf.get(Field.CAPEX)
+        hit = self._row_in(self.cash_flow, self._CF_OUTFLOW)
+        outflow = hit[0] if hit else None
+        if capex is None or outflow is None:
+            return ""
+        if capex > abs(outflow) + abs(outflow) * 0.02:
+            return ("资本开支 大于「投资活动现金流出小计」—— 资本开支是该小计的组成项，"
+                    "大于它是算术上不可能的，请核对（量级读错或合并/母公司口径串行）")
+        return "与「投资活动现金流出小计」核对自洽（资本开支为其组成项）"
+
     def history_notes(self) -> dict[str, str]:
         """算出来了、但口径上要说明一句的（**不能默不作声**）。"""
         bal = self.balance.fields if self.balance else {}
@@ -561,7 +589,13 @@ class Statements:
             prev = out.get("历史净营运资本占收入比", "")
             out["历史净营运资本占收入比"] = f"{prev}；{joined}" if prev else joined
         if self.cash_flow and self.cash_flow.fields.get(Field.CAPEX) is not None:
-            out["历史资本开支占收入比"] = "按「购建固定资产类支付的现金」口径"
+            note = "按「购建固定资产类支付的现金」口径"
+            unit = self.unit or ""
+            note += f"；依据：{self.cash_flow.fields[Field.CAPEX]:,.0f}{unit}"
+            check = self.capex_crosscheck()
+            if check:
+                note += f"；{check}"
+            out["历史资本开支占收入比"] = note
 
         # **把 EBITDA 率的取数依据摆出来，并自己反算一遍。**
         # 亏得深的公司负 EBITDA 率是真实的（实测某港股 −235%，是真的）——

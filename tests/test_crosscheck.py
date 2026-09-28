@@ -186,6 +186,45 @@ class TestNwcCrosscheck(unittest.TestCase):
         self.assertIn("核对自洽", note)
 
 
+class TestCapexCrosscheck(unittest.TestCase):
+    """资本开支只有一个正式来源，所以这里不是"两来源对比"，而是**拿界卡它**。
+
+    界 = 「投资活动现金流出小计」（行标签取）。资本开支是它的组成项，
+    超过它在算术上不可能 —— 这种界**没有口径差异的余地**，比"对不上"硬。
+    """
+
+    @staticmethod
+    def _S(capex, outflow=None):
+        S = _statements([("营业收入", 1000.0)], {Field.REVENUE: 1000.0})
+        rows = [("购建固定资产、无形资产和其他长期资产支付的现金", capex)]
+        if outflow is not None:
+            rows.append(("投资活动现金流出小计", outflow))
+        S.cash_flow = _set("cash_flow", rows, {Field.CAPEX: capex})
+        return S
+
+    def test_capex_exceeding_outflow_is_caught(self):
+        S = self._S(capex=9999.0, outflow=1000.0)
+        msg = S.capex_crosscheck()
+        self.assertIn("算术上不可能", msg)
+        self.assertIn("请核对", msg)
+
+    def test_within_bound_reports_consistency(self):
+        S = self._S(capex=300.0, outflow=1000.0)
+        self.assertIn("核对自洽", S.capex_crosscheck())
+
+    def test_no_bound_means_no_claim(self):
+        """界取不到就**什么都不说** —— 不猜、不制造噪声。"""
+        self.assertEqual(self._S(capex=300.0).capex_crosscheck(), "")
+
+    def test_notes_carry_basis_and_check(self):
+        S = self._S(capex=300.0, outflow=1000.0)
+        S.unit = "千元"
+        note = S.history_notes().get("历史资本开支占收入比", "")
+        self.assertIn("口径", note)
+        self.assertIn("依据", note)
+        self.assertIn("核对自洽", note)
+
+
 class TestNotesCarryTheBasis(unittest.TestCase):
     def test_ebitda_note_shows_basis_and_check(self):
         """**极端值只有把依据摆出来才可解释** —— 这是这一轮真正要交付的东西。"""
