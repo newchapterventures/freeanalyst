@@ -997,6 +997,26 @@ def _specs(a: Answer, unit: str = "") -> list[dict]:
     return _specs_of(_lst(a.value), a, unit)
 
 
+#: 乘数基数**不能为负**的指标（乘数 × 负数 = 负价值，没有意义）。
+_NON_NEGATIVE_METRICS = ("ebitda", "ebit", "sde")
+
+
+def _multiples_base_problem(metric: str, mkey: str, mv: float | None) -> str:
+    """乘数法的基数能不能用。返回"问题描述"，没问题返回空串。
+
+    ## 为什么要单独判（实测：整条链被打断）
+    某 10-K 的 EBITDA 是 **−74,332** → 引擎拒绝（**拒绝得对**：
+    倍数法不该用在负基数上）→ 但那表现为**崩** ✗，把整条链打断了。
+    按项目规矩该是"整块不跑 + 说清为什么 + 给出替代口径"。
+    """
+    if mv is None:
+        return ""                                   # 缺值由调用方另行报缺
+    if mkey in _NON_NEGATIVE_METRICS and mv <= 0:
+        return (f"基数为负（{metric} {mv:,.0f}）—— 倍数法不适用于负基数；"
+                "请把 metric_name 换成「收入」，或改用其他方法（早期项目 / 资产法）")
+    return ""
+
+
 def _net_debt_derived(mat) -> tuple[float | None, str]:
     """材料里能不能推出净债务。返回 `(值, 说明)`。
 
@@ -1188,6 +1208,10 @@ def build_config(mat: Materials, ans: dict[str, Answer],
         missing.append(f"乘数法 · 指标值（{metric}）—— "
                        f"{_METRIC_WHY.get(mkey, '材料里推不出')}；"
                        "要么在材料里补，要么把 metric_name 换成别的")
+    elif (_base_problem := _multiples_base_problem(metric, mkey, mv)):
+        # **负基数整块不跑，说清为什么**（不让引擎的拒绝变成"崩"，见函数说明）。
+        missing.append(f"乘数法 · {_base_problem}")
+        mv = None
     if not mult_miss and mv is not None:
         cfg["multiples"] = {
             "metric_name": metric,
