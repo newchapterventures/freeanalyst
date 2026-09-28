@@ -144,6 +144,17 @@ class PdfDocument:
     #: 其中有多少个金额是**按判据修出来的**（不是原样读对的）。
     #: 静默修复和静默凑数一样不可接受，所以要单独报出来。
     ocr_repaired: int = 0
+    #: 页面里嵌入图的原始分辨率（dpi）。0 = 没有嵌入图（矢量页）或认不出。
+    #:
+    #: 这个数字决定"提高渲染倍率有没有用"：**渲染倍率高于原始 dpi 之后，
+    #: 放大只是插值，没有新信息**。实测某 192 dpi 扫描件，我们按 3 倍渲染 = 216 dpi
+    #: 已经在原始像素之上 —— 所以放大救不回读错的数字（详见 `bench/measure_ocr.py`）。
+    source_dpi: int = 0
+
+    @property
+    def is_scan(self) -> bool:
+        """整份文件都是扫描页（没有原生文字层）。"""
+        return bool(self.pages) and len(self.ocr_pages) == len(self.pages)
 
     @property
     def page_count(self) -> int:
@@ -239,6 +250,56 @@ def _contiguous_runs(nums: list[int]) -> list[tuple[int, int]]:
     return runs
 
 
+def _image_dpi(page) -> list[float]:
+    """这一页嵌入图的原始分辨率（dpi）。没有嵌入图（矢量页）就是空。"""
+    out: list[float] = []
+    try:
+        images = page.images or []
+    except Exception:                                     # noqa: BLE001
+        return out
+    for im in images:
+        w, _h = im.get("srcsize", (0, 0))
+        if w and getattr(page, "width", 0):
+            out.append(w / (page.width / 72))
+    return out
+
+
+def _median_int(values: list[float]) -> int:
+    """中位数取整。**偶数个时取中间偏下的那个** —— 偏保守（宁可低估分辨率）。
+
+    宁可低估，是因为这个数字只用来告诉用户"这份材料有多少像素可认"，
+    说低了顶多让人更谨慎，说高了会让人以为还有放大空间。
+    """
+    if not values:
+        return 0
+    s = sorted(values)
+    return int(round(s[(len(s) - 1) // 2]))
+
+
+def scan_advisory(pages: int, ocr_pages: int, dpi: int) -> str:
+    """扫描件的**可操作**提示。
+
+    先说清"这是什么材料"，再说"怎么办" —— 只说风险不给出路，等于把问题丢给用户。
+
+    实测背景：一份 192 dpi 的审计报告扫描本，折旧摊销被读成小了三个量级
+    （形状完全合法，任何形状校验都抓不到）。我们试过三条路救它（关语言纠正、
+    逐格二次识别、提高渲染倍率），**三条全部无效**，因为分辨率就是上限
+    —— 详见 `bench/measure_ocr.py`。所以这里给出的出路是**换来源**，
+    而不是"再放大试试"。
+    """
+    if not pages or ocr_pages != pages:
+        return ""
+    res = f"原始约 {dpi} dpi" if dpi else "分辨率未识别"
+    return (
+        f"这份材料是**扫描件**（{ocr_pages} 页全部走文字识别，{res}）—— "
+        "扫描件的密集数字存在识别风险（形状合法但数值可能出错）。\n"
+        "  **建议改用交易所或公司官网披露的原生电子版**：带文字层，无需文字识别，"
+        "取数精确。\n"
+        "  若只能使用本份扫描件，报告中标出的可疑取数（量级异常、附注调节段不平）"
+        "必须人工复核。"
+    )
+
+
 def extract_pdf(path: str | Path, extract_tables: bool = True,
                 ocr_fallback: bool = True) -> PdfDocument:
     """抽一份 PDF 的文字和表格。
@@ -261,11 +322,13 @@ def extract_pdf(path: str | Path, extract_tables: bool = True,
     pages: list[PdfPage] = []
     warnings: list[str] = []
     all_raw = ""
+    dpis: list[float] = []
 
     with pdfplumber.open(str(path)) as pdf:
         for i, page in enumerate(pdf.pages, 1):
             raw = page.extract_text() or ""
             all_raw += raw
+            dpis.extend(_image_dpi(page))
             tables: list[list[list[str | None]]] = []
             if extract_tables:
                 try:
@@ -281,6 +344,8 @@ def extract_pdf(path: str | Path, extract_tables: bool = True,
                                  tables=tables))
 
     ocr_used, ocr_fixed = _fill_blank_pages_with_ocr(path, pages, warnings) if ocr_fallback else ([], 0)
+    #: 嵌入图的原始分辨率 —— 决定"提高渲染倍率有没有用"（见 `source_dpi` 注释）。
+    dpi = _median_int(dpis)
 
     total_chars = sum(len(p.text) for p in pages)
     if total_chars == 0:
@@ -295,6 +360,13 @@ def extract_pdf(path: str | Path, extract_tables: bool = True,
             f"**全文 {len(pages)} 页都走了 OCR**（这原本是扫描件）。\n"
             "  OCR 会认错字和标点，**数字请人工复核**：报告里可疑的金额会带 `？` 前缀。"
         )
+        # **来源分诊**：说清这是什么材料、以及出路在哪。
+        # 实测那份扫描件（192 dpi）的折旧摊销被读成小了三个量级，而关语言纠正、
+        # 逐格二次识别、提高渲染倍率**三条路全部无效** —— 分辨率就是上限。
+        # 所以出路不是"再放大试试"，是**换来源**。
+        adv = scan_advisory(len(pages), len(ocr_used), dpi)
+        if adv:
+            warnings.append(adv)
     elif ocr_used:
         warnings.append(
             f"其中 {len(ocr_used)} 页（{ocr_used[:8]}"
@@ -312,6 +384,9 @@ def extract_pdf(path: str | Path, extract_tables: bool = True,
         compat_chars=compat_issues(all_raw),
         unmapped_chars=unfixable_issues(all_raw),
         warnings=warnings, ocr_pages=ocr_used, ocr_repaired=ocr_fixed,
+        # 分辨率**只对扫描件有意义**：原生电子版里那些嵌入图常常是页眉 logo
+        # （实测某 A 股年报算出个"21 dpi"，那是装饰图，说出来只会误导）。
+        source_dpi=dpi if (pages and len(ocr_used) == len(pages)) else 0,
     )
 
 
