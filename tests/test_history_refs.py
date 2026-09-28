@@ -193,5 +193,85 @@ class TestFitbitRegression(unittest.TestCase):
                          "四个都算出来了，就不该有「数据不足」的理由")
 
 
+class TestDaFromNotes(unittest.TestCase):
+    """折旧摊销的三处来源与优先级 —— 这条链断过两次，每次的表现都是"比率空着"。
+
+    实测（某 104 页扫描件）：
+      ① 它是**直接法**现金流量表 —— 表里根本没有 D&A 行 ✗
+      ② D&A 只在附注的「现金流量表补充资料」里（第 72 页页脚起头、明细在第 73 页）
+      ③ 抽出来了、也挂到了 `Statements.da` 上 —— 但**没有任何地方读它** ✗
+    三处任何一环断了，EBITDA 率与折旧摊销占收入比就都是空的，而且报告只会说
+    "现金流量表中没有折旧摊销科目行"，听起来像材料的问题，其实是我们的问题。
+    """
+
+    @staticmethod
+    def _da(total):
+        class _DA:
+            components = {"固定资产折旧": total}
+            def __init__(self, t): self.total = t
+        return _DA(total)
+
+    def test_notes_total_wins_over_partial_income_statement_line(self):
+        """补充资料的总额优先于利润表那一行 —— 后者可能只是计入费用的部分。"""
+        s = _set()
+        s.income.fields[Field.DEPRECIATION_AMORTIZATION] = 999.0   # 只是"管理费用里的折旧"
+        s.income.rows.append(
+            stm.StatementRow("管理费用：折旧", 999.0, Field.DEPRECIATION_AMORTIZATION, "t"))
+        s.da = self._da(5000.0)                                    # 补充资料里的总额
+        self.assertAlmostEqual(s.da_total(), 5000.0,
+                              msg="附注总额被利润表的部分数盖掉了")
+
+    def test_falls_back_to_statements_when_notes_empty(self):
+        s = _set()                      # 利润表里有 50
+        s.da = self._da(0.0)            # 没有补充资料（total 为 0/空）
+        self.assertAlmostEqual(s.da_total(), 50.0, msg="附注空时该退回报表口径")
+
+    def test_none_when_nothing_has_it(self):
+        s = _set(drop=("da",))
+        s.da = None
+        self.assertIsNone(s.da_total())
+
+
+@unittest.skipUnless((FITBIT / "R2.htm").exists(), "需要 Fitbit 10-K 材料")
+class TestFitbitHasNoNotesRegression(unittest.TestCase):
+    """Fitbit 没有「现金流量表补充资料」—— 必须照旧从报表里取到 D&A，不许被新优先级弄丢。"""
+
+    def test_four_ratios_unchanged(self):
+        cfg = {"statements": {
+            "unit": "千美元", "as_of": "2016-12-31", "gaap": "US GAAP",
+            "scope": "合并", "audited": "已审计",
+            "balance_sheet": "materials/fitbit-2016-10k/R2.htm",
+            "income_statement": "materials/fitbit-2016-10k/R4.htm",
+            "cash_flow": "materials/fitbit-2016-10k/R8.htm"}}
+        h = fc.load_from_config(cfg, ROOT).history()
+        self.assertAlmostEqual(h["历史折旧摊销占收入比"], 0.0176, places=4)
+        self.assertAlmostEqual(h["历史 EBITDA 率"], -0.0343, places=4)
+
+
+class TestImplausibleMagnitudeIsFlagged(unittest.TestCase):
+    """量级不对的取数必须自己喊出来 —— 这类错不报错、不让勾稽不平，最危险。
+
+    实测：某 104 页扫描件（矿业）附注抽到的 D&A 不到收入的 0.1% ✗ —— 数字取到了，
+    但显然错了（OCR 把密集数字读花，或单位口径不符）。报告如果照实印出"0.00%"，
+    用户会以为公司真没折旧；印出"数据不足"又不对（数据是取到了的）。
+    正确做法是**给数 + 明说这个数可疑**。
+    """
+
+    def test_too_small_da_is_flagged(self):
+        h = _set(revenue=1000.0, da=0.5).history_notes()     # 0.05% → 不可能
+        self.assertIn("历史折旧摊销占收入比", h)
+        self.assertIn("常识", h["历史折旧摊销占收入比"])
+        self.assertIn("历史 EBITDA 率", h, "EBITDA 率同样受影响，要一起提示")
+
+    def test_too_large_da_is_flagged(self):
+        h = _set(revenue=1000.0, da=900.0).history_notes()   # 90% → 不可能
+        self.assertIn("历史折旧摊销占收入比", h)
+
+    def test_normal_da_is_not_flagged(self):
+        for da in (10.0, 50.0, 150.0):                       # 1% / 5% / 15% 都正常
+            h = _set(revenue=1000.0, da=da).history_notes()
+            self.assertNotIn("历史折旧摊销占收入比", h, f"正常量级被误报：{da}")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -278,13 +278,28 @@ class Statements:
         而且这些行**可能被判成两个不同的科目名**：间接法段里叫 `ID_DA`，
         利润表那套写法叫 `DEPRECIATION_AMORTIZATION` —— 取决于行名长什么样。
         只认一种的代价实测过：同样的材料换一份年报写法，整块取不到。
+
+        **三处来源按可信度排序**（实测踩全过）：
+          ① **附注的「现金流量表补充资料」**（`self.da`）—— 那是间接法算出来的
+             D&A **总额**，最权威。实测某扫描件的直接法现金表里**根本没有 D&A 行**，
+             只有补充资料第 73 页有；抽出来了却没接到这里，于是两个比率一直空着。
+          ② 利润表那一行 —— 但可能只是**计入费用的部分**（某白酒公司的「管理费用明细」
+             里 `固定资产折旧 6.6 亿` 只占全部 18.9 亿的三分之一），拿它当 D&A 会低估。
+          ③ 现金流量表的间接法行 —— 有就用。
         """
+        # ① 补充资料（附注）—— 最权威，优先
+        if self.da is not None:
+            v = getattr(self.da, "total", None)
+            if v:
+                return float(v)
+        # ② 利润表
         if self.income:
             v = self.income.fields.get(Field.DEPRECIATION_AMORTIZATION)
             if v is not None:
                 return v
         if not self.cash_flow:
             return None
+        # ③ 现金流量表（间接法段）
         vals = [r.value for r in self.cash_flow.rows
                 if r.field in (Field.ID_DA, Field.DEPRECIATION_AMORTIZATION)
                 and r.value is not None]
@@ -294,6 +309,15 @@ class Statements:
     # 「数据不足」这四个字是这次被用户问出来的：他分不清是"财报里没有"、
     # "我们没认出来"、还是"认出来了但数字没抽到"—— 三种情况的应对完全不同。
     _ST_OK, _ST_NO_VALUE, _ST_MISSING, _ST_NO_TABLE = "ok", "no-value", "missing", "no-table"
+
+    #: D&A 与收入之比的常识区间 —— 用来**发现量级不对的取数**。
+    #:
+    #: 实测（某 104 页扫描件）：附注抽到的折旧摊销合计不到收入的 0.1% ✗
+    #: —— 一家矿业公司不可能，说明金额取到了但**量级不对**（OCR 把密集数字读花、
+    #: 或单位口径不符）。这类错最危险：不报错、不让勾稽不平，一路传进报告。
+    #: 区间给得宽（只拦明显离谱的），但足以把这种错拦下来提示人工核对。
+    _DA_TO_REV_MIN = 0.001
+    _DA_TO_REV_MAX = 0.80
 
     def _status(self, st, *fields) -> str:
         """某个科目在表里的状态。多给几个字段时，任一有值就算 ok。"""
@@ -364,6 +388,17 @@ class Statements:
         """算出来了、但口径上要说明一句的（**不能默不作声**）。"""
         bal = self.balance.fields if self.balance else {}
         out: dict[str, str] = {}
+        # **量级不对的取数必须自己喊出来。** 实测某扫描件：附注抽到的 D&A 不到收入的
+        # 0.1%，而它是一家矿业公司 —— 数字取到了却是错的，而且不会让任何校验不平。
+        rev = self.income.fields.get(Field.REVENUE) if self.income else None
+        da = self.da_total()
+        if da and rev:
+            ratio = da / rev
+            if not (self._DA_TO_REV_MIN <= ratio <= self._DA_TO_REV_MAX):
+                out["历史折旧摊销占收入比"] = (
+                    "取自附注，但与收入相比明显不符常识（请核对单位或 OCR 取数）")
+                out["历史 EBITDA 率"] = (
+                    "折旧摊销量级可疑，这一栏同时受影响（请核对）")
         if bal.get(Field.INVENTORY) is None and bal.get(Field.ACCOUNTS_RECEIVABLE) is not None:
             out["历史净营运资本占收入比"] = "未含存货（材料中无此科目）"
         if self.cash_flow and self.cash_flow.fields.get(Field.CAPEX) is not None:

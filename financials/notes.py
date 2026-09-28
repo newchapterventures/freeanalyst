@@ -119,6 +119,32 @@ def find_reconciliation_pages(doc: ip.PdfDocument) -> list[int]:
             if any(m in pg.text for m in _RECON_MARKERS)]
 
 
+def _expand_recon_window(pages: list[int], doc: ip.PdfDocument) -> list[int]:
+    """把「调节段」的页码向后扩 —— 因为标记常常落在**页脚**，明细在下一页。
+
+    实测（某 104 页扫描件）：标记「将净利润调节为经营活动现金流量」出现在第 72 页
+    页脚，而**真正的折旧摊销行全在第 73 页**。不扩窗口的话，抽取器报
+    「找到调节段（第 [72] 页）但没解析出折旧摊销行」—— 找到了段、拿到了空，
+    最后表现为「EBITDA 率和折旧摊销率都取不到」。
+
+    扩的边界用词守住：后一页还得在讲这同一段（补充资料 / 净利润 / 调节 / 经营活动现金流量），
+    否则停 —— 不然会把后面附注里的别的折旧行当成调节段那一行（那是另一种错，见 `extract_da`）。
+    """
+    by_number = {pg.number: pg for pg in doc.pages}
+    keep = set(pages)
+    for n in pages:
+        for nxt in (n + 1, n + 2):
+            pg = by_number.get(nxt)
+            if pg is None:
+                break
+            if any(k in (pg.text or "") for k in _RECON_MARKERS) or \
+                    any(k in (pg.text or "") for k in ("补充资料", "净利润", "调节")):
+                keep.add(nxt)
+            else:
+                break
+    return sorted(keep)
+
+
 def extract_da(doc: ip.PdfDocument) -> DepreciationAmortisation:
     """从补充资料里抽折旧摊销。
 
@@ -138,6 +164,8 @@ def extract_da(doc: ip.PdfDocument) -> DepreciationAmortisation:
     if not pages:
         out.note = "全文找不到「将净利润调节为经营活动现金流量」调节段"
         return out
+    # **标记页 + 它后面仍在讲同一段的页** —— 明细常在下一页（实测踩到）。
+    pages = _expand_recon_window(pages, doc)
     out.pages = pages
 
     # **按页码查表，不要拿页码当索引。** `doc.pages[n-1]` 只在页码
