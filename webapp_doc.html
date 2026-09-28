@@ -127,6 +127,7 @@
     <a href="#debug" data-zh="如何调试" data-en="Debugging"></a>
     <a href="#byom" data-zh="接入自己的大模型" data-en="Bring your own model"></a>
     <a href="#references" data-zh="参考值与缺数" data-en="References &amp; gaps"></a>
+    <a href="#sources" data-zh="材料来源与取数精度" data-en="Sources &amp; accuracy"></a>
   </div>
 
 <!-- ══════════════════════════ 中文 ══════════════════════════ -->
@@ -366,6 +367,43 @@ python3 freeanalyst.py ask "调整后 EBITDA 是怎么算的？"</pre>
      单份年报通常只有当期与上年。</p>
   <p>读不出来的（属公司之外的数据，<b>工具不编</b>）：无风险利率、股权风险溢价、去杠杆 beta、
      永续增长率（需长期名义 GDP 增速）、市值口径的股权价值。</p>
+
+  <h2 id="sources"><span class="idx">09</span>材料来源与取数精度</h2>
+  <p>同一家公司、同一会计年度，用<b>原生电子版</b>与用<b>扫描件</b>，取数精度不是"好一些"与"差一些"
+     的区别，而是「<b>直接读取</b>」与「<b>光学识别</b>」的区别。</p>
+  <table>
+    <thead><tr><th>材料来源</th><th>数字如何进入引擎</th><th>精度</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>交易所或公司官网披露的<b>原生电子版</b><br>（带文字层的 PDF、HTML、Excel）</td>
+        <td>直接读取，不经过文字识别</td>
+        <td>精确 —— 报表列示什么，引擎读到什么</td>
+      </tr>
+      <tr>
+        <td><b>扫描件</b>（纸质文件扫描本）</td>
+        <td>光学文字识别（<b>在本机完成，材料不出本机</b>）</td>
+        <td>文字大体可读；<b>密集数字存在识别风险</b></td>
+      </tr>
+    </tbody>
+  </table>
+  <p>扫描件的风险有其特殊性：<b>出错时看不出来</b>。例如 <code>1,234,567,890.12</code> 被识别为
+     <code>1,234,567.12</code> —— 它仍然是一个完全合规的金额，只是小了三个量级，
+     任何格式校验都不会失败。分辨率是硬上限：原始扫描件为 150～200 dpi 时，
+     提高渲染倍率、调整识别参数都只是插值，<b>不会提高准确度</b>（三条路径均已实测，结论为无效）。</p>
+  <div class="note">
+    <b>因此目标不是「保证读对」，而是「错了能被发现」。</b>扫描件上叠加三层校验：
+    <ul>
+      <li><b>金额形状校验</b> —— 格式不合规时不作猜测，标记为可疑值。</li>
+      <li><b>量级闸门</b> —— 折旧摊销占收入比等落在常识区间之外（例如低于 0.1%）时直接标出。</li>
+      <li><b>页面内勾稽</b> —— 用报表自身的恒等式反查：附注「净利润 + 调节项 =
+          经营活动产生的现金流量净额」必须成立，十余个数字错一个即不平。
+          <b>这是最硬的一层</b>，因为它依据的是材料自身的算术，不需要知道真值。</li>
+    </ul>
+  </div>
+  <p><b>建议</b>：优先使用交易所或公司官网披露的原生电子版（A 股、港股年报通常提供）。
+     若只能使用扫描件，请将报告中标注「取数可疑」的参考值逐条人工核对后再使用。</p>
+  <p>另有两点写法覆盖影响取数：港台报表的<b>繁体</b>标签，以及利润类科目的<b>亏损形态</b>
+     （如「經營虧損」「除稅前虧損」，而非「溢利」）。两类写法均已覆盖，引擎会归入相应标准科目。</p>
 </div>
 
 <!-- ══════════════════════════ English ══════════════════════════ -->
@@ -621,6 +659,53 @@ python3 freeanalyst.py ask "How is adjusted EBITDA defined?"</pre>
   <p>Not derivable (data outside the company; <b>the tool will not invent it</b>): risk-free rate,
      equity risk premium, unlevered beta, terminal growth (needs long-run nominal GDP growth), and
      market-value equity.</p>
+
+  <h2 id="sources-en"><span class="idx">09</span>Where the material comes from · extraction accuracy</h2>
+  <p>For the same company and the same financial year, a <b>native electronic filing</b> and a
+     <b>scanned copy</b> differ not by "a little better" versus "a little worse", but by
+     <b>direct reading</b> versus <b>optical recognition</b>.</p>
+  <table>
+    <thead><tr><th>Source</th><th>How numbers reach the engine</th><th>Accuracy</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><b>Native electronic filing</b> from an exchange or the company's website<br>
+            (text-layer PDF, HTML, Excel)</td>
+        <td>Read directly — no optical recognition</td>
+        <td>Exact: what the statement shows is what the engine reads</td>
+      </tr>
+      <tr>
+        <td><b>Scanned copy</b> of a paper document</td>
+        <td>Optical character recognition, <b>performed on your own machine</b></td>
+        <td>Text is largely readable; <b>dense numbers carry recognition risk</b></td>
+      </tr>
+    </tbody>
+  </table>
+  <p>Scans fail in a particular way: <b>the error is invisible</b>. If
+     <code>1,234,567,890.12</code> is recognised as <code>1,234,567.12</code>, the result is still a
+     perfectly well-formed amount — merely three orders of magnitude smaller — and no format check
+     will fail. Resolution is a hard ceiling: when the original scan runs at 150–200 dpi, raising
+     the render scale or changing recognition settings only interpolates and
+     <b>does not improve accuracy</b> (all three routes were measured; the result was no gain).</p>
+  <div class="note">
+    <b>The goal is therefore not "guaranteed correct reading" but "a wrong number gets flagged".</b>
+    Three checks sit on top of any scanned file:
+    <ul>
+      <li><b>Amount shape check</b> — when the format is not valid the engine does not guess; the
+          value is marked suspect.</li>
+      <li><b>Magnitude gate</b> — a D&amp;A-to-revenue ratio outside the commonsense range
+          (below 0.1%, for instance) is called out.</li>
+      <li><b>On-page reconciliation</b> — the statement's own identity is used as a check: in the
+          notes, "net profit + adjustments = net cash from operating activities" must hold, and one
+          wrong figure out of a dozen breaks it. <b>This is the hardest layer</b>, because it rests
+          on the material's own arithmetic rather than on knowing the true value.</li>
+    </ul>
+  </div>
+  <p><b>Recommendation</b>: prefer the native electronic filing published by the exchange or the
+     company (A-share and HK annual reports normally provide one). If only a scan is available,
+     verify every reference value flagged as suspect in the report before relying on it.</p>
+  <p>Two further label conventions affect extraction: <b>traditional Chinese</b> labels in HK and
+     Taiwan filings, and the <b>loss forms</b> of profit lines (e.g. 經營虧損, 除稅前虧損 rather than
+     溢利). Both are covered, and both are classified into the corresponding standard accounts.</p>
 </div>
 
   <footer>
