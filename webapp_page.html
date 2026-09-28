@@ -1090,7 +1090,7 @@ function onbKey(e){
 // 引导里的语言开关（弹层盖住了页头那个，所以弹层里必须自己有一个）
 function wireOnbLang(){
   document.querySelectorAll("[data-onblang]").forEach(b =>
-    b.addEventListener("click", () => setLang(b.dataset.onblang)));
+    b.addEventListener("click", () => applyLang(b.dataset.onblang)));
   document.addEventListener("keydown", onbKey);
 }
 
