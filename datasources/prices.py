@@ -179,6 +179,93 @@ def _candidate_secids(market: str, code: str) -> list[str]:
     return [resolve_secid(market, code)]
 
 
+# ---------------------------------------------------------------------------
+# 股数（算市值用）—— **需要按次授权**
+#
+# 市值 = 基准日收盘价 × 股数。价格上面已经有了，股数在这里取。
+#
+# 用户 2026-09-29 拍板"先开"，但同时要求：**新主机去取数要用户的同意**。
+# 所以这两个主机列在 `net.CONSENT_HOSTS` 里 —— 这里**不用自己判权限**，
+# 没带授权时 `net.guarded_get` 会抛 `HostConsentRequired`，
+# 由调用方（Web 层）把它变成一句"要不要同意"的问话。
+# ---------------------------------------------------------------------------
+
+QUOTE_BASE = "https://push2.eastmoney.com/api/qt/stock/get"
+
+#: 东财盘口字段：f43 现价(×100) · f57 代码 · f58 名称 · f84 总股本 · f116 总市值
+_QUOTE_FIELDS = "f43,f57,f58,f84,f85,f116,f117"
+
+
+@dataclass
+class Shares:
+    """股数 + 它是怎么来的（依据要能追溯，跟价格那边一个规矩）。"""
+
+    code: str
+    shares: float
+    source: str
+    note: str
+
+    def __str__(self) -> str:
+        return f"{self.code}：{self.shares:,.0f} 股（{self.source}）"
+
+
+def shares_outstanding(market: str, code: str) -> Shares:
+    """取**总股本**（股）。目前只有东财盘口这一个源。
+
+    ## 口径（必须说清，不然会出"看不见的错"）
+    这是**当前**的股本，不是"基准日那天的股本"。股本变动很慢（增发 / 回购才变），
+    所以多数情况下用它是可以的 —— 但这不是同一个时点，`note` 里必须写明
+    取自哪一天，让看的人自己判断要不要换。
+
+    ## 为什么没有备用源
+    腾讯盘口里也有总市值，理论上可以"总市值 ÷ 现价"倒推股数，
+    但**那几个字段的位置我还没验过** —— 按这个项目的规矩，没验过的不接线、
+    更不猜。所以现在只有东财一个源；它取不到就如实报缺，不拿别的数充。
+
+    ## 为什么会抛 `HostConsentRequired`
+    `push2.eastmoney.com` 在按次授权名单里。没带用户同意就抛 —— 这不是失败，
+    是"在等一次点头"。
+    """
+    key = market.strip().lower()
+    c = str(code).strip().upper()
+    if key not in ("sh", "sz"):
+        raise PriceError(
+            f"股数目前只接 A 股（sh / sz），收到 {market!r}。"
+            f"港股和美股的股数来源不同，还没接。"
+        )
+
+    secid = resolve_secid(key, c)
+    params = {"secid": secid, "fields": _QUOTE_FIELDS}
+    url = f"{QUOTE_BASE}?{urllib.parse.urlencode(params)}"
+
+    _throttle()
+    raw = net.guarded_get(
+        url,
+        net.PublicQuery({"secid": secid, "fields": _QUOTE_FIELDS},
+                        purpose="A 股总股本（算市值用）"),
+        timeout=20,
+    )
+    try:
+        payload = json.loads(raw.decode("utf-8", "replace"))
+    except json.JSONDecodeError as exc:
+        raise PriceError(f"东财盘口返回的不是 JSON（{secid}）：{exc}") from exc
+
+    data = payload.get("data") or {}
+    total = data.get("f84")
+    if not total:
+        raise PriceError(
+            f"东财盘口没给总股本（{secid}）—— 返回里没有 f84。"
+            f"**不拿别的字段充**：宁可报缺，也不要一个来路不明的股数。"
+        )
+
+    return Shares(
+        code=c,
+        shares=float(total),
+        source="东方财富盘口",
+        note=f"{c}：总股本 {float(total):,.0f} 股 —— 取自东方财富盘口（当前值，非基准日当日）",
+    )
+
+
 def _fetch_rows(secid: str, beg: str, end: str, adjust: int) -> list[str] | None:
     """取原始 kline 行。**没有数据返回 None，区别于空列表。**
 
