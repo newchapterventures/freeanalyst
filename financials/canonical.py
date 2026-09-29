@@ -781,6 +781,84 @@ def _norm(s: str) -> str:
     return s
 
 
+# ---------------------------------------------------------------------------
+# H 股 / IFRS 补充写法（**按实测清单补，不凭想象编**）
+#
+# 来源：2026-09-29 拿两份真材料把「带数字但没映射上」的标签全部列出来 ——
+#   宝宝树2020（双语：英文 + 繁体连写）· 中国再保险（纯英文 IFRS，保险）
+# 然后**逐条挂到已有科目上**，不新造科目 —— 新造科目会让下游不知道口径。
+#
+# 三条观察（决定了这里怎么写）：
+#   ① 港交所年报的标签是**中英双语连写**，`_split_bilingual` 会拆开，
+#      所以这里中英两种写法都要收；
+#   ② 附注号会**粘在标签上**（`Deferred tax assets 遞延稅項資產 26(b)`）——
+#      精确匹配会落空，靠 `_CONTAINS` 里的包含匹配兜（本段收了不带附注号的写法）；
+#   ③ 口径不同：IFRS 的「非流动资产」是**小计行**（不是「…合计」），
+#      所以小计的两种写法都要收。
+#
+# **没把握的不收录**（例如单独的 `Time deposits` —— 是现金等价物还是短期投资，
+# 各家用得不一样，宁可不认，让它留在缺口里被人看见）。
+# ---------------------------------------------------------------------------
+H_SHARE_EXTRA: tuple[Mapping, ...] = (
+    # ── 资产小计：IFRS 的小计行叫「非流动资产」/「流动资产」，不带「合计」
+    Mapping(Field.TOTAL_NONCURRENT_ASSETS, (
+        "非流动资产", "非流動資產", "Non-current assets", "Non-current asset")),
+    Mapping(Field.TOTAL_CURRENT_ASSETS, (
+        "流动资产", "流動資產", "Current assets", "Current asset")),
+    Mapping(Field.TOTAL_ASSETS, ("资产总额", "資產總額", "Total assets")),
+    Mapping(Field.TOTAL_LIABILITIES, (
+        "负债总额", "負債總額", "负债及权益总额", "Total liabilities")),
+    Mapping(Field.EQUITY, ("权益总额", "權益總額", "Total equity")),
+
+    # ── 资产：金融资产 / 联营 / 递延税 / 使用权 / 投资性房地产
+    Mapping(Field.OTHER_NONCURRENT_ASSETS, (
+        "其他金融资产", "其他金融資產", "Other financial assets",
+        "联营公司的权益", "聯營公司的權益", "于联营公司的权益", "於聯營公司的權益",
+        "Interests in associates", "Investments in associates",
+        "递延税项资产", "遞延稅項資產", "Deferred tax assets",
+        "使用权资产", "使用權資產", "Right-of-use assets",
+        "投资性房地产", "投資性房地產", "Investment properties",
+        "按公允价值计量且其变动计入其他综合收益的债务工具",
+        "Debt instruments measured at fair value through other comprehensive income")),
+    Mapping(Field.OTHER_CURRENT_ASSETS, (
+        "合同资产", "合同資產", "Contract assets",
+        "预付款项及其他应收款项", "預付款項及其他應收款項",
+        "Prepayments and other receivables",
+        "衍生金融资产", "衍生金融資產", "Derivative financial assets",
+        "买入返售金融资产", "買入返售金融資產",
+        "Financial assets held under resale agreements",
+        "以公允价值计量且其变动计入当期损益的金融资产",
+        "Financial assets measured at fair value through profit or loss",
+        "以摊余成本计量的金融资产", "Financial assets measured at amortized cost")),
+
+    # ── 负债
+    Mapping(Field.OTHER_NONCURRENT_LIABILITIES, (
+        "递延税项负债", "遞延稅項負債", "Deferred tax liabilities",
+        "保险合同负债", "保險合同負債", "Insurance contract liabilities",
+        "投资合同负债", "投資合同負債", "Investment contract liabilities",
+        "再保险合同负债", "Reinsurance contract liabilities")),
+    Mapping(Field.OTHER_CURRENT_LIABILITIES, (
+        "衍生金融负债", "衍生金融負債", "Derivative financial liabilities",
+        "卖出回购金融资产款", "賣出回購金融資產款",
+        "Financial assets sold under repurchase agreements",
+        "以公允价值计量且其变动计入当期损益的金融负债",
+        "Financial liabilities measured at fair value through profit or loss",
+        "合同负债", "合同負債", "Contract liabilities")),
+    Mapping(Field.TAXES_PAYABLE, (
+        "即期税项", "即期稅項", "Current taxation",
+        "应付所得税", "應付所得稅", "Income tax payable")),
+
+    # ── 权益：IFRS 把「储备」单列
+    Mapping(Field.EQUITY_PARENT, ("储备", "儲備", "Reserves")),
+
+    # ── 现金：银行结余 + 短期定期存款
+    Mapping(Field.CASH, (
+        "现金及短期定期存款", "現金及短期定期存款", "Cash and short-term time deposits",
+        "现金及现金等价物及定期存款")),
+)
+
+MAPPINGS = MAPPINGS + H_SHARE_EXTRA
+
 # 预先建索引，避免每次线性扫描
 _BY_TAG: dict[str, Field] = {}
 _BY_NAME: dict[str, Field] = {}
