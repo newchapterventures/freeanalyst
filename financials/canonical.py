@@ -855,6 +855,57 @@ H_SHARE_EXTRA: tuple[Mapping, ...] = (
     Mapping(Field.CASH, (
         "现金及短期定期存款", "現金及短期定期存款", "Cash and short-term time deposits",
         "现金及现金等价物及定期存款")),
+    # ── 现金流量表：**分段合计与关键项**（这批是勾稽要用的）
+    #
+    # 量出来的事实：资产负债表的科目词表几乎全覆盖，而现金流量表**只有分段合计
+    # 才有对应科目** —— 表内明细（已付所得税 / 利息收支 / 租赁付款 / 股利支付…）
+    # 在标准科目里**没有落脚处**。所以这批只补分段合计与几个关键项，
+    # 明细那几条**不硬塞**（塞进"其他"是资产负债表的口径，用在这里会串）。
+    Mapping(Field.CFO, (
+        "经营活动产生的现金流量净额",
+        "经营活动现金流量净额", "经营活动净现金流",
+        "經營活動產生的現金流量淨額", "經營活動所得現金淨額",
+        "Net cash used in operations", "Net cash generated from operations",
+        "Cash generated from operations",
+        "Net cash flows generated from operating activities",
+        "Net cash flows used in operating activities",
+        "Net cash generated from operating activities")),
+    Mapping(Field.CFI, (
+        "投资活动产生的现金流量净额",
+        "投資活動產生的現金流量淨額", "投資活動所得現金淨額",
+        "Net cash flows used in investing activities",
+        "Net cash flows generated from investing activities",
+        "Net cash used in investing activities")),
+    Mapping(Field.CFF, (
+        "筹资活动产生的现金流量净额",
+        "籌資活動產生的現金流量淨額", "籌資活動所得現金淨額",
+        "Net cash flows generated from financing activities",
+        "Net cash flows used in financing activities",
+        "Net cash generated from financing activities")),
+    Mapping(Field.CAPEX, (
+        "购建固定资产、无形资产和其他长期资产支付的现金",
+        "購建固定資產、無形資產和其他長期資產支付的現金",
+        "购建固定资产支付的现金",
+        "Purchases of property and equipment",
+        "Purchases of property, plant and equipment",
+        "Purchases of property and equipment, investment properties and "
+        "intangible assets",
+        "Purchase of property and equipment")),
+    Mapping(Field.NET_CASH_CHANGE, (
+        "现金及现金等价物净增加额", "現金及現金等價物淨增加額",
+        "Net increase in cash and cash equivalents",
+        "Net (decrease)/increase in cash and cash equivalents",
+        "Net decrease in cash and cash equivalents")),
+    Mapping(Field.SECTION, (
+        "经营活动", "经营活动产生的现金流量", "經營活動產生的現金流量",
+        "Cash flows from operating activities",
+        "Cash flows used in operating activities",
+        "投资活动", "投资活动产生的现金流量", "投資活動產生的現金流量",
+        "Cash flows from investing activities",
+        "Cash flows used in investing activities",
+        "筹资活动", "筹资活动产生的现金流量", "籌資活動產生的現金流量",
+        "Cash flows from financing activities",
+        "Cash flows used in financing activities")),
 )
 
 MAPPINGS = MAPPINGS + H_SHARE_EXTRA
@@ -920,10 +971,16 @@ def _split_bilingual(label: str) -> list[str]:
     return parts if len(parts) > 1 else []
 
 
+#: 尾部附注号：`45(a)` / `26(a)` / `22(c)` / `27(d)`，或独立的 `12`。
+#: 港交所年报把它**粘在标签后面**（`Cash generated from operations 45(a)`）。
+#: **只去 1–3 位数** —— 4 位数是年份（`31 December 2020`），动了会毁掉标签。
+_NOTE_TAIL = re.compile(r"\s*[（(]?\d{1,3}(?:\([a-z]\)|[)）])?\s*$", re.I)
+
+
 def _label_candidates(label: str) -> list[str]:
     """把一行标签拆成若干「候选写法」，依次去匹配科目表。
 
-    顺序 = 从最具体到最泛：原文 → 简体 → 双语拆开（各自再转简体）。
+    顺序 = 从最具体到最泛：原文 → 简体 → 双语拆开（各自再转简体）→ 去掉尾部附注号。
     """
     out: list[str] = []
 
@@ -936,9 +993,24 @@ def _label_candidates(label: str) -> list[str]:
     simp = _to_simplified(label)
     if simp != label:
         add(simp)
+    # ★ 尾部附注号要能去掉（实测踩到）
+    #
+    # 港交所年报会把附注号**粘在标签后面**：`Cash generated from operations 45(a)`。
+    # `_split_bilingual` 只在**中英交界**处拆，纯英文标签拆不动，
+    # 于是整串带着「45(a)」去匹配，必然落空 —— 这种行会被当成"没映射上"。
+    # 去掉尾部附注号是最泛的一条候选，放在最后试。
+    for src in (label, simp):
+        stripped = _NOTE_TAIL.sub("", src).strip()
+        if stripped and stripped != src:
+            add(stripped)
+            add(_to_simplified(stripped))
     for part in _split_bilingual(label):
         add(part)
         add(_to_simplified(part))
+        stripped = _NOTE_TAIL.sub("", part).strip()
+        if stripped and stripped != part:
+            add(stripped)
+            add(_to_simplified(stripped))
     return out
 
 
