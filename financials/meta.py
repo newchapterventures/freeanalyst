@@ -148,7 +148,8 @@ def detect_scope(text: str) -> str:
 #: 数看着正常，只是全部错了三个数量级。所以这层的纪律是
 #: **认不出就返回空**，让调用方停下来问人，不许猜。
 _UNIT_CN = re.compile(
-    r"单位[:：]\s*(?:人民币)?\s*(亿元|万元|千元|百万元|元"
+    r"单位\s*(?:为|[:：])?\s*(?:人民币|RMB)?\s*"
+    r"(亿元|万元|千元|百万元|元"
     r"|千美元|百万美元|万美元|美元)")
 _UNIT_WORD = (
     ("人民币千元", "千元"), ("人民币百万元", "百万元"), ("人民币万元", "万元"),
@@ -229,7 +230,12 @@ def detect_unit(text: str) -> tuple[str, str]:
             return unit, f"正文里的「{word}」"
     for pat, unit in _UNIT_EN:
         if re.search(pat, low):
-            return unit, f"英文材料里的「{pat}」"
+            # ★ 这里**必须说实话**：`in thousands` 里**没有币种**。
+            #   把它当成美元是一个假设，不是认出来的 —— 而这一层的纪律本来就是
+            #   "认不出就返回空，不许猜"。暂时保留映射（换掉会改动既有行为），
+            #   但依据里写明是**假设**，让报告里读得到。
+            return unit, (f"英文材料里的「{pat}」——⚠️ **这段只写量级、没写币种**，"
+                          f"按「{unit}」处理是**假设**，请核对是不是人民币/港元口径")
     for word, unit in _UNIT_WORD:
         if word in head:
             return unit, f"正文里的「{word}」"

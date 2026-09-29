@@ -508,11 +508,28 @@ def load_pdf_statements(path: str | Path, unit: str = "元") -> stm.Statements:
     page_text = " ".join(
         pg.text for pg in doc.pages
         if any(pg.number in v for v in picked.values() if v))
-    if not unit:
-        u, basis = meta.detect_unit(page_text)
-        if u:
-            unit = u
+    # ★ **正表页首说的单位，优先于调用方的预扫描**（实测踩到，差 100 万倍）
+    #
+    # 原先这里是 `if not unit:` —— 于是调用方先认过就轮不到正表说话了。
+    # 而调用方（`intake`）认的是**整份文件的前 60,000 字**：中国人寿那份报表在
+    # 第 89 页以后，它在前 40 页里撞到某处「单位：元」就判成了「元」，
+    # 而正表页首写的是「金额单位为人民币百万元」✗ —— 差 **100 万倍**，
+    # 且数字形状完全正常，肉眼看不出来（货币资金显示成 50,879「元」，
+    # 实际是 508.79 亿）。中国平安那份同样中招。
+    #
+    # 上面那段注释早就写了「调用方从文件字节里 sniff 是认不出来的」——
+    # 这里只是把那条原则真正落实：**正表认得出就用正表的**，
+    # 并且把分歧**写进警告**，不静默改。
+    u, basis = meta.detect_unit(page_text)
+    if u and u != unit:
+        if unit:
+            S.warnings.append(
+                f"金额单位：**以正表页首的「{u}」为准**（依据：{basis}）。"
+                f"预扫描认的是「{unit}」，两者不一致 —— 正表优先，"
+                f"因为预扫描只看得到文件开头几十页。")
+        else:
             S.warnings.append(f"金额单位从报表正文认出：{u}（依据：{basis}）")
+        unit = u
     S.unit = unit
     if not S.period:
         S.period = meta.detect_period(page_text)
