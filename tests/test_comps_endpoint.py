@@ -93,5 +93,54 @@ class TestCompsEndpoint(unittest.TestCase):
         self.assertEqual(len(seen[0]), 4)
 
 
+class TestCompsMarketConsistency(unittest.TestCase):
+    """★ 用户提的专业点：**不同股市的 beta 与估值中枢本来就不一样。**
+
+    所以"标的在 A 股 / 港股，同行取的是美股"这种情况，工具**必须说清后果** ——
+    不是加一句"仅供参考"的软话，而是说清输出**不能**怎么用，再给可走的路。
+
+    币种从**报表单位**里读（"千美元" / "人民币千元"）—— 这是材料自己写的口径，
+    读它是"用它自己的话说它自己"，不是猜。
+    """
+
+    def test_currency_is_read_from_the_unit_string(self):
+        self.assertEqual(webapp._market_of("千美元"), "us")
+        self.assertEqual(webapp._market_of("百万美元"), "us")
+        self.assertEqual(webapp._market_of("人民币千元"), "cn")
+        self.assertEqual(webapp._market_of("千元"), "cn")
+        self.assertEqual(webapp._market_of("千港元"), "hk")
+
+    def test_unreadable_unit_does_not_trigger_a_warning(self):
+        """判不出市场时**不警告** —— 不许误报（会喊狼嚎的提示比没有更坏）。"""
+        self.assertEqual(webapp._comps_market_warning("", "us"), "")
+        self.assertEqual(webapp._market_of(""), "")
+
+    def test_renminbi_units_count_as_cn(self):
+        """「元 / 万元」= 人民币口径 → 拿美股同行比就该警告。"""
+        for unit in ("元", "万元"):
+            self.assertEqual(webapp._market_of(unit), "cn")
+            self.assertTrue(webapp._comps_market_warning(unit, "us"))
+
+    def test_same_market_has_no_warning(self):
+        self.assertEqual(webapp._comps_market_warning("千美元", "us"), "")
+        self.assertEqual(webapp._comps_market_warning("人民币千元", "cn"), "")
+
+    def test_cross_market_warning_says_what_not_to_do(self):
+        w = webapp._comps_market_warning("人民币千元", "us")
+        self.assertIn("口径不一致", w)
+        self.assertIn("beta", w)
+        self.assertIn("估值中枢", w)
+        self.assertIn("不能", w.replace("不是", "不能"))     # 说清"不能用在哪"
+        self.assertIn("同市场", w)                            # 给可走的路
+
+    def test_endpoint_reports_the_target_market(self):
+        with mock.patch("datasources.sec_edgar.ticker_to_cik", return_value="0000001"), \
+             mock.patch("valuation.advisor.build_peer_stat", return_value=_stat()):
+            out = webapp.api_comps({"tickers": "LEA", "target_unit": "人民币千元"})
+        self.assertEqual(out["peer_market"], "us")
+        self.assertEqual(out["target_market"], "cn")
+        self.assertTrue(out["market_warning"], "跨市场却没警告")
+
+
 if __name__ == "__main__":
     unittest.main()

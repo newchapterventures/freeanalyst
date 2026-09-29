@@ -68,6 +68,56 @@ ENDPOINTS = ("health", "scan", "appraise", "pick", "config", "gate", "cloud-chec
 FEATURES = ("percent-unit", "llm-config", "install-model", "onboard-state", "comps-step")
 
 
+#: 从报表单位里读**标的在哪个市场** —— 单位字符串里带币种（实测："千美元"/"人民币千元"）。
+#: 这不是猜：币种是财报自己写的口径，读它是**用它自己的话说它自己**。
+_MARKET_HINTS: tuple[tuple[tuple[str, ...], str], ...] = (
+    (("美元", "usd", "us$"), "us"),
+    (("港元", "港币", "hkd", "hk$"), "hk"),
+    (("人民币", "rmb", "cny", "元"), "cn"),
+)
+
+
+def _market_of(unit: str) -> str:
+    """报表单位 → 标的所在市场（`us` / `hk` / `cn` / `""` 判不出）。"""
+    low = (unit or "").lower()
+    if not low:
+        return ""
+    for words, market in _MARKET_HINTS:
+        if any(w in low for w in words):
+            return market
+    return ""
+
+
+#: 市场名（给提示文案用）
+MARKET_NAME = {"us": "美股", "hk": "港股", "cn": "人民币（A 股 / 港股）"}
+
+
+def _comps_market_warning(target_unit: str, peer_market: str = "us") -> str:
+    """标的与同行的**市场不一致**时必须说清后果。
+
+    ## 为什么这条不能省（专业上是对的，用户提的）
+    · **beta 对应的是各自市场的指数** —— 拿美股同行的 β 去算 A 股标的的 WACC，
+      等于把两个市场的系统性风险混在一起；
+    · **不同市场的估值中枢本来就不同** —— A 股 / 港股 / 美股的 PE、EV/EBITDA
+      水平系统性有差，**跨市场套倍数会带进一个方向不明的偏差**。
+
+    所以这里**不是**给一个"仅供参考"的软话，而是说清"这一步的输出**不能**怎么用"，
+    再给两条可走的路。
+    """
+    tm = _market_of(target_unit)
+    if not tm or tm == peer_market:
+        return ""
+    return (f"⚠ 口径不一致：**标的的报表是{MARKET_NAME.get(tm, tm)}口径**，"
+            f"而这一步取的是**{MARKET_NAME.get(peer_market, peer_market)}同行**。\n"
+            f"  · beta 对应的是**各自市场的指数** —— 跨市场套用等于把两边的系统性风险混在一起；\n"
+            f"  · 不同市场的**估值中枢本来就不同**（PE / EV·EBITDA 系统性有差），"
+            f"跨市场套倍数会带进一个**方向不明的偏差**。\n"
+            f"  两条可走的路：① **乘数**用同市场同行的倍数（在第 5 步手填，工具不替你定）；"
+            f"② **beta** 取同市场同业的去杠杆 β。\n"
+            f"  （同行基本面本身仍然可看：增速、利润率、规模是**公司属性**，"
+            f"跨市场对照有意义；倍数不是。）")
+
+
 def api_comps(payload: dict) -> dict:
     """第 4 步 · 可比公司（**只做基本面对照**）。
 
@@ -128,10 +178,16 @@ def api_comps(payload: dict) -> dict:
 
     stat = ad.build_peer_stat(pairs, metric=metric, years=years, as_of=as_of)
     _, title, fmt = ad.METRIC_FUNCS[metric]
+    peer_market = "us"          # EDGAR = 美股 —— **目前只支持美股**，别的地方还没接源
     return {
         "ok": True, "metric": metric, "title": title, "fmt": fmt,
         "unit": stat.unit, "n": stat.n, "min_comps": MIN_COMPS,
         "enough": stat.n >= MIN_COMPS,
+        "peer_market": peer_market,
+        "target_market": _market_of(payload.get("target_unit") or ""),
+        # 标的和同行**不在同一个市场**时，说清这一步的输出**不能**怎么用
+        "market_warning": _comps_market_warning(payload.get("target_unit") or "",
+                                                peer_market),
         "rows": [{"label": lab, "value": v}
                  for lab, v in zip(stat.labels, stat.values)],
         "p25": stat.quantile(0.25), "median": stat.median(), "p75": stat.quantile(0.75),

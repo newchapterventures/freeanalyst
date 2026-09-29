@@ -534,7 +534,7 @@ const I18N = {
     "pill.arith": "算术由代码执行 · 不交由模型",
     "pill.declare": "输入缺失即声明 · 不作假设",
     "s4.title": "可比公司", "s4.sub": "同行基本面对照 —— 取数、对照、留痕",
-    "s4.notice": "<b>这一步给的是基本面分布，不是倍数。</b>EDGAR 有财报、<b>没有股价</b> —— 市值 / EV / EV·EBITDA 取不到（要做倍数得再接一个价格源，那个源还没接）。<b>目前只支持美股。</b>样本不足 3 家时，<b>不给中位数当结论</b>。",
+    "s4.notice": "<b>这一步给的是基本面分布，不是倍数。</b>EDGAR 有财报、<b>没有股价</b> —— 市值 / EV / EV·EBITDA 取不到（要做倍数得再接一个价格源，那个源还没接）。<b>目前只支持美股（EDGAR）。</b>标的若在 A 股 / 港股，<b>这一页的多少要看得分清楚</b>：同行基本面（增速 / 利润率 / 规模）是<b>公司属性</b>，跨市场对照有意义；<b>倍数和 beta 不是</b> —— 它们各自绑定市场的指数与估值中枢，跨市场套用会带进方向不明的偏差（工具会在结果上方直接点出来）。样本不足 3 家时，<b>不给中位数当结论</b>。",
     "s4.tickers": "可比公司代码（美股，逗号分隔）",
     "s4.metric": "对照指标",
     "s4.m.cagr": "近三年收入 CAGR", "s4.m.margin": "EBITDA 率", "s4.m.scale": "营业收入规模",
@@ -695,7 +695,7 @@ const I18N = {
     "ask.useRef": "Use this reference",
     "ask.refbad": "This one cannot be derived from the materials — it has to come from you",
     "s4.title": "Comparable companies", "s4.sub": "Peer fundamentals — fetch, compare, keep the trail",
-    "s4.notice": "<b>This step gives fundamentals, not multiples.</b> EDGAR has filings but <b>no share prices</b> — market cap / EV / EV·EBITDA cannot be derived (multiples would need a price source, not wired yet). <b>US listings only for now.</b> With fewer than 3 peers, <b>no median is presented as a conclusion</b>.",
+    "s4.notice": "<b>This step gives fundamentals, not multiples.</b> EDGAR has filings but <b>no share prices</b> — market cap / EV / EV·EBITDA cannot be derived (multiples would need a price source, not wired yet). <b>US listings only for now (EDGAR).</b> If the target is an A-share / HK listing, <b>sort out which half of this page you may use</b>: peer fundamentals (growth / margin / scale) are <b>company attributes</b> and do transfer across markets; <b>multiples and beta do not</b> — each is tied to its own market's index and valuation level, so using them across markets imports a bias of unknown direction (the tool states this above the results). With fewer than 3 peers, <b>no median is presented as a conclusion</b>.",
     "s4.tickers": "Peer tickers (US, comma-separated)",
     "s4.metric": "Metric",
     "s4.m.cagr": "3-year revenue CAGR", "s4.m.margin": "EBITDA margin",
@@ -974,7 +974,8 @@ async function comps(){
   try{
     const out = await post("/api/comps", {tickers: tickers,
       metric: $("cMetric").value, years: $("cYears").value || 3,
-      as_of: ($("cAsof").value || "").trim()});
+      as_of: ($("cAsof").value || "").trim(),
+      target_unit: (STATE.data && STATE.data.unit) || ""});
     $("cBtn").disabled = false;
     if(!out.ok){
       $("cMsg").innerHTML = '<span class="bad">' + esc(out.error || "") + '</span>';
@@ -997,6 +998,11 @@ function renderComps(){
     return;
   }
   let h = "";
+  // **口径警告放最上面** —— 标的和同行不在同一个市场时，先说清"这一步的输出不能怎么用"。
+  // 放在结果下面等于藏起来：看到表就已经用上了。
+  if(d.market_warning)
+    h += '<div class="notice issue" style="white-space:pre-wrap;margin-bottom:12px">' +
+         md(d.market_warning) + '</div>';
   if(!d.enough) h += '<div class="notice issue" style="margin-bottom:12px">' +
       esc(t("s4.thin").replace("{n}", d.n)) + '</div>';
   h += '<table><thead><tr><th>' + esc(d.title) + '</th><th class="num">' +
