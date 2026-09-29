@@ -488,6 +488,26 @@ _DA_TAGS = (
     "Depreciation",
 )
 
+# 股数。⚠️ 单位是 `"shares"`，不是 USD —— 用错单位会静默取到空。
+# `EntityCommonStockSharesOutstanding` 在 **dei 命名空间**，是**申报封面**上写的那个数，
+# 它的日期是**封面日**、通常比财年期末晚几周。所以取它时必须把"哪个日期的股数"
+# 一并说出来（市值 = 价格 × 股数，**两者时点要说得清**）。
+_SHARES_TAGS = (
+    "EntityCommonStockSharesOutstanding",
+    "WeightedAverageNumberOfSharesOutstandingBasic",
+    "CommonStockSharesOutstanding",
+    "WeightedAverageNumberOfDilutedSharesOutstanding",
+)
+
+# 净利润 —— 算 P/E 的分母
+_NET_INCOME_TAGS = ("NetIncomeLoss", "ProfitLoss")
+
+# 所有者权益 —— 算 P/B 的分母（时点科目，没有 start）
+_EQUITY_TAGS = (
+    "StockholdersEquity",
+    "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest",
+)
+
 
 @dataclass
 class DerivedLine:
@@ -502,7 +522,7 @@ class DerivedLine:
 
 def _first_available(
     facts: dict, tags: tuple[str, ...], end: str, unit: str,
-    duration: int | str = "annual",
+    duration: int | str | None = "annual",
 ) -> tuple[Observation, str] | None:
     """按优先级找第一个在指定期末有数据的标签。
 
@@ -618,3 +638,72 @@ def peers_by_tag_value(
         if len(out) >= limit:
             break
     return out
+
+
+# ---------------------------------------------------------------------------
+# 市值类指标（P/E、P/B、市值/收入）要用到的三个量：股数 / 净利润 / 所有者权益
+# ---------------------------------------------------------------------------
+#
+# ★ 为什么单列一节：`derive_ebitda` 走的是**经营口径**，而 P/E、P/B 要的是**股东口径** ——
+#   分母不同、命名空间不同（股数在 `dei`）、**单位也不同（"shares"，不是 USD）**。
+#   单位写错会**静默取到空**，然后被当成"这家公司没有数据"。
+
+def _latest_instant(
+    facts: dict,
+    tags: tuple[str, ...],
+    unit: str,
+    taxonomies: tuple[str, ...] = ("us-gaap",),
+    on: str | None = None,
+) -> tuple[Observation, str, str] | None:
+    """取**不晚于** `on` 的最近一个时点值（`on` 为空则取最后一个）。
+
+    「不晚于」是硬要求：拿一个**晚于**基准日的股数去乘基准日的价格，
+    等于把两个时点的东西拼在一起 —— 和价格那条纪律（不许回退到最新价）同一个道理。
+    """
+    best: tuple[Observation, str, str] | None = None
+    for taxo in taxonomies:
+        for tag in tags:
+            for o in extract_series(facts, tag, unit, taxonomy=taxo, duration=None):
+                if on and o.end > on:
+                    continue
+                if best is None or o.end > best[0].end:
+                    best = (o, tag, taxo)
+    return best
+
+
+def shares_outstanding(facts: dict, on: str | None = None) -> DerivedLine | None:
+    """取股数。返回里**必须带日期** —— 它是申报封面日，不是财年期末。"""
+    hit = _latest_instant(facts, _SHARES_TAGS, "shares", ("dei", "us-gaap"), on)
+    if hit is None:
+        return None
+    obs, tag, taxo = hit
+    return DerivedLine(
+        name="股数", value=obs.value, tag=tag, observation=obs,
+        note=f"来自 {taxo}:{tag} —— **这个数的日期是 {obs.end}**"
+             f"（申报封面日，通常比财年期末晚几周）。市值 = 价格 × 股数，"
+             f"价格还是要按基准日取，两个时点都说得清才不会拼错。",
+    )
+
+
+def net_income_of(facts: dict, end: str, unit: str = "USD") -> DerivedLine | None:
+    """取净利润。**股东口径**，和 `derive_ebitda` 的经营口径不是一回事。"""
+    hit = _first_available(facts, _NET_INCOME_TAGS, end, unit, "annual")
+    if hit is None:
+        return None
+    obs, tag = hit
+    return DerivedLine(
+        name="净利润", value=obs.value, tag=tag, observation=obs,
+        note=f"来自 XBRL 标签 {tag}（期末 {end}，申报 {obs.filed}）。",
+    )
+
+
+def equity_of(facts: dict, end: str, unit: str = "USD") -> DerivedLine | None:
+    """取所有者权益（**时点科目** —— 没有期间，所以 duration 传 None）。"""
+    hit = _first_available(facts, _EQUITY_TAGS, end, unit, None)
+    if hit is None:
+        return None
+    obs, tag = hit
+    return DerivedLine(
+        name="所有者权益", value=obs.value, tag=tag, observation=obs,
+        note=f"来自 XBRL 标签 {tag}（时点 {end}，申报 {obs.filed}）。",
+    )

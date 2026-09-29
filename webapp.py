@@ -181,13 +181,21 @@ def _comps_scope(target_market: str, target_unit: str, peer_market: str,
     }
 
 
-#: 需要**市值**才能算的指标 —— 源没有行情时，这些一律算不出来。
-#: 放在这里是为了让报错**说真话**：以前请求 `ev_ebitda` 会得到"不支持的指标"，
-#: 而真因是"这个源根本没有股价"（EDGAR 是申报系统）—— 两件事不一样。
-MULTIPLE_METRICS: dict[str, str] = {
-    "ev_ebitda": "EV / EBITDA", "ev_ebit": "EV / EBIT",
-    "ev_revenue": "EV / 营业收入", "pe": "P / E", "pb": "P / B",
+#: 只要**市值**就能算的倍数 —— 价格源到位即可全部打通。
+PRICE_MULTIPLES: dict[str, str] = {
+    "pe": "P / E", "pb": "P / B", "price_to_revenue": "市值 / 营业收入",
 }
+
+#: 需要**企业价值（EV）**的倍数 —— 还差一样东西：**同行的净债务**。
+#: EV = 市值 + 净债务，而 EDGAR 里没有统一的债务/现金科目口径（各家拆法不同，
+#: 有的把租赁、可转债拆成好几行）。**缺就明说，绝不拿市值代替 EV** ——
+#: 那是最不容易看出来的错：数字合理、结论全偏。
+EV_MULTIPLES: dict[str, str] = {
+    "ev_ebitda": "EV / EBITDA", "ev_ebit": "EV / EBIT", "ev_revenue": "EV / 营业收入",
+}
+
+#: 所有"需要市值口径"的倍数（含暂时算不了的）—— 用来把报错说得准确。
+MULTIPLE_METRICS: dict[str, str] = {**PRICE_MULTIPLES, **EV_MULTIPLES}
 
 
 def api_comps(payload: dict) -> dict:
@@ -233,13 +241,7 @@ def api_comps(payload: dict) -> dict:
                                se.MARKET, se.CURRENCY,
                                payload.get("target_currency") or "")
     if metric in MULTIPLE_METRICS:
-        # 两类原因要分开说 —— 说错了用户会去改错的地方
-        if not se.HAS_PRICES:
-            return {"ok": False, "error": (
-                f"「{MULTIPLE_METRICS[metric]}」需要**市值**，而这个数据源只收财报、"
-                f"**没有行情**（源自己声明 `has_prices=False`）。"
-                f"这不是「暂时没做」：EDGAR 是**申报系统**，里面本来就没有股价。"
-                f"要给倍数，得再配一个价格源 —— 那是独立的一件事，还没接。")}
+        # 三类原因要分开说 —— 说错了用户会去改错的地方
         if not scope_early["multiples_allowed"]:
             return {"ok": False, "error": (
                 f"「{MULTIPLE_METRICS[metric]}」不能跨市场套用：标的是"
@@ -247,12 +249,19 @@ def api_comps(payload: dict) -> dict:
                 f"同行在{MARKET_NAME.get(se.MARKET, se.MARKET)} —— "
                 f"倍数各自绑定市场的指数与估值中枢，跨市场会带进方向不明的偏差。"
                 f"请用**同市场**同行，或改用基本面比率。")}
-        return {"ok": False, "error": (
-            f"「{MULTIPLE_METRICS[metric]}」的取数路径还没接上 —— "
-            f"接口位置留着，等价格源接进来就能用。")}
-    if metric not in ad.METRIC_FUNCS:
-        return {"ok": False,
-                "error": f"不支持的指标：{metric}（可用：{'、'.join(ad.METRIC_FUNCS)}）"}
+        if metric in EV_MULTIPLES:
+            return {"ok": False, "error": (
+                f"「{MULTIPLE_METRICS[metric]}」需要**企业价值** —— "
+                f"EV = 市值 + **净债务**，而同行的净债务现在取不到："
+                f"EDGAR 没有统一的债务/现金科目口径（各家拆法不同，"
+                f"有的把租赁、可转债拆成好几行）。"
+                f"**拿市值代替 EV 会把倍数系统性算低**，所以这里不做，而不是做得不准。\n"
+                f"现在能算的是：{'、'.join(PRICE_MULTIPLES.values())}。"
+                f"要做 EV 类，得先把「同行净债务」的取数口径定下来（一件单独的事）。")}
+    is_multiple = metric in PRICE_MULTIPLES
+    if not is_multiple and metric not in ad.METRIC_FUNCS:
+        usable = "、".join(list(ad.METRIC_FUNCS) + list(PRICE_MULTIPLES))
+        return {"ok": False, "error": f"不支持的指标：{metric}（可用：{usable}）"}
     years = int(payload.get("years") or 3)
     as_of = (payload.get("as_of") or "").strip() or None
 
@@ -270,8 +279,16 @@ def api_comps(payload: dict) -> dict:
                 "**目前只支持美股** —— A 股/港股还没有免接口的数据源。"
                 "（留空不是缺陷：拿不到同行分布时，不凑一个参照系才是对的。）"}
 
-    stat = ad.build_peer_stat(pairs, metric=metric, years=years, as_of=as_of)
-    _, title, fmt = ad.METRIC_FUNCS[metric]
+    if is_multiple:
+        # 市值类倍数：**市值 = 基准日收盘价 × 股数**，分母在同一份财报里。
+        # 三样东西必须齐：代码（价格源要）、CIK（财报要）、基准日（两边都要）。
+        stat = ad.build_peer_multiples(
+            [(cik, code, code) for cik, code in pairs],
+            metric=metric, as_of=as_of, market=se.MARKET, unit=se.CURRENCY)
+        title, fmt = PRICE_MULTIPLES[metric], ad.MULTIPLE_FUNCS[metric][1]
+    else:
+        stat = ad.build_peer_stat(pairs, metric=metric, years=years, as_of=as_of)
+        _, title, fmt = ad.METRIC_FUNCS[metric]
     # 市场与币种**由源自己声明** —— 不许在这里写死（接中/港源时全靠这个）
     peer_market = se.MARKET
     target_unit = target_unit_early
@@ -301,6 +318,9 @@ def api_comps(payload: dict) -> dict:
         "hi": max(stat.values) if stat.values else None,
         "source": stat.source,
         "gaps": stat.gaps,
+        # 每家的取数依据（价格哪一天 × 股数哪一天 ÷ 分母哪个期末）——
+        # 市值类倍数把两个世界拼在一起，**每个时点都要答得出来**。
+        "basis": stat.basis,
     }
 
 

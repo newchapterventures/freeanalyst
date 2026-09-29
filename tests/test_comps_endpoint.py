@@ -210,11 +210,12 @@ class TestMultiplesGate(unittest.TestCase):
         from datasources import sec_edgar
         self.assertIs(sec_edgar.HAS_PRICES, False)
 
-    def test_asking_for_a_multiple_names_the_real_reason(self):
+    def test_a_multiple_without_a_declared_market_says_what_is_unknown(self):
+        """市场没声明时「不能跨市场」这句话仍然成立 —— 它得说清**不知道什么**。"""
         out = webapp.api_comps({"tickers": "LEA,MGA", "metric": "ev_ebitda"})
         self.assertFalse(out["ok"])
-        self.assertIn("市值", out["error"])
-        self.assertIn("has_prices=False", out["error"])
+        self.assertIn("不能跨市场", out["error"])
+        self.assertIn("未声明", out["error"])
         self.assertNotIn("不支持的指标", out["error"], "又拿「不支持」糊弄人了")
 
     def test_cross_market_multiple_is_refused_for_the_market_reason(self):
@@ -227,15 +228,22 @@ class TestMultiplesGate(unittest.TestCase):
         self.assertIn("跨市场", out["error"])
         self.assertIn("同市场", out["error"])
 
-    def test_same_market_multiple_says_the_wire_is_missing(self):
-        """有行情、同市场 —— 这时才该说"路径还没接上"（诚实的第三种情形）。"""
-        from datasources import sec_edgar
-        with mock.patch.object(sec_edgar, "HAS_PRICES", True), \
-             mock.patch.object(sec_edgar, "MARKET", "us"):
-            out = webapp.api_comps({"tickers": "LEA,MGA", "metric": "ev_ebitda",
-                                    "target_market": "us", "target_currency": "USD"})
+    def test_ev_multiple_says_net_debt_is_the_missing_piece(self):
+        """同市场、也有价格源 —— EV 类仍然算不了，缺的是**同行的净债务**。
+
+        理由必须说到点上：说成"缺价格"会让人去接价格源（已经有了），
+        说成"暂时没做"会让人以为再写个函数就行。真因是
+        **EDGAR 没有统一的债务/现金科目口径**。
+        """
+        out = webapp.api_comps({"tickers": "LEA,MGA", "metric": "ev_ebitda",
+                                "target_market": "us", "target_currency": "USD",
+                                "as_of": "2025-06-30"})
         self.assertFalse(out["ok"])
-        self.assertIn("还没接上", out["error"])
+        self.assertIn("净债务", out["error"])
+        self.assertIn("企业价值", out["error"])
+        self.assertIn("拿市值代替 EV", out["error"])
+        # 同时要告诉用户现在**能**算什么
+        self.assertIn("P / E", out["error"])
 
 
 if __name__ == "__main__":

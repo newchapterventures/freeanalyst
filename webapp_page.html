@@ -446,6 +446,9 @@
           <option value="revenue_cagr" data-i18n="s4.m.cagr"></option>
           <option value="ebitda_margin" data-i18n="s4.m.margin"></option>
           <option value="revenue_scale" data-i18n="s4.m.scale"></option>
+          <option value="pe" data-i18n="s4.m.pe"></option>
+          <option value="pb" data-i18n="s4.m.pb"></option>
+          <option value="price_to_revenue" data-i18n="s4.m.prev"></option>
         </select></label>
       <label><span data-i18n="s4.years"></span><input id="cYears" value="3"></label>
       <label><span data-i18n="s4.asof"></span><input id="cAsof" placeholder="2024-12-31"></label>
@@ -541,14 +544,17 @@ const I18N = {
     "pill.arith": "算术由代码执行 · 不交由模型",
     "pill.declare": "输入缺失即声明 · 不作假设",
     "s4.title": "可比公司", "s4.sub": "同行基本面对照 —— 取数、对照、留痕",
-    "s4.notice": "<b>这一步给的是基本面分布，不是倍数。</b>EDGAR 有财报、<b>没有股价</b> —— 市值 / EV / EV·EBITDA 取不到（要做倍数得再接一个价格源，那个源还没接）。<b>目前只支持美股（EDGAR）。</b>标的若在 A 股 / 港股，<b>这一页的多少要看得分清楚</b>：同行基本面（增速 / 利润率 / 规模）是<b>公司属性</b>，跨市场对照有意义；<b>倍数和 beta 不是</b> —— 它们各自绑定市场的指数与估值中枢，跨市场套用会带进方向不明的偏差（工具会在结果上方直接点出来）。样本不足 3 家时，<b>不给中位数当结论</b>。",
+    "s4.notice": "<b>这一步能给两类东西：基本面分布（增速 / 利润率 / 规模），以及<b>市值类倍数</b>（P/E、P/B、市值/营业收入）。</b>倍数的分子是 <b>基准日收盘价（不复权）× 申报股数</b> —— 所以<b>必须填基准日</b>：价格模块刻意只提供「按日期取价」，不提供「最新价」（免得拿今天的股价配去年的报表）。每一家的<b>取数依据</b>（价格哪一天 × 股数哪一天 ÷ 分母哪个期末）会列在结果下面。<b>EV 类倍数（EV/EBITDA、EV/EBIT、EV/收入）还算不了</b>：EV = 市值 + <b>净债务</b>，而同行的净债务取不到（EDGAR 没有统一的债务 / 现金科目口径）—— 缺就明说，<b>不拿市值代替 EV</b>。<b>目前只支持美股（EDGAR）。</b>标的若在 A 股 / 港股，<b>这一页的多少要看得分清楚</b>：同行基本面（增速 / 利润率 / 规模）是<b>公司属性</b>，跨市场对照有意义；<b>倍数和 beta 不是</b>（工具会直接在结果上方拦下来）。样本不足 3 家时，<b>不给中位数当结论</b>。",
     "s4.tickers": "可比公司代码（美股，逗号分隔）",
     "s4.metric": "对照指标",
     "s4.market": "标的所在市场",
     "s4.k.auto": "自动（按报表币种判断）", "s4.k.us": "美股", "s4.k.cn": "A 股", "s4.k.hk": "港股",
     "s4.m.cagr": "近三年收入 CAGR", "s4.m.margin": "EBITDA 率", "s4.m.scale": "营业收入规模",
+    "s4.m.pe": "P / E（市值类，需基准日）", "s4.m.pb": "P / B（市值类，需基准日）",
+    "s4.m.prev": "市值 / 营业收入（市值类，需基准日）",
+    "s4.basis": "取数依据",
     "s4.years": "年数（CAGR 用）", "s4.asof": "基准日（只用该日已披露的财报，可留空）",
-    "s4.btn": "取同行基本面",
+    "s4.btn": "取同行数据",
     "s4.fetching": "正在取数 —— 走 SEC 公开接口，逐家取，请稍候…",
     "s4.n": "样本 {n} 家",
     "s4.thin": "⚠ 样本只有 {n} 家 —— 不足 3 家不给中位数当结论（2 家的「中位数」没有意义）。下列数值仅作单家参考。",
@@ -704,15 +710,19 @@ const I18N = {
     "ask.useRef": "Use this reference",
     "ask.refbad": "This one cannot be derived from the materials — it has to come from you",
     "s4.title": "Comparable companies", "s4.sub": "Peer fundamentals — fetch, compare, keep the trail",
-    "s4.notice": "<b>This step gives fundamentals, not multiples.</b> EDGAR has filings but <b>no share prices</b> — market cap / EV / EV·EBITDA cannot be derived (multiples would need a price source, not wired yet). <b>US listings only for now (EDGAR).</b> If the target is an A-share / HK listing, <b>sort out which half of this page you may use</b>: peer fundamentals (growth / margin / scale) are <b>company attributes</b> and do transfer across markets; <b>multiples and beta do not</b> — each is tied to its own market's index and valuation level, so using them across markets imports a bias of unknown direction (the tool states this above the results). With fewer than 3 peers, <b>no median is presented as a conclusion</b>.",
+    "s4.notice": "<b>This step returns two kinds of things: fundamental distributions (growth / margin / scale) and <b>market-cap multiples</b> (P/E, P/B, market cap / revenue).</b> The numerator of a multiple is <b>closing price on the as-of date (unadjusted) × reported share count</b> — so <b>an as-of date is required</b>: the price module deliberately offers only \"price on a date\", never \"latest price\" (which would pair today's price with last year's balance sheet). Each peer's <b>basis</b> (which day's price × which day's share count ÷ which period's denominator) is listed under the results. <b>EV-based multiples (EV/EBITDA, EV/EBIT, EV/Revenue) are still not computable</b>: EV = market cap + <b>net debt</b>, and peer net debt cannot be retrieved (EDGAR has no consistent debt / cash tagging) — we say so rather than substituting market cap for EV. <b>US listings only for now (EDGAR).</b> If the target is an A-share / HK listing, <b>sort out which half of this page you may use</b>: peer fundamentals (growth / margin / scale) are <b>company attributes</b> and do transfer across markets; <b>multiples and beta do not</b> (the tool blocks them above the results). With fewer than 3 peers, <b>no median is presented as a conclusion</b>.",
     "s4.tickers": "Peer tickers (US, comma-separated)",
     "s4.metric": "Metric",
     "s4.market": "Target's market",
     "s4.k.auto": "Auto (from reporting currency)", "s4.k.us": "US", "s4.k.cn": "A-share", "s4.k.hk": "Hong Kong",
     "s4.m.cagr": "3-year revenue CAGR", "s4.m.margin": "EBITDA margin",
     "s4.m.scale": "Revenue scale",
+    "s4.m.pe": "P / E (market cap; needs an as-of date)",
+    "s4.m.pb": "P / B (market cap; needs an as-of date)",
+    "s4.m.prev": "Market cap / Revenue (needs an as-of date)",
+    "s4.basis": "Basis",
     "s4.years": "Years (for CAGR)", "s4.asof": "As-of date (filings disclosed by then; may be blank)",
-    "s4.btn": "Fetch peer fundamentals",
+    "s4.btn": "Fetch peer data",
     "s4.fetching": "Fetching via SEC public endpoints, one by one…",
     "s4.n": "{n} peer(s)",
     "s4.thin": "⚠ Only {n} peer(s) — with fewer than 3, no median is presented as a conclusion (a median of two means nothing). The figures below are single-company references only.",
@@ -1038,6 +1048,12 @@ function renderComps(){
        (d.lo === null ? "" : " · " + esc(t("s4.range")) + "：" +
         fmtNum(d.lo, d.fmt) + " – " + fmtNum(d.hi, d.fmt)) +
        (d.source ? " · " + esc(d.source) : "") + '</div>';
+  // **取数依据** —— 市值类倍数把「行情」和「财报」两个世界拼在一起，
+  // 每个时点都要能答得出来（价格哪一天 × 股数哪一天 ÷ 分母哪个期末）。
+  if((d.basis || []).length)
+    h += '<div class="mut" style="margin-top:10px;font-size:12px">' +
+         esc(t("s4.basis")) + '<br>' +
+         d.basis.map(b => "· " + esc(b)).join("<br>") + '</div>';
   if((d.gaps || []).length)
     h += '<div class="notice quiet" style="margin-top:12px">' + esc(t("s4.gaps")) +
          '<br>' + d.gaps.map(g => "· " + esc(g)).join("<br>") + '</div>';

@@ -53,6 +53,10 @@ class PeerStat:
     source: str
     unit: str = ""
     gaps: list[str] = field(default_factory=list)
+    #: 每家公司的**取数依据**（价格用的哪一天、股数用的哪一天、分母是哪个期末）。
+    #: 市值类倍数把两个世界（行情 / 财报）拼在一起，**每个时点都要说得清**，
+    #: 否则改天有人问「你这个市值是哪天的」就答不上来。
+    basis: list[str] = field(default_factory=list)
 
     @property
     def n(self) -> int:
@@ -217,6 +221,150 @@ def build_peer_stat(
     return PeerStat(
         metric=label, values=values, labels=labels, unit=fmt,
         source=f"SEC EDGAR XBRL（上市公司官方披露）{basis}", gaps=gaps,
+    )
+
+
+# ---------------------------------------------------------------------------
+# 市值类倍数：P/E、P/B、市值/收入
+# ---------------------------------------------------------------------------
+#
+# 与上面的 `METRIC_FUNCS` 分开，因为**取数路径不同**：
+#   经营口径（EBITDA 率之类）只吃 `company_facts`；
+#   市值口径还要**外部价格源**，而且分母是**股东口径**（净利、权益）——
+#   和 `derive_ebitda` 的经营口径不是一回事。
+#
+# ## 能算什么、不能算什么（实测边界，不许含糊）
+#
+#   **能算**：P/E、P/B、市值/收入 —— 市值 = 基准日收盘价 × 股数，
+#   分母在同一份财报里，全都能追溯。
+#
+#   **算不了**：EV/EBITDA、EV/EBIT、EV/收入 —— EV = 市值 + **净债务**，
+#   而 EDGAR 里没有统一的债务/现金科目口径（各家拆得不一样，有的把租赁、
+#   可转债拆成好几行）。**缺同行净债务时绝不用市值代替 EV** ——
+#   那是最不容易看出来的错：数字合理、结论全偏。
+
+#: 每个市值指标的**分母**用哪套标签、是"期间"还是"时点"。
+#: 找期末必须按**这个指标自己的分母**去找 —— 见 `_latest_period_end` 的实测记录。
+_DENOM_TAGS: dict[str, tuple[tuple[str, ...], bool]] = {
+    "pe": (se._NET_INCOME_TAGS, True),        # 净利润：期间科目
+    "pb": (se._EQUITY_TAGS, False),           # 所有者权益：时点科目
+    "price_to_revenue": (se._REVENUE_TAGS, True),
+}
+
+
+def _latest_period_end(
+    facts: dict, metric: str, unit: str, as_of: str | None,
+) -> str | None:
+    """按**这个指标自己的分母**，找最近一个期末。
+
+    ★ 实测踩到（所以这段才存在）：一开始图省事，统一拿**收入标签**去找期末 ——
+    结果 BorgWarner 的收入标签只到 2022，于是 P/B 的分母取了 **2022 年**的权益，
+    而价格是 2025-06-30：**分子分母差了三年，倍数照样算得出来，而且看不出错**。
+    这正是本项目最不许出现的那类错（数字合理、结论全偏），所以按指标分开找。
+    """
+    tags, is_duration = _DENOM_TAGS[metric]
+    ends: list[str] = []
+    for tag in tags:
+        series = se.extract_series(facts, tag, unit, duration="annual" if is_duration else None)
+        for o in series:
+            if as_of and o.filed and o.filed > as_of:
+                continue
+            ends.append(o.end)
+    return max(ends) if ends else None
+
+
+#: 市值口径的指标：metric -> (显示名, 格式, 分母取数函数)
+MULTIPLE_FUNCS: dict[str, tuple[str, str, object]] = {
+    "pe": ("P / E", ".1f", se.net_income_of),
+    "pb": ("P / B", ".2f", se.equity_of),
+    "price_to_revenue": ("市值 / 营业收入", ".2f", se.derive_revenue),
+}
+
+
+def build_peer_multiples(
+    peers: list[tuple[str, str, str]],
+    metric: str = "pe",
+    as_of: str | None = None,
+    market: str = "us",
+    unit: str = "USD",
+) -> PeerStat:
+    """按「基准日市值 ÷ 同财年分母」建分布。
+
+    `peers` 是 `[(cik, 代码, 名称), …]` —— **两个键都要**：
+    CIK 给财报用，代码给价格源用。市值这件事把两个世界拼在一起，
+    所以谁都不能省。
+
+    ## 三条不许破的规矩
+    1. **价格只用不晚于基准日的**（`prices.close_on` 的纪律，不回退到最新价）；
+    2. **股数也只用不晚于基准日的**（申报封面日通常晚于财年期末，不筛就会拼错时点）；
+    3. **任何一家算不出来都记进 gaps**，不静默丢弃，也不用行业均值去填。
+
+    每家的取数依据（价格日期 × 股数日期 × 分母期末）写进 `basis` ——
+    改天有人问「这个市值是哪天的」，答得出来。
+    """
+    if metric not in MULTIPLE_FUNCS:
+        raise ValueError(f"不认识的市值指标 {metric!r}，可用：{'、'.join(MULTIPLE_FUNCS)}")
+    label, fmt, denom_func = MULTIPLE_FUNCS[metric]
+
+    if not as_of:
+        # 价格模块**刻意**只提供「按日期取价」，不提供 latest() ——
+        # 因为"拿今天的股价配去年的资产负债表"是这类工具最容易犯、又最看不出来的错。
+        # 所以这里不是报错，而是把要求说清楚。
+        return PeerStat(
+            metric=label, values=[], labels=[], unit=fmt,
+            source="市值类倍数需要基准日",
+            gaps=["市值类倍数**必须有基准日**：价格模块只提供「按日期取价」，"
+                  "不提供「最新价」（免得拿今天的股价配去年的报表）。"
+                  "请在「基准日」里填一个日期再取。"],
+        )
+
+    from datasources import prices as px
+
+    values: list[float] = []
+    labels: list[str] = []
+    gaps: list[str] = []
+    basis: list[str] = []
+
+    for cik, code, name in peers:
+        try:
+            facts = se.company_facts(cik)
+        except Exception as e:                      # noqa: BLE001
+            gaps.append(f"{name}：财报取数失败（{type(e).__name__}）")
+            continue
+        end = _latest_period_end(facts, metric, unit, as_of)
+        if end is None:
+            gaps.append(f"{name}：找不到年度期末")
+            continue
+        denom = denom_func(facts, end, unit)        # type: ignore[operator]
+        if denom is None:
+            gaps.append(f"{name}：缺「{label}」的分母（期末 {end}）")
+            continue
+        if denom.value <= 0:
+            gaps.append(f"{name}：分母非正（{denom.value:,.0f}），倍数没有意义")
+            continue
+        sh = se.shares_outstanding(facts, as_of)
+        if sh is None:
+            gaps.append(f"{name}：取不到股数")
+            continue
+        try:
+            bar = px.close_on(market, code, as_of)
+        except Exception as e:                      # noqa: BLE001
+            gaps.append(f"{name}：取价失败（{type(e).__name__}）")
+            continue
+        if bar is None:
+            gaps.append(f"{name}：{as_of or '基准日'}或之前没有收盘价 —— "
+                        f"**不回退到最新价**，这一家不计入")
+            continue
+        values.append(bar.close * sh.value / denom.value)
+        labels.append(name)
+        basis.append(f"{name}：股价 {bar.date} × 股数 {sh.observation.end}"
+                     f" ÷ {denom.name}（期末 {end}）")
+
+    tail = f"｜基准日 {as_of}" if as_of else ""
+    return PeerStat(
+        metric=label, values=values, labels=labels, unit=fmt,
+        source=f"市值＝基准日收盘价（不复权）× 申报股数；分母＝SEC EDGAR XBRL{tail}",
+        gaps=gaps, basis=basis,
     )
 
 
