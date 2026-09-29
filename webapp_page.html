@@ -986,9 +986,18 @@ function scan(){
 // 样本 < 3 家时界面**不把中位数当结论** —— 纪律来自 comps_workflow。
 function fmtNum(v, fmt){
   if(v === null || v === undefined || isNaN(v)) return "—";
-  if(String(fmt).indexOf("f") >= 0)
-    return Number(v).toLocaleString(undefined, {maximumFractionDigits: 0});
-  return (Number(v) * 100).toFixed(String(fmt) === ".1%" ? 1 : 2) + "%";
+  const spec = String(fmt || "");
+  // 小数位数**从格式串里读**，不再靠 indexOf("f") 一刀切。
+  // ★ 实测踩到：`.1f` / `.2f` 也含字母 f，旧写法一律当"整数"处理 ——
+  //   于是 P/E 10.82 显示成「11」、P/B 1.10 显示成「1」：
+  //   接口里的数是对的，**界面把它抹平了**，而且看着还挺正常。
+  const d = Number((spec.match(/\.(\d)/) || [0, "0"])[1]);
+  if(spec.indexOf("%") >= 0)
+    return (Number(v) * 100).toFixed(d) + "%";
+  if(spec.indexOf("f") >= 0)
+    return Number(v).toLocaleString(undefined,
+      {minimumFractionDigits: d, maximumFractionDigits: d});
+  return String(v);
 }
 
 async function comps(){
