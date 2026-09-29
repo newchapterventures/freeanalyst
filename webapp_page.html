@@ -1093,10 +1093,6 @@ function renderDupont(d){
   $("anOut").innerHTML = h;
 }
 
-// 上屏：默认「估值」—— 老流程一个字都不变。两件事一定是**人选的**，不替他猜。
-STATE.mode = STATE.mode || "appraise";
-setMode(STATE.mode);
-
 function scan(){
   if(DEMO_DONE){
     $("scanMsg").innerHTML = t("demo.msg");
@@ -1581,6 +1577,15 @@ function showStale(){
 // ── 启动：有后端就等人操作；没后端（双击打开、聊天里预览）自动进设计预览 ──
 function boot(){
   applyLang(LANG);
+
+  // 入口：默认「估值」—— 老流程一个字都不变。两件事一定是**人选的**，不替他猜。
+  //
+  // ★ 这句**必须**在 boot() 里，不能放在文件中间的顶层：
+  // `STATE` 是 `const`，声明在文件末尾 —— 顶层引用它会撞上"暂时性死区"，
+  // 抛 ReferenceError 把整个脚本打断，**后面的初始化（i18n、遮罩、按钮绑定）全不执行**。
+  // 真踩过：页面变成全白、连按钮都没有。`node --check` 查不出来（那是语法检查，
+  // 这是运行期错误）。凡是"上屏要做的事"，一律进 boot()。
+  setMode(STATE.mode || "appraise");
   wireDrop();
   wireOnbLang();
   document.querySelectorAll(".lang button").forEach(b => {

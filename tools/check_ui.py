@@ -57,9 +57,48 @@ def check_ids(html: str, script: str) -> None:
     print(f"  元素 id：HTML {len(ids)} 个，JS 用到 {len(used)} 个")
     if missing:
         fail(f"JS 用到但 HTML 里没有的 id：{missing}")
-    for n in range(1, 7):
+    for n in range(1, 8):
         if f'id="s{n}"' not in html:
             fail(f"缺第 {n} 步的容器 id=s{n}")
+
+
+def check_load_order(script: str) -> None:
+    """页面脚本里**顶层**语句引用了**后面才声明**的 const/let。
+
+    ★ 真踩过（页面全白、连按钮都没有）：把 `STATE.mode = …` 写在了文件中间的顶层，
+    而 `const STATE` 声明在文件末尾 —— 顶层语句在"暂时性死区"里执行，
+    抛 ReferenceError 把整个脚本打断，**后面的 i18n、遮罩隐藏、按钮绑定全不执行**。
+    而 `node --check` 是**语法**检查，**查不出**这种运行期错误。
+
+    只认一件事：列 0 的语句里出现的名字，是 const/let 声明的、且声明行在它之后。
+    函数体内的不管（函数是运行时才跑）；`function` 声明会提升，也不算。
+    """
+    decl = re.compile(r"^(?:const|let)\s+([A-Za-z_$][\w$]*)\s*=")
+    lines = script.split("\n")
+
+    decl_line: dict[str, int] = {}
+    for i, ln in enumerate(lines):
+        m = decl.match(ln)
+        if m:
+            decl_line.setdefault(m.group(1), i)
+
+    bad: list[tuple[int, str, int]] = []
+    for i, ln in enumerate(lines):
+        if not ln or ln[0] in " \t}/{" or decl.match(ln):
+            continue
+        if ln.startswith(("function ", "//", "*", "/*")):
+            continue
+        # 去掉字符串字面量：文案里出现同名词不该算（真误报过）
+        probe = re.sub(r"'[^']*'|\"[^\"]*\"|`[^`]*`", " ", ln)
+        for name, dline in decl_line.items():
+            if dline > i and re.search(r"\b" + re.escape(name) + r"\b", probe):
+                bad.append((i, name, dline))
+
+    top = sum(1 for l in lines if l and l[0] not in " \t}/{")
+    print(f"  加载顺序：顶层语句 {top} 条")
+    for i, name, dline in bad:
+        fail(f"脚本第 {i + 1} 行顶层用到 {name}，但它第 {dline + 1} 行才声明"
+             f" —— 脚本会在这里断掉，后面所有初始化都不会执行（页面会全白）")
 
 
 def check_i18n(html: str, script: str, src: str) -> None:
@@ -334,6 +373,7 @@ def main() -> int:
     print("── JS 语法 ──")
     check_script_syntax(script)
     print("── 中英词表 ──")
+    check_load_order(script)
     check_i18n(html, script, src)
     print("── 服务契约 ──")
     check_service_contract(src)
