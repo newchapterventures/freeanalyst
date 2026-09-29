@@ -973,6 +973,13 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
+        # **本机工具，任何东西都不缓存。**
+        # 实测踩到：页面明明改好了，浏览器却给旧的那份 —— 表现是"新加的 tab 一直是灰的、
+        # 新卡片不出现"，而服务端一切正常（像是代码没生效）。本地工具缓存自己的页面
+        # **只有坏处**：省不了多少，却会让"改了没效果"变成常态。
+        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
+        self.send_header("Pragma", "no-cache")
+        self.send_header("Expires", "0")
         # 本地工具，**不许任何外部页面把它嵌进 iframe**（防点击劫持）
         self.send_header("X-Frame-Options", "DENY")
         self.end_headers()
