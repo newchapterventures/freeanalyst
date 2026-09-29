@@ -377,13 +377,13 @@ def build_peer_multiples(
                 continue
             values.append((market_cap + nd.value) / denom.value)
             sign = "＋" if nd.value >= 0 else "−"
-            basis.append(f"{name}：EV = 市值（股价 {bar.date} × 股数 "
+            basis.append(f"{name}：EV = 市值（股价 {bar.date}，{bar.source} × 股数 "
                          f"{sh.observation.end}）{sign} 净债务 {abs(nd.value):,.0f}"
                          f" ÷ {denom.name}（期末 {end}）"
                          f"\n      净债务口径：{nd.note.split('组成：')[-1]}")
         else:
             values.append(market_cap / denom.value)
-            basis.append(f"{name}：股价 {bar.date} × 股数 {sh.observation.end}"
+            basis.append(f"{name}：股价 {bar.date}（{bar.source}）× 股数 {sh.observation.end}"
                          f" ÷ {denom.name}（期末 {end}）")
         labels.append(name)
 

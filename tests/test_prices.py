@@ -51,12 +51,19 @@ class _Patched:
     如果换成 patch `_fetch`，测的就是假函数而不是真逻辑了。
     """
 
-    def __init__(self, rows=FIXTURE_ROWS, working_prefix=None):
+    def __init__(self, rows=FIXTURE_ROWS, working_prefix=None, fallback_rows=None):
         """working_prefix=None 表示「哪个前缀都当它有数据」——
-        不关心前缀探测的测试用默认值即可。"""
+        不关心前缀探测的测试用默认值即可。
+
+        `fallback_rows` 是**退路源**（新浪/腾讯）的行，默认空：
+        默认含义是「东财和退路**都没有数据**」，这样"没有数据"那几条例保持原意。
+        要测降级生效，就把 `rows=[]`、`fallback_rows=<有数据>` 传进来。
+        """
         self.rows = rows
         self.working_prefix = working_prefix
+        self.fallback_rows = fallback_rows or []
         self.calls: list[dict] = []
+        self.fallback_calls: list[dict] = []
 
     def __enter__(self):
         self._orig = p._fetch_rows
@@ -72,10 +79,22 @@ class _Patched:
             return rows or None
 
         p._fetch_rows = fake
+
+        # **退路源也要打桩** —— 否则"东财没数据"的用例会真去联网，
+        # 而它们要测的是「所有源都没有数据」这条路径。
+        self._orig_fb = (p._rows_sina, p._rows_tencent)
+
+        def fake_fallback(market, code, beg, end):
+            outer.fallback_calls.append({"market": market, "code": code})
+            return [r for r in outer.fallback_rows if beg <= r.split(",")[0] <= end]
+
+        p._rows_sina = fake_fallback
+        p._rows_tencent = fake_fallback
         return self
 
     def __exit__(self, *a):
         p._fetch_rows = self._orig
+        p._rows_sina, p._rows_tencent = self._orig_fb
 
     def prefixes_tried(self) -> list[str]:
         return [c["secid"].split(".", 1)[0] for c in self.calls]
@@ -392,6 +411,35 @@ class TestAgainstRealPrices(unittest.TestCase):
             self.assertIn("代码", str(e))
             return
         self.assertIsNone(bar, "不存在的代码绝不能给出一个价格")
+
+
+class TestFallbackSources(unittest.TestCase):
+    """★ 东财偶发拒连时的**降级**：换源，但口径不变。
+
+    实测背景：东财是非官方接口，会间歇性拒连（同一分钟里 curl 通、模块失败）。
+    单一数据源不该是唯一依赖 —— 但退路**同样必须是"按日期的日线"**，
+    否则就从"取不到"变成"取到了一个口径不对的数"，那更坏。
+    """
+
+    def test_fallback_is_used_when_the_primary_has_nothing(self):
+        with _Patched(rows=[], fallback_rows=FIXTURE_ROWS) as pat:
+            bar = p.close_on("sh", "600519", "2025-12-31")
+        self.assertIsNotNone(bar, "东财没数据时应该走退路")
+        self.assertEqual(bar.date, "2025-12-31")
+        # 出处要能追溯：命中键带上了源名
+        self.assertIn(":", bar.secid, f"secid 没标出来源：{bar.secid!r}")
+        self.assertTrue(pat.fallback_calls, "根本没有试退路")
+
+    def test_fallback_still_respects_the_as_of_rule(self):
+        """退路**不许**破坏那条防守：找不到不晚于基准日的，就返回 None。"""
+        with _Patched(rows=[], fallback_rows=FIXTURE_ROWS):
+            self.assertIsNone(p.close_on("sh", "600519", "2025-12-25"),
+                              "退路居然回退到了基准日之后的价格")
+
+    def test_no_source_has_data_still_returns_none(self):
+        with _Patched(rows=[], fallback_rows=[]) as pat:
+            self.assertIsNone(p.close_on("sh", "600519", "2025-12-31"))
+        self.assertTrue(pat.fallback_calls, "全都空的时候也应该试过退路")
 
 
 if __name__ == "__main__":
