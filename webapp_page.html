@@ -1032,9 +1032,15 @@ function wireDrop(){
 function setMode(m){
   STATE.mode = (m === "analyse") ? "analyse" : "appraise";
   const isAn = STATE.mode === "analyse";
-  $("s7").classList.toggle("hide", !isAn);          // 07 只在财务分析时出现
+  $("s7").classList.toggle("hide", !isAn);          // 财务分析那一步只在它那条路上出现
+  // ★ 步骤条**一选就重排**，不等扫描 —— 否则刚选完会看到
+  // "01 02 03 04 05 06 03"，比不改还乱。
+  ["s3","s4","s5","s6"].forEach(id => {
+    const el = $(id); if(el) el.classList.toggle("hide", isAn);
+  });
   if(!isAn) $("card7").classList.add("hide");
-  if(STATE.data) applyMode();                       // 已经扫过了：立刻重排
+  renumber();                                       // 编号按模式重编（03 / 07）
+  if(STATE.data) applyMode();                       // 扫过了：卡片也要收起来
   // 引导弹层里的两个选项：给选中态（弹层没开时这两个元素可能不在，一律空安全）
   const a = $("onbModeAppraise"), b = $("onbModeAnalyse");
   if(a) a.classList.toggle("on", !isAn);
@@ -1055,10 +1061,24 @@ function applyMode(){
   ["card4","cardAsk","card5","card6"].forEach(id => {
     const el = $(id); if(el) el.classList.add("hide");
   });
+  // ★ 步骤条**不摆在那儿变灰**，直接不显示：
+  // 灰着也在说"还有四步等着你"，而财务分析这条路根本不经过它们。
   ["s3","s4","s5","s6"].forEach(id => {
-    const el = $(id); if(el) el.classList.add("off");
+    const el = $(id); if(el) el.classList.add("hide");
   });
   if(STATE.data) $("card7").classList.remove("hide");
+}
+
+// 两条路**各自编号**（2026-09-29 用户意见）：
+//   估值     01 载入 → 02 报表识别 → 03 行业 → 04 可比 → 05 假设 → 06 结论
+//   财务分析 01 载入 → 02 报表识别 → 03 财务分析（杜邦分解）
+// 同一个功能在两边的号不一样，所以号是**算出来的**，不是写死的。
+function renumber(){
+  const isAn = STATE.mode === "analyse";
+  const pill = $("s7") && $("s7").querySelector(".n");
+  if(pill) pill.textContent = isAn ? "03" : "07";
+  const idx = $("card7") && $("card7").querySelector(".idx");
+  if(idx) idx.textContent = isAn ? "03" : "07";
 }
 
 async function analyse(){
