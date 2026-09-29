@@ -181,6 +181,15 @@ def _comps_scope(target_market: str, target_unit: str, peer_market: str,
     }
 
 
+#: 需要**市值**才能算的指标 —— 源没有行情时，这些一律算不出来。
+#: 放在这里是为了让报错**说真话**：以前请求 `ev_ebitda` 会得到"不支持的指标"，
+#: 而真因是"这个源根本没有股价"（EDGAR 是申报系统）—— 两件事不一样。
+MULTIPLE_METRICS: dict[str, str] = {
+    "ev_ebitda": "EV / EBITDA", "ev_ebit": "EV / EBIT",
+    "ev_revenue": "EV / 营业收入", "pe": "P / E", "pb": "P / B",
+}
+
+
 def api_comps(payload: dict) -> dict:
     """第 4 步 · 可比公司（**只做基本面对照**）。
 
@@ -219,6 +228,28 @@ def api_comps(payload: dict) -> dict:
                 "error": "先给可比公司代码（美股，逗号分隔，如 LEA, MGA, BWA）"}
 
     metric = (payload.get("metric") or "revenue_cagr").strip()
+    target_unit_early = payload.get("target_unit") or ""
+    scope_early = _comps_scope(payload.get("target_market") or "", target_unit_early,
+                               se.MARKET, se.CURRENCY,
+                               payload.get("target_currency") or "")
+    if metric in MULTIPLE_METRICS:
+        # 两类原因要分开说 —— 说错了用户会去改错的地方
+        if not se.HAS_PRICES:
+            return {"ok": False, "error": (
+                f"「{MULTIPLE_METRICS[metric]}」需要**市值**，而这个数据源只收财报、"
+                f"**没有行情**（源自己声明 `has_prices=False`）。"
+                f"这不是「暂时没做」：EDGAR 是**申报系统**，里面本来就没有股价。"
+                f"要给倍数，得再配一个价格源 —— 那是独立的一件事，还没接。")}
+        if not scope_early["multiples_allowed"]:
+            return {"ok": False, "error": (
+                f"「{MULTIPLE_METRICS[metric]}」不能跨市场套用：标的是"
+                f"{MARKET_NAME.get(scope_early['target_market'], '未声明')}、"
+                f"同行在{MARKET_NAME.get(se.MARKET, se.MARKET)} —— "
+                f"倍数各自绑定市场的指数与估值中枢，跨市场会带进方向不明的偏差。"
+                f"请用**同市场**同行，或改用基本面比率。")}
+        return {"ok": False, "error": (
+            f"「{MULTIPLE_METRICS[metric]}」的取数路径还没接上 —— "
+            f"接口位置留着，等价格源接进来就能用。")}
     if metric not in ad.METRIC_FUNCS:
         return {"ok": False,
                 "error": f"不支持的指标：{metric}（可用：{'、'.join(ad.METRIC_FUNCS)}）"}
@@ -243,10 +274,8 @@ def api_comps(payload: dict) -> dict:
     _, title, fmt = ad.METRIC_FUNCS[metric]
     # 市场与币种**由源自己声明** —— 不许在这里写死（接中/港源时全靠这个）
     peer_market = se.MARKET
-    target_unit = payload.get("target_unit") or ""
-    scope = _comps_scope(payload.get("target_market") or "", target_unit,
-                         peer_market, se.CURRENCY,
-                         payload.get("target_currency") or "")
+    target_unit = target_unit_early
+    scope = scope_early
     # 绝对规模（收入是多少钱）跨币种**不能直接并列**：同行分布自身是同一币种、有效，
     # 但"标的 vs 它们"要先换算。比率（增速/利润率）没这个问题。
     scale_note = ""

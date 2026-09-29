@@ -198,5 +198,45 @@ class TestMarketScopeLayer(unittest.TestCase):
         self.assertNotIn('peer_market = "us"', src)
 
 
+class TestMultiplesGate(unittest.TestCase):
+    """倍数闸 —— 报错要说**真话**。
+
+    以前请求 `ev_ebitda` 会得到「不支持的指标」✗ —— 而真因是
+    **这个源根本没有股价**（EDGAR 是申报系统）。两件事不一样：
+    前者让人以为"再写个函数就行"，后者指向"要配一个价格源"。
+    """
+
+    def test_source_declares_it_has_no_prices(self):
+        from datasources import sec_edgar
+        self.assertIs(sec_edgar.HAS_PRICES, False)
+
+    def test_asking_for_a_multiple_names_the_real_reason(self):
+        out = webapp.api_comps({"tickers": "LEA,MGA", "metric": "ev_ebitda"})
+        self.assertFalse(out["ok"])
+        self.assertIn("市值", out["error"])
+        self.assertIn("has_prices=False", out["error"])
+        self.assertNotIn("不支持的指标", out["error"], "又拿「不支持」糊弄人了")
+
+    def test_cross_market_multiple_is_refused_for_the_market_reason(self):
+        """源有行情、但跨市场 —— 理由应该是**市场**，不是缺价。"""
+        from datasources import sec_edgar
+        with mock.patch.object(sec_edgar, "HAS_PRICES", True):
+            out = webapp.api_comps({"tickers": "LEA,MGA", "metric": "ev_ebitda",
+                                    "target_unit": "人民币千元"})
+        self.assertFalse(out["ok"])
+        self.assertIn("跨市场", out["error"])
+        self.assertIn("同市场", out["error"])
+
+    def test_same_market_multiple_says_the_wire_is_missing(self):
+        """有行情、同市场 —— 这时才该说"路径还没接上"（诚实的第三种情形）。"""
+        from datasources import sec_edgar
+        with mock.patch.object(sec_edgar, "HAS_PRICES", True), \
+             mock.patch.object(sec_edgar, "MARKET", "us"):
+            out = webapp.api_comps({"tickers": "LEA,MGA", "metric": "ev_ebitda",
+                                    "target_market": "us", "target_currency": "USD"})
+        self.assertFalse(out["ok"])
+        self.assertIn("还没接上", out["error"])
+
+
 if __name__ == "__main__":
     unittest.main()

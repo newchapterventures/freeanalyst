@@ -65,6 +65,13 @@ CACHE_TTL = 24 * 3600  # 一天
 MARKET = "us"
 CURRENCY = "USD"
 
+#: 这个源**有没有行情（价格/股数/市值）**。
+#: EDGAR 是**申报系统**：它收录公司自己报的财报，但**没有股价** ——
+#: 所以市值 / EV / EV·EBITDA 这类倍数在 EDGAR 上是**算不出来**的，不是"暂时没做"。
+#: 写成字段而不是一句说明，是为了让"为什么给不了倍数"这个答案
+#: **由源自己提供**（接了价格源的源把这个改成 True，接口那边不用改）。
+HAS_PRICES = False
+
 
 class SecEdgarError(RuntimeError):
     pass

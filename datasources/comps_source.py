@@ -94,6 +94,10 @@ class CompsSource(Protocol):
     name: str
     market: str
     currency: str
+    #: 这个源**能不能给出行情**（价格 / 股数 / 市值）。
+    #: `False` 时，任何需要市值的倍数（EV/EBITDA、P/E、P/B）都**算不出来** ——
+    #: 这时接口要**用源给出的这个理由**拒绝，而不是拿一句写死的说明搪塞。
+    has_prices: bool
 
     def available(self) -> tuple[bool, str]:
         """能不能用。返回 `(可用?, 说明)`。
