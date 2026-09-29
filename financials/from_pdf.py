@@ -207,6 +207,82 @@ def _known_names() -> list[str]:
     return [n for m in cn.MAPPINGS for n in m.names]
 
 
+#: `ingest/layout.py` 抽不到标签时填的占位串。**从那边 import，不另抄一份**
+#: —— 两处各写一份，改一处就会不同步。
+try:
+    from ingest.layout import _UNLABELED as _LABEL_PLACEHOLDER
+except ImportError:                                    # pragma: no cover
+    _LABEL_PLACEHOLDER = "〔此行没有标签〕"
+
+#: 布局解析出的行里**一行都认不出科目**时就回落到文字流。
+#:
+#: ## 为什么判据是「可映射行为 0」而不是「真标签为 0」（实测）
+#:
+#: 本行 `601628`（中国人寿）2025 年报第 89 页：科目名和金额**各占一行**，
+#: 于是 `ingest/layout.py` 的按行解析只能从数字行里收数字、认不出标签：
+#:
+#:     货币资金                 ← 这一行没有数字，攒成 pending 后没人接走
+#:     # # #                   ← 这一行只有数字 → 标签列填占位符
+#:
+#: 结果**抽到 21 行、20 行带值，科目映射 0 个** —— 表看着取到了，
+#: 其实一个科目都没认出来。
+#:
+#: ⚠️ **不能拿「标签列非空的行动数」当判据。** 现金流量表那几页的标签列里
+#: 混着附注编号残片（`45(1)` / `11(2)` 这类），它们不是空串，
+#: 会把「标签塌了」的页误判成正常页（实测：第 99/100/102 页各有 3–4 条这种残片，
+#: 于是回落不触发，现金流量表只映射出 5 行）。
+#: 「一行都认不出科目」才是真正说明标签列没抽到的证据。
+_MIN_MAPPABLE_ROWS = 1
+
+
+def _mappable_rows(rows: list[list[str]]) -> int:
+    """这些行里有几行能映射成统一概念 —— 只有这些行对下游有用。"""
+    n = 0
+    for r in rows:
+        if len(r) <= 2:
+            continue
+        lab = str(r[0] or "").strip()
+        if not lab or lab == _LABEL_PLACEHOLDER:
+            continue
+        if str(r[2] or "").strip() and cn.identify(lab)[0] is not None:
+            n += 1
+    return n
+
+
+def page_rows(pg) -> list[list[str]]:
+    """这一页的表格行 —— **抽不全时回落到文字流解析**。
+
+    两种触发情形（都是实测踩到的）：
+
+    1. **值列全空**：现代 A 股年报的三张表没有表格结构，科目名和金额糊成
+       一条文字流，`pdfplumber` 返回行但值列是空的（某 A 股广告公司 2025 年报
+       第 70 页：35 行、0 行带值）。
+    2. **标签列塌了**：科目名与金额**各占一行**，按行解析只收得到数字，
+       于是每一行的标签列都是空/占位符（中国人寿 2025 年报第 89/90 页，
+       以及中信证券年报第 176/177 页）。这种形态**每行都有值**，
+       所以旧的「值列全空」判据碰不到它 —— 表看着正常，科目映射却是 0 个。
+
+    两种情形都表现为**一行都认不出科目**（见 `_MIN_MAPPABLE_ROWS`），
+    所以判据统一成这一条。
+
+    回落**不能更差**：只有文字流解出来的可映射行**更多**时才采用，
+    否则保留原样（宁可照旧，也不要拿更碎的结果换掉能用的结果）。
+    """
+    from . import textflow
+
+    rows: list[list[str]] = []
+    for t in pg.usable_tables():
+        rows.extend(t)
+
+    if _mappable_rows(rows) >= _MIN_MAPPABLE_ROWS:
+        return rows
+
+    flow = textflow.parse_textflow(pg.text, _known_names())
+    if flow and _mappable_rows(flow) > _mappable_rows(rows):
+        return flow
+    return rows
+
+
 def _fill(st: stm.StatementSet, doc: ip.PdfDocument, lo: int, hi: int,
           kind: str = "") -> None:
     """把 `lo`–`hi` 页里属于这张表的行填进来。
@@ -214,9 +290,6 @@ def _fill(st: stm.StatementSet, doc: ip.PdfDocument, lo: int, hi: int,
     `kind` 是 `balance` / `income` / `cash_flow` —— 用来**挡住串表**。
     留空则不挡（老行为）。
     """
-    from . import textflow
-
-    names = _known_names()
     #: 每个字段见过的所有取值 —— `(值, 页码, 该页是不是合并报表)`
     seen: dict[object, list[tuple[float, int, bool]]] = {}
     #: 被挡掉的（别的表的）科目，按字段计数 —— 只报数，不刷屏
@@ -229,19 +302,7 @@ def _fill(st: stm.StatementSet, doc: ip.PdfDocument, lo: int, hi: int,
         # 这一页像不像**合并**报表 —— 母公司表不会有「归属于母公司」「少数股东权益」
         consolidated = ("归属于母公司" in pg.text or "少数股东权益" in pg.text)
 
-        rows_out: list[list[str]] = []
-        for t in pg.usable_tables():
-            rows_out.extend(t)
-
-        # **表格抽出来的行「值列全空」时，回落到文字流解析。**
-        # 现代 A 股年报的三张表没有表格结构，科目名和金额糊成一条文字流：
-        #     货币资金 2,826,966,781.73 2,779,185,080.64 结算备付金拆出资金
-        # pdfplumber 会返回行，但值列是空的（实测某 A 股广告公司 2025 年报第 70 页：
-        # 35 行，0 行带值）。不回落的话整张表看起来「存在但其实没有数」。
-        if not any(len(r) > 2 and str(r[2] or "").strip() for r in rows_out):
-            flow = textflow.parse_textflow(pg.text, names)
-            if flow:
-                rows_out = flow
+        rows_out: list[list[str]] = page_rows(pg)
 
         for row in rows_out:
             if len(row) < 4:

@@ -174,16 +174,14 @@ class PageScore:
 
 
 def _page_rows(pg) -> list[list[str]]:
-    """这一页抽出来的表行（和 `from_pdf._fill` 用同一套抽取）。"""
-    rows: list[list[str]] = []
-    for t in pg.usable_tables():
-        rows.extend(t)
-    if not any(len(r) > 2 and str(r[2]).strip() for r in rows):
-        from . import textflow
-        flow = textflow.parse_textflow(pg.text, textflow.known_names())
-        if flow:
-            rows = flow
-    return rows
+    """这一页抽出来的表行（和 `from_pdf._fill` 用**同一套**抽取）。
+
+    ⚠️ 必须是同一个函数：打分和取值若用两套抽取，
+    就会出现「按 A 打分选中了这页、按 B 取值取不到东西」这种自相矛盾。
+    """
+    from .from_pdf import page_rows
+
+    return page_rows(pg)
 
 
 def _row_count(pg) -> int:
