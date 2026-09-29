@@ -25,6 +25,19 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import webapp  # noqa: E402
 
+#: 请求本机服务时**必须绕过环境里的代理**。
+#: 实测踩到：带着 `HTTPS_PROXY=…` 跑全套，这一类 10 项全红 —— 报 `HTTP Error 502`，
+#: 因为代理把 `127.0.0.1` 也代理走了（本机请求本该直连）。
+#: **这不是被测代码的错**，是测试依赖了环境变量：
+#: 一个在正常环境（比如用户开着 Clash）里就会喊狼来了的测试，比没有测试更坏。
+#: 「本机自检绕过代理」本来就是本项目的既有做法，这里只是补上。
+_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
+def _open(url, timeout=10):
+    """本机请求的 opener —— 不吃 http_proxy / HTTPS_PROXY / all_proxy。"""
+    return _OPENER.open(url, timeout=timeout)
+
 REPO = Path(__file__).resolve().parent.parent
 FITBIT = REPO / "materials" / "fitbit-2016-10k"
 
@@ -305,15 +318,15 @@ class TestHttpLayer(unittest.TestCase):
         req = urllib.request.Request(
             self._url(path), data=json.dumps(payload).encode(),
             headers={"Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=60) as r:
+        with _open(req, timeout=60) as r:
             return json.loads(r.read().decode())
 
     def test_health(self):
-        with urllib.request.urlopen(self._url("/api/health"), timeout=10) as r:
+        with _open(self._url("/api/health"), timeout=10) as r:
             self.assertTrue(json.loads(r.read().decode())["ok"])
 
     def test_index_serves_the_page(self):
-        with urllib.request.urlopen(self._url("/"), timeout=10) as r:
+        with _open(self._url("/"), timeout=10) as r:
             body = r.read().decode()
             self.assertEqual(r.status, 200)
             self.assertIn("本地估值向导", body)
@@ -321,7 +334,7 @@ class TestHttpLayer(unittest.TestCase):
 
     def test_health_advertises_endpoints(self):
         """健康检查要自报家门 —— 页面据此发现「服务是旧进程」。"""
-        with urllib.request.urlopen(self._url("/api/health"), timeout=10) as r:
+        with _open(self._url("/api/health"), timeout=10) as r:
             d = json.loads(r.read().decode())
         self.assertTrue(d["ok"])
         self.assertIn("pick", d["endpoints"])
@@ -336,7 +349,7 @@ class TestHttpLayer(unittest.TestCase):
         self.assertIn('feats.indexOf("percent-unit")', page)
 
     def test_doc_page_is_served(self):
-        with urllib.request.urlopen(self._url("/doc"), timeout=10) as r:
+        with _open(self._url("/doc"), timeout=10) as r:
             body = r.read().decode()
         self.assertEqual(r.status, 200)
         self.assertIn("说明文件", body)
