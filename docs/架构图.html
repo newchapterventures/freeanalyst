@@ -137,7 +137,7 @@
     </div>
     <div class="c">
       <div class="k">承诺二</div>
-      <div class="v">默认零出境</div>
+      <div class="v">默认材料不出本机</div>
       <div class="x">全项目唯一网络出口是 <code>guard.py</code>，只放行 localhost；要发云端需<b>按次授权</b>，每次留痕。</div>
     </div>
     <div class="c">
@@ -306,7 +306,7 @@
       </div>
       <div class="note">
         当前入口是 CLI：<code>ingest</code> / <code>ask</code> / <code>models</code> / <code>audit</code> / <code>doctor</code>。三条入口命令之外还有 <code>value.py</code>（估值）与 <code>early_cli.py</code>（早期项目）。<br>
-        <b>数据缺口清单是强制的，不是可选项。</b>而公开域审计日志里只有公开查询词，所以<b>可以直接拿给人看</b> —— 这才是"数据不出境"的可证明形式：不是承诺，是一份可核查的记录。
+        <b>数据缺口清单是强制的，不是可选项。</b>而公开域审计日志里只有公开查询词，所以<b>可以直接拿给人看</b> —— 这才是"材料不出本机"的可证明形式：不是承诺，是一份可核查的记录。
       </div>
     </div>
   </div>
@@ -321,11 +321,17 @@
   <div class="gaps">
     <div class="h">已知缺口（写进 README，没有掩饰）</div>
     <ul>
-      <li><b>EDGAR 没有股价</b> → 市值 / EV 算不出 → EV/EBITDA 倍数用不了（Roadmap 第一优先）</li>
-      <li><b>A 股 / 港股数据源未接</b>（AKShare / Tushare 待接入）</li>
+      <li><b>EDGAR 没有股价</b> → 市值 / EV 算不出 → EV/EBITDA 倍数用不了
+          <span class="mut">（2026-09-29：价格源专项在建 —— 见下方「市场覆盖」）</span></li>
+      <li><b>A 股 / 港股数据源未接</b>
+          <span class="mut">（2026-09-29：作为「覆盖中/美/港」专项在推 —— 市场层已落地
+          （<code>webapp._comps_scope</code>：源自己声明市场与币种、跨市场分级放行），
+          中/港财务与价格两条线在建）</span></li>
       <li><b>检索是纯 BM25</b>，无向量召回；跨语言只到词汇，不到语义</li>
       <li><b>OCR 仅 macOS</b>（Linux 上会明确报"跑不了 OCR"并说明原因）；<code>.docx</code> 未做</li>
-      <li><b>网页交互只有 mockup</b>：六步向导未实现 —— 这一步不做，三个互动环节落不了地</li>
+      <li><b>六步向导已落地 5 步</b>：1 载入材料 · 2 提取核对 · 4 可比公司 · 5 假设清单 · 6 结论
+          <span class="mut">（2026-09-29 前这里是"只有 mockup"）。第 3 步「行业建议」仍未接入 ——
+          它依赖模型，形态待定。</span></li>
     </ul>
   </div>
 

@@ -1,6 +1,6 @@
 """出网闸门的自测 —— 这是这个项目最重要的测试。
 
-它证明"数据零出境"不是口号，是可验证的事实。
+它证明"材料不出本机"不是口号，是可验证的事实。
 
 设计原则：如果这个测试失败，项目就不该发布。
 """
@@ -178,7 +178,7 @@ class TestCloudConsent(unittest.TestCase):
         self.assertIn("没有授权", rec[0]["reason"])
 
     def test_loopback_needs_no_consent(self) -> None:
-        """本地模型永远不用授权 —— 零出境是默认状态。"""
+        """本地模型永远不用授权 —— 材料不出本机是默认状态。"""
         try:
             guard.guarded_request("http://127.0.0.1:11434/api/chat", data=b"{}",
                                   purpose="本地推理")
