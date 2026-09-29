@@ -84,6 +84,79 @@ _MARKERS: dict[str, tuple[tuple[str, ...], ...]] = {
 }
 
 
+#: **英文（IFRS / 港交所英文版 / 纯英文年报）** 的标志组合 —— 与 `_MARKERS` 同构。
+#:
+#: ## 为什么是**另开一张表**，而不是往 `_MARKERS` 里添词（实测踩到）
+#:
+#: 一份 379 页的**纯英文年报**（中国再保险 2024，港交所披露）**三张表一行都没定位到**：
+#: 逐页打分，389 / 379 页的三类分**全是 0** —— 词表全是简体中文，
+#: 英文页一个字都命中不了。真表其实就在：
+#:
+#:     利润表        P153  Consolidated Statement of Profit or Loss
+#:     资产负债表    P155–157（P155 资产 / P156 负债 / P157 权益合计）
+#:     现金流量表    P160–161
+#:
+#: **但不能把英文词直接塞进 `_MARKERS` 的组里**：分是「命中组数 × 100」，
+#: 塞进去**组数就变了**，中文材料的分也跟着漂 —— 等于拿那七份已测材料的定位去赌。
+#: 所以英文单算一套，最后**两类取大者**（见 `signature`）：
+#: 纯中文材料英文词一条都不命中，分数**一分不动**；英文材料才拿得到分。
+#:
+#: 组的设计和中文侧一一对应：三组「标志 + 明细 + 更细」，光命中一组不给分
+#: （`_group_score` 里 `g_hit >= 2`），现金流量表同样要求**三条活动净额 + 期初/期末滚存**。
+_MARKERS_EN: dict[str, tuple[tuple[str, ...], ...]] = {
+    "balance": (
+        ("total assets", "total liabilities", "total equity", "net assets",
+         "total liabilities and equity"),
+        ("current assets", "non-current assets", "current liabilities",
+         "non-current liabilities", "net current assets",
+         "total assets less current liabilities",
+         "total equity attributable to equity shareholders"),
+        ("cash and cash equivalents", "cash and bank balances",
+         "trade receivables", "inventories", "property, plant and equipment",
+         "loans and advances", "insurance contract liabilities",
+         "insurance contract assets", "reinsurance contract assets",
+         "financial investments", "notes and bonds payable", "share capital",
+         "retained earnings"),
+    ),
+    "income": (
+        ("operating income", "insurance revenue", "total income", "revenue",
+         "total revenue", "turnover", "interest income", "investment income"),
+        ("profit before tax", "profit before taxation", "net profit",
+         "profit for the year", "profit for the period", "loss for the year",
+         "operating profit", "profit from operations"),
+        ("insurance service expenses", "operating expenses",
+         "administrative expenses", "cost of sales", "finance costs",
+         "income tax"),
+    ),
+    "cash_flow": (
+        ("net cash flows generated from operating activities",
+         "net cash flows used in operating activities",
+         "net cash generated from operating activities",
+         "net cash used in operating activities",
+         "net cash flows from operating activities",
+         "net cash provided by operating activities"),
+        ("net cash flows used in investing activities",
+         "net cash flows generated from investing activities",
+         "net cash used in investing activities",
+         "net cash flows from investing activities",
+         "net cash provided by investing activities"),
+        ("net cash flows generated from financing activities",
+         "net cash flows used in financing activities",
+         "net cash used in financing activities",
+         "net cash flows from financing activities",
+         "net cash provided by financing activities"),
+        ("cash and cash equivalents at the beginning of the year",
+         "cash and cash equivalents at beginning of year",
+         "cash and cash equivalents at the beginning of the period",
+         "cash and cash equivalents at beginning of period"),
+        ("cash and cash equivalents at the end of the year",
+         "cash and cash equivalents at end of year",
+         "cash and cash equivalents at the end of the period",
+         "cash and cash equivalents at end of period"),
+    ),
+}
+
+
 #: **必备明细行** —— 命中不足就把这一类的分归零。
 #:
 #: ## 为什么（实测踩到，四家上市年报全栽在这里）
@@ -125,11 +198,50 @@ _PARENT_PENALTY = 60
 #: 分部报告表里恰好有更多能命中的科目词（保险服务收入、营业收入合计…），
 #: 而真表页的科目（保险服务收入 / 赔付支出 / 承保财务损益）**不在词表里**。
 #: 被误选的那两页页首写的是「四、分部报告（续）」—— **页首这几个字是最硬的区分点**。
-_SEGMENT_TITLE = re.compile(r"分部报告|分部間|分部利润|分部分析|分部資料")
+_SEGMENT_TITLE = re.compile(r"分部报告|分部間|分部利润|分部分析|分部資料"
+                            r"|segment information|segment results", re.IGNORECASE)
 _SEGMENT_PENALTY = 80
 #: 只在页首这个长度内找"分部"字样：**页首出现才是这张表本身**，
 #: 正文里顺带提一句「分部」不该被扣分（不然会误伤真表）。
 _SEGMENT_HEAD = 200
+
+
+#: 「管理层讨论与分析」里的**变动分析表**（有「解释列」的那种）—— 同样**只扣分**。
+#:
+#: ## 实测（中信证券 2024 年报，389 页，公开披露）
+#:
+#: 资产负债表被定到 **P40（278 分）**，而那一页是 MD&A 的**资产结构变动分析表**：
+#: 表头是「项目名称 | 本期期末数 | 上期期末数 | 占总资产比例 | 较上期期末变动比例 |
+#: **情况说明**」，行是**散文**（`代理承销证券款 不适用 未结算代理承销款减少`）——
+#: 没有解释列以外的任何表结构。真表（「中信证券股份有限公司 合并资产负债表」，
+#: 带「本集团 / 附注五 / 金额单位均为人民币元」）在 **P176–177，277 分**，
+#: **只差 1 分**。同一份材料的利润表也被定在 P37（380 分，同样是变动分析表：
+#: 「科目 | 本期数 | 上年同期数 | 变动比例 | **主要变动原因**」），
+#: 真表「合并利润表」在 P182（304 分）。
+#:
+#: ## 判据：**页首出现「解释列」的表头**
+#:
+#: 真报表**没有解释列** —— 表头里不该有「情况说明 / 变动原因 / 变动比例」这类词。
+#: 这些词正是 MD&A 变动分析表的**栏名**，而且只出现在页首那一行表头里。
+#: 只扣分、不加分（理由同 `_SEGMENT_TITLE`）：扣分只会把可疑页压下去，
+#: 不会把「引用数字的概览页」抬上来。
+#:
+#: ⚠️ 这条**不是**「按页首表题锁锚点」那条老路（那条修好中信、误伤平安，
+#: 三条变体都分不开，已回退，见 `_title_pages`）—— 这里**不设任何允许页集合**，
+#: 只对命中「解释列表头」的页减分。
+#:
+#: ## 实测补充：英文年报里同一类错（中国再保险 2024，379 页）
+#: 利润表被定到 **P25（436 分）** —— 那是「**管理层讨论与分析 · 财务分析**」里的
+#: 分部关键数据表（页首 `MANAGEMENT DISCUSSION AND ANALYSIS / Financial Analysis
+#: / … Change (%)`），行名列的也是同一批科目名（保险收入 / 利息收入 / … / 净利润）；
+#: 真表 P153（`CONSOLIDATED STATEMENT OF PROFIT OR LOSS`，412 分）。
+#: 所以把**英文的 MD&A 页首标志**也并进来（`change (%)` 是这类表的**变动率列名**）。
+_MDA_CHANGE_TITLE = re.compile(
+    "情况说明|变动原因|变动比例|变动情况|主要原因"
+    "|management discussion and analysis|change \\(%\\)", re.IGNORECASE)
+_MDA_CHANGE_PENALTY = 100
+#: 只看页首 —— 「解释列」是表头的一部分（实测两处都在页首 90 字内）。
+_MDA_HEAD = 300
 
 
 _REQUIRED: dict[str, tuple[str, tuple[str, ...], int]] = {
@@ -141,20 +253,35 @@ _REQUIRED: dict[str, tuple[str, tuple[str, ...], int]] = {
          "购建固定资产", "取得借款收到的现金", "偿还债务支付的现金",
          "分配股利、利润或偿付利息支付的现金", "收到的其他与经营活动有关的现金",
          "Cash generated from operations", "Cash received from customers",
-         "Payments to suppliers", "Payments to employees"),
+         "Payments to suppliers", "Payments to employees",
+         # 英文年报（IFRS）的常见写法 —— 与上面四条同义，实测中国再保险年报用
+         # `Cash generated from operations` / `Income tax paid` /
+         # `Interest received` / `Purchases of property and equipment...`。
+         "Income tax paid", "Interest received", "Dividends received",
+         "Purchases of investments", "Proceeds from disposal of investments"),
         3,
     ),
     "balance": (
         "明细行",
         ("货币资金", "应收账款", "存货", "固定资产", "应付账款", "短期借款",
-         "预付款项", "其他应收款", "应付职工薪酬", "应交税费"),
+         "预付款项", "其他应收款", "应付职工薪酬", "应交税费",
+         # 英文侧同义写法（实测中国再保险年报：资产「Cash and short-term time
+         # deposits / Financial investments / Insurance contract assets」、
+         # 负债「Insurance contract liabilities / Notes and bonds payable」）
+         "Cash and cash equivalents", "Cash and bank balances",
+         "Trade receivables", "Inventories", "Property, plant and equipment",
+         "Loans and advances", "Insurance contract liabilities",
+         "Insurance contract assets", "Financial investments"),
         3,
     ),
     "income": (
         "明细行",
         ("营业成本", "税金及附加", "销售费用", "管理费用", "研发费用",
          "财务费用", "资产减值损失", "信用减值损失", "其他收益",
-         "Cost of Sales", "Gross Profit", "Operating Expenses"),
+         "Cost of Sales", "Gross Profit", "Operating Expenses",
+         # 英文侧（保险公司报表：收入段与费用段的标志行）
+         "Insurance revenue", "Insurance service expenses",
+         "Administrative expenses", "Finance costs", "Interest income"),
         2,
     ),
 }
@@ -193,6 +320,32 @@ def _row_count(pg) -> int:
     return n
 
 
+def _has(text: str, low: str, key: str) -> bool:
+    """这个标志词在不在这一页里。
+
+    **英文词按小写比对**（`low` 是整页文本的小写副本）。实测英文年报里同一个词
+    有好几种大小写写法：中国再保险用句首大写（`Total assets` / `Net cash flows
+    generated from operating activities`），词表若写死一种就漏。
+    中文词的比对**一字未改**（中文没有大小写，`lower()` 是恒等）。
+    """
+    return key.lower() in low if key.isascii() else key in text
+
+
+def _group_score(text: str, groups: tuple[tuple[str, ...], ...]) -> int:
+    """命中的**组数** × 100 + 命中的**科目数**。组数不足 2 不给分。
+
+    （原来这段写死在 `signature` 里；英文词表要单独算一套，才拆出来。）
+    """
+    g_hit = 0
+    n_hit = 0
+    for g in groups:
+        hits = sum(1 for m in g if m in text)
+        if hits:
+            g_hit += 1
+            n_hit += hits
+    return g_hit * 100 + n_hit if g_hit >= 2 else 0
+
+
 def signature(text: str, rows: int = 0) -> dict[str, int]:
     """这一页对每类报表的「证据分」。
 
@@ -211,6 +364,12 @@ def signature(text: str, rows: int = 0) -> dict[str, int]:
     「讨论」现金流量表的三个数，所以三条净额行一条不少，词面上比真表还全。
 
     **区分点不是词，是有没有「真表才有的明细行」**（见 `_REQUIRED`）。
+
+    ## ⚠️ 中文词表与英文词表**各算一套，取大者**（实测踩到）
+
+    纯英文年报（中国再保险 2024）用中文词表**每页都是 0 分** —— 三张表一行都定位不到。
+    但把英文词并进中文词表会**改动组数**，而分 = 组数 × 100，中文材料的分就跟着漂。
+    所以两张表各算一次，**取大者**：不含英文词的页，中文那套的分一分不动。
     """
     if text:
         from . import canonical as cn
@@ -224,15 +383,11 @@ def signature(text: str, rows: int = 0) -> dict[str, int]:
         return {k: 0 for k in _MARKERS}
 
     out: dict[str, int] = {}
+    low = text.lower()          # 只给英文词表用（中文页里英文词一条也不命中）
     for kind, groups in _MARKERS.items():
-        g_hit = 0
-        n_hit = 0
-        for g in groups:
-            hits = sum(1 for m in g if m in text)
-            if hits:
-                g_hit += 1
-                n_hit += hits
-        score = g_hit * 100 + n_hit if g_hit >= 2 else 0
+        # 中文/繁体一套，英文一套 —— **取大者**（原因见上面第三段）。
+        score = max(_group_score(text, groups),
+                    _group_score(low, _MARKERS_EN[kind]))
         if not score:
             out[kind] = 0
             continue
@@ -262,6 +417,13 @@ def signature(text: str, rows: int = 0) -> dict[str, int]:
         if _SEGMENT_TITLE.search(text[:_SEGMENT_HEAD]):
             score -= _SEGMENT_PENALTY
 
+        # **MD&A 的「变动分析表」也要扣分**（实测中信证券：它 278 分、真表 277 分）。
+        # 判据是页首的「解释列」栏名（情况说明 / 变动原因 / 变动比例），
+        # 真报表没有解释列。同样是**只扣分**，不设允许页集合。
+        # 详见 `_MDA_CHANGE_TITLE`。
+        if _MDA_CHANGE_TITLE.search(text[:_MDA_HEAD]):
+            score -= _MDA_CHANGE_PENALTY
+
         # **明细行加权加分 —— 不归零。**
         #
         # 原先这里是**硬门槛**（命中不足就把分归零）。结果在**文字层被打碎**
@@ -275,7 +437,7 @@ def signature(text: str, rows: int = 0) -> dict[str, int]:
         sub = _REQUIRED.get(kind)
         if sub is not None:
             _need, keys, _min = sub
-            score += _SUBSIDIARY_WEIGHT * sum(1 for k in keys if k in text)
+            score += _SUBSIDIARY_WEIGHT * sum(1 for k in keys if _has(text, low, k))
         out[kind] = score
     return out
 
