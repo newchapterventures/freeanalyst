@@ -508,6 +508,55 @@ _EQUITY_TAGS = (
     "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest",
 )
 
+# ---------------------------------------------------------------------------
+# 净债务（算 EV 用）—— **这组标签的选择直接决定倍数的大小**，所以逐条写清理由
+# ---------------------------------------------------------------------------
+#
+# ## 定义（本项目采用的、会公开写在依据里的口径）
+#
+#     净债务 = 有息负债 − 现金类
+#     有息负债 = 短期债务 + 长期债务 + **融资租赁**负债
+#     现金类   = 现金及现金等价物 + 短期投资
+#
+# ## 逐条的理由
+#
+# · **含融资租赁**：它是实打实的付息义务 —— 融资租赁 = 借钱买东西。
+# · **不含经营租赁**：US GAAP（ASC 842）把经营租赁也上表，但市场做 EV 时
+#   通常不把它算进债务（口径不统一，所以这里选了保守的一边，并在依据里明说）。
+# · **含短期投资**：可快速变现、性质接近现金（这是常见做法，但**不是唯一做法**）。
+# · **衍生品、递延税、应付账款一律不算** —— 它们不是融资性负债。
+#
+# ⚠️ **长期债务的两套写法只能取一套**：有的公司报 `LongTermDebt`（合计），
+#    有的拆成 `LongTermDebtCurrent` + `LongTermDebtNoncurrent`（流动/非流动）。
+#    两套都加会**双计**，倍数直接算错 —— 取数时优先用合计，合计没有才用拆分。
+#
+# ⚠️ **取不到就报缺，不许拿 0 填**：把缺失当成"没有债务"会**系统性低估 EV**，
+#    而且从数字上看不出来 —— 这正是本项目最不许出现的那类错。
+_DEBT_TOTAL_TAGS = ("LongTermDebt",)
+_DEBT_CURRENT_TAGS = (
+    "LongTermDebtCurrent",
+    "DebtCurrent",
+    "ShortTermBorrowings",
+    "NotesPayableCurrent",
+    "CommercialPaper",
+)
+_DEBT_NONCURRENT_TAGS = ("LongTermDebtNoncurrent", "LongTermNotesPayable")
+_FINANCE_LEASE_TAGS = ("FinanceLeaseLiability", "FinanceLeaseLiabilityNoncurrent",
+                       "FinanceLeaseLiabilityCurrent",
+                       "CapitalLeaseObligations", "CapitalLeaseObligationsNoncurrent",
+                       "CapitalLeaseObligationsCurrent")
+_CASH_TAGS = (
+    "CashAndCashEquivalentsAtCarryingValue",
+    "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents",
+    "CashAndDueFromBanks",
+)
+_SHORT_INVEST_TAGS = (
+    "ShortTermInvestments",
+    "AvailableForSaleSecuritiesDebtSecuritiesCurrent",
+    "MarketableSecuritiesCurrent",
+    "OtherShortTermInvestments",
+)
+
 
 @dataclass
 class DerivedLine:
@@ -706,4 +755,93 @@ def equity_of(facts: dict, end: str, unit: str = "USD") -> DerivedLine | None:
     return DerivedLine(
         name="所有者权益", value=obs.value, tag=tag, observation=obs,
         note=f"来自 XBRL 标签 {tag}（时点 {end}，申报 {obs.filed}）。",
+    )
+
+
+def derive_ebit(facts: dict, end: str, unit: str = "USD") -> DerivedLine | None:
+    """取 EBIT —— **用营业利润代替**（EDGAR 里没有统一的 EBIT 标签）。
+
+    这不是猜：EBIT（息税前利润）与营业利润只差**利息与营业外收支**那一层。
+    但两者**不总是相等**，所以 note 里明说"用营业利润代替"，
+    免得有人把这个数拿去和别处口径的 EBIT 直接比。
+    """
+    hit = _first_available(facts, _OPERATING_INCOME_TAGS, end, unit, "annual")
+    if hit is None:
+        return None
+    obs, tag = hit
+    return DerivedLine(
+        name="EBIT（用营业利润代替）", value=obs.value, tag=tag, observation=obs,
+        note=f"来自 XBRL 标签 {tag}（期末 {end}，申报 {obs.filed}）——"
+             f"**EDGAR 没有统一的 EBIT 标签，这里用营业利润代替**，"
+             f"与别处口径的 EBIT 可能差利息与营业外收支。",
+    )
+
+
+def _instant_at(facts: dict, tags: tuple[str, ...], end: str, unit: str):
+    """在**指定时点**取第一个有值的标签。时点科目用 duration=None。"""
+    for tag in tags:
+        hits = [o for o in extract_series(facts, tag, unit, duration=None)
+                if o.end == end]
+        if hits:
+            return hits[-1], tag
+    return None, ""
+
+
+def net_debt_of(facts: dict, end: str, unit: str = "USD") -> DerivedLine | None:
+    """净债务 = 有息负债 − 现金类（口径见 `_DEBT_*` 那一节的逐条理由）。
+
+    ## 三条不能破的规矩
+    1. **长期债务的两套写法只取一套** —— `LongTermDebt`（合计）优先，
+       没有合计才用 `LongTermDebtCurrent` + `LongTermDebtNoncurrent`。
+       两套都加会**双计**，倍数直接算错。
+    2. **取不到就返回 None，绝不拿 0 填** —— 把缺失当成「没有债务」
+       会**系统性低估 EV**，而且从数字上看不出来。
+    3. **返回值里带组成** —— 净债务是"口径决定结果"的东西，
+       note 里把每一项的来源与金额都写出来，让人能逐项核对，
+       而不是只看到一个合计数。
+    """
+    parts: list[str] = []
+    total = 0.0
+
+    # ① 长期债务：合计优先，拆分次之（**不许两套都加**）
+    lt_hit, lt_tag = _instant_at(facts, _DEBT_TOTAL_TAGS, end, unit)
+    if lt_hit is not None:
+        total += lt_hit.value
+        parts.append(f"长期债务 {lt_hit.value:,.0f}（{lt_tag}）")
+    else:
+        for tags, label in ((_DEBT_CURRENT_TAGS, "一年内到期/短期"), 
+                            (_DEBT_NONCURRENT_TAGS, "非流动")):
+            hit, tag = _instant_at(facts, tags, end, unit)
+            if hit is not None:
+                total += hit.value
+                parts.append(f"{label} {hit.value:,.0f}（{tag}）")
+
+    # ② 融资租赁：付息义务，算进来
+    lease_hit, lease_tag = _instant_at(facts, _FINANCE_LEASE_TAGS, end, unit)
+    if lease_hit is not None:
+        total += lease_hit.value
+        parts.append(f"融资租赁 {lease_hit.value:,.0f}（{lease_tag}）")
+
+    # ③ 现金类：减掉
+    cash_hit, cash_tag = _instant_at(facts, _CASH_TAGS, end, unit)
+    if cash_hit is None:
+        return None                       # 没有现金 → 净债务算不出来，报缺
+    total -= cash_hit.value
+    parts.append(f"现金 {cash_hit.value:,.0f}（{cash_tag}）")
+    si_hit, si_tag = _instant_at(facts, _SHORT_INVEST_TAGS, end, unit)
+    if si_hit is not None:
+        total -= si_hit.value
+        parts.append(f"短期投资 {si_hit.value:,.0f}（{si_tag}）")
+
+    # 一个**债务类**科目都没取到 → 不做推断（可能是真无债，也可能是没报，分不开）
+    debt_parts = [p for p in parts if not p.startswith(("现金", "短期投资"))]
+    if not debt_parts:
+        return None
+
+    return DerivedLine(
+        name="净债务", value=total, tag="+".join(p.split("（")[-1].rstrip("）")
+                                                for p in parts),
+        observation=cash_hit,
+        note=f"口径：有息负债（含融资租赁）− 现金类。组成：{'；'.join(parts)}"
+             f"（时点 {end}）。**不含经营租赁、不含应付账款与递延税。**",
     )

@@ -235,13 +235,13 @@ def build_peer_stat(
 #
 # ## 能算什么、不能算什么（实测边界，不许含糊）
 #
-#   **能算**：P/E、P/B、市值/收入 —— 市值 = 基准日收盘价 × 股数，
-#   分母在同一份财报里，全都能追溯。
+#   **能算**：P/E、P/B、市值/收入；以及 **EV/EBITDA、EV/EBIT、EV/收入** ——
+#   后三个要先算 `EV = 市值 + 净债务`，净债务的口径见
+#   `sec_edgar.net_debt_of`（那里逐条写了哪些算进债务、哪些不算、以及为什么）。
 #
-#   **算不了**：EV/EBITDA、EV/EBIT、EV/收入 —— EV = 市值 + **净债务**，
-#   而 EDGAR 里没有统一的债务/现金科目口径（各家拆得不一样，有的把租赁、
-#   可转债拆成好几行）。**缺同行净债务时绝不用市值代替 EV** ——
-#   那是最不容易看出来的错：数字合理、结论全偏。
+#   **守得住的底线**：算净债务时**缺任何一类科目就报缺**，绝不拿 0 填 ——
+#   把缺失当成"没有债务"会**系统性低估 EV**，而且从数字上看不出来。
+#   每一家的净债务**组成**都会写进 `basis`，可以逐项核对。
 
 #: 每个市值指标的**分母**用哪套标签、是"期间"还是"时点"。
 #: 找期末必须按**这个指标自己的分母**去找 —— 见 `_latest_period_end` 的实测记录。
@@ -278,7 +278,20 @@ MULTIPLE_FUNCS: dict[str, tuple[str, str, object]] = {
     "pe": ("P / E", ".1f", se.net_income_of),
     "pb": ("P / B", ".2f", se.equity_of),
     "price_to_revenue": ("市值 / 营业收入", ".2f", se.derive_revenue),
+    # ── 需要企业价值（EV = 市值 + 净债务）────────────────────────────────
+    "ev_ebitda": ("EV / EBITDA", ".1f", se.derive_ebitda),
+    "ev_ebit": ("EV / EBIT", ".1f", se.derive_ebit),
+    "ev_revenue": ("EV / 营业收入", ".2f", se.derive_revenue),
 }
+
+#: 这些指标要**先算 EV**（市值 + 净债务），其余只用市值。
+EV_METRICS: frozenset[str] = frozenset({"ev_ebitda", "ev_ebit", "ev_revenue"})
+
+#: EV 类指标的**分母**用哪套标签找期末（和市值类同一个道理：按自己的分母找）。
+_DENOM_TAGS.update({
+    "ev_ebitda": (se._OPERATING_INCOME_TAGS, True),
+    "ev_ebit": (se._OPERATING_INCOME_TAGS, True),
+})
 
 
 def build_peer_multiples(
@@ -355,10 +368,24 @@ def build_peer_multiples(
             gaps.append(f"{name}：{as_of or '基准日'}或之前没有收盘价 —— "
                         f"**不回退到最新价**，这一家不计入")
             continue
-        values.append(bar.close * sh.value / denom.value)
+        market_cap = bar.close * sh.value
+        if metric in EV_METRICS:
+            nd = se.net_debt_of(facts, end, unit)
+            if nd is None:
+                gaps.append(f"{name}：算不出净债务（缺债务类科目或现金）—— "
+                            f"EV = 市值 + 净债务，**缺就不给**，不拿市值代替 EV")
+                continue
+            values.append((market_cap + nd.value) / denom.value)
+            sign = "＋" if nd.value >= 0 else "−"
+            basis.append(f"{name}：EV = 市值（股价 {bar.date} × 股数 "
+                         f"{sh.observation.end}）{sign} 净债务 {abs(nd.value):,.0f}"
+                         f" ÷ {denom.name}（期末 {end}）"
+                         f"\n      净债务口径：{nd.note.split('组成：')[-1]}")
+        else:
+            values.append(market_cap / denom.value)
+            basis.append(f"{name}：股价 {bar.date} × 股数 {sh.observation.end}"
+                         f" ÷ {denom.name}（期末 {end}）")
         labels.append(name)
-        basis.append(f"{name}：股价 {bar.date} × 股数 {sh.observation.end}"
-                     f" ÷ {denom.name}（期末 {end}）")
 
     tail = f"｜基准日 {as_of}" if as_of else ""
     return PeerStat(

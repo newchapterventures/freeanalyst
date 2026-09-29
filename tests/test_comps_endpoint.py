@@ -228,22 +228,19 @@ class TestMultiplesGate(unittest.TestCase):
         self.assertIn("跨市场", out["error"])
         self.assertIn("同市场", out["error"])
 
-    def test_ev_multiple_says_net_debt_is_the_missing_piece(self):
-        """同市场、也有价格源 —— EV 类仍然算不了，缺的是**同行的净债务**。
-
-        理由必须说到点上：说成"缺价格"会让人去接价格源（已经有了），
-        说成"暂时没做"会让人以为再写个函数就行。真因是
-        **EDGAR 没有统一的债务/现金科目口径**。
-        """
+    def test_ev_multiple_computes_with_net_debt(self):
+        """EV 类已经能算了 —— 前提是**净债务取得到**；取不到就记缺口。"""
         out = webapp.api_comps({"tickers": "LEA,MGA", "metric": "ev_ebitda",
                                 "target_market": "us", "target_currency": "USD",
                                 "as_of": "2025-06-30"})
-        self.assertFalse(out["ok"])
-        self.assertIn("净债务", out["error"])
-        self.assertIn("企业价值", out["error"])
-        self.assertIn("拿市值代替 EV", out["error"])
-        # 同时要告诉用户现在**能**算什么
-        self.assertIn("P / E", out["error"])
+        self.assertTrue(out["ok"], out.get("error"))
+        self.assertEqual(out["title"], "EV / EBITDA")
+        # 无论样本够不够，都**不许**静默把某一家丢掉：
+        # 每家要么在 rows 里，要么在 gaps 里
+        self.assertEqual(len(out["rows"]) + len(out["gaps"]), 2)
+        for b in out["basis"]:
+            self.assertIn("净债务", b)
+            self.assertIn("口径", b)
 
 
 if __name__ == "__main__":

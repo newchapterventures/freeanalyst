@@ -249,18 +249,9 @@ def api_comps(payload: dict) -> dict:
                 f"同行在{MARKET_NAME.get(se.MARKET, se.MARKET)} —— "
                 f"倍数各自绑定市场的指数与估值中枢，跨市场会带进方向不明的偏差。"
                 f"请用**同市场**同行，或改用基本面比率。")}
-        if metric in EV_MULTIPLES:
-            return {"ok": False, "error": (
-                f"「{MULTIPLE_METRICS[metric]}」需要**企业价值** —— "
-                f"EV = 市值 + **净债务**，而同行的净债务现在取不到："
-                f"EDGAR 没有统一的债务/现金科目口径（各家拆法不同，"
-                f"有的把租赁、可转债拆成好几行）。"
-                f"**拿市值代替 EV 会把倍数系统性算低**，所以这里不做，而不是做得不准。\n"
-                f"现在能算的是：{'、'.join(PRICE_MULTIPLES.values())}。"
-                f"要做 EV 类，得先把「同行净债务」的取数口径定下来（一件单独的事）。")}
-    is_multiple = metric in PRICE_MULTIPLES
+    is_multiple = metric in MULTIPLE_METRICS
     if not is_multiple and metric not in ad.METRIC_FUNCS:
-        usable = "、".join(list(ad.METRIC_FUNCS) + list(PRICE_MULTIPLES))
+        usable = "、".join(list(ad.METRIC_FUNCS) + list(MULTIPLE_METRICS))
         return {"ok": False, "error": f"不支持的指标：{metric}（可用：{usable}）"}
     years = int(payload.get("years") or 3)
     as_of = (payload.get("as_of") or "").strip() or None
@@ -285,7 +276,7 @@ def api_comps(payload: dict) -> dict:
         stat = ad.build_peer_multiples(
             [(cik, code, code) for cik, code in pairs],
             metric=metric, as_of=as_of, market=se.MARKET, unit=se.CURRENCY)
-        title, fmt = PRICE_MULTIPLES[metric], ad.MULTIPLE_FUNCS[metric][1]
+        title, fmt = MULTIPLE_METRICS[metric], ad.MULTIPLE_FUNCS[metric][1]
     else:
         stat = ad.build_peer_stat(pairs, metric=metric, years=years, as_of=as_of)
         _, title, fmt = ad.METRIC_FUNCS[metric]

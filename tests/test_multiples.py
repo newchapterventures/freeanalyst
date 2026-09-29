@@ -106,5 +106,61 @@ class TestMultiplesNeedAReferenceDate(unittest.TestCase):
         self.assertIn("必须有基准日", st.gaps[0])
 
 
+class TestNetDebt(unittest.TestCase):
+    """净债务的口径 —— 它**直接决定倍数的大小**，所以两条最要命的错得钉住。"""
+
+    def _f(self, *, total=None, current=None, noncurrent=None, cash=1000.0,
+           lease=None):
+        def inst(tag, val):
+            return {"units": {"USD": [{"end": "2024-12-31", "val": val,
+                                       "form": "10-K", "filed": "2025-02-01"}]}}
+        gaap = {}
+        if total is not None:
+            gaap[se._DEBT_TOTAL_TAGS[0]] = inst(se._DEBT_TOTAL_TAGS[0], total)
+        if current is not None:
+            gaap[se._DEBT_CURRENT_TAGS[0]] = inst(se._DEBT_CURRENT_TAGS[0], current)
+        if noncurrent is not None:
+            gaap[se._DEBT_NONCURRENT_TAGS[0]] = inst(se._DEBT_NONCURRENT_TAGS[0], noncurrent)
+        if lease is not None:
+            gaap[se._FINANCE_LEASE_TAGS[0]] = inst(se._FINANCE_LEASE_TAGS[0], lease)
+        if cash is not None:
+            gaap[se._CASH_TAGS[0]] = inst(se._CASH_TAGS[0], cash)
+        return {"facts": {"us-gaap": gaap}}
+
+    def test_total_and_split_are_never_both_counted(self):
+        """★ 两套长期债务写法都加了就是**双计** —— 倍数会直接算错。"""
+        both = self._f(total=500.0, current=100.0, noncurrent=400.0)
+        got = se.net_debt_of(both, "2024-12-31")
+        self.assertIsNotNone(got)
+        # 只认合计那套：500 − 1000 = −500（若双计会变成 −500 之外的错值）
+        self.assertEqual(got.value, -500.0)
+
+    def test_split_is_used_when_there_is_no_total(self):
+        split = self._f(current=100.0, noncurrent=400.0)
+        got = se.net_debt_of(split, "2024-12-31")
+        self.assertIsNotNone(got)
+        self.assertEqual(got.value, -500.0)
+
+    def test_missing_debt_is_reported_not_filled_with_zero(self):
+        """★ 一个债务科目都没有 → 返回缺（**绝不拿 0 当"无债"**）。
+
+        拿 0 填会**系统性低估 EV**，而且从数字上看不出来。
+        """
+        got = se.net_debt_of(self._f(cash=1000.0), "2024-12-31")
+        self.assertIsNone(got)
+
+    def test_missing_cash_is_reported(self):
+        got = se.net_debt_of(self._f(total=500.0, cash=None), "2024-12-31")
+        self.assertIsNone(got)
+
+    def test_composition_is_in_the_note(self):
+        """净债务是"口径决定结果"的东西 —— 必须能逐项核对。"""
+        got = se.net_debt_of(self._f(total=500.0, lease=50.0, cash=1000.0),
+                             "2024-12-31")
+        self.assertIn("组成", got.note)
+        self.assertIn("融资租赁", got.note)
+        self.assertIn("不含经营租赁", got.note)
+
+
 if __name__ == "__main__":
     unittest.main()
