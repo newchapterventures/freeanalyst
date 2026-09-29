@@ -302,11 +302,20 @@ class TestConnectionDrops(unittest.TestCase):
         finally:
             p.net.guarded_get = orig
 
-        self.assertEqual(len(attempts), 3, "必须重试 3 次才放弃")
+        # 钉**意图**，不钉死数字：策略允许调整（实测从 3 次加到 4 次），
+        # 但"必须重试多次才放弃"这条不能破 —— 一次失败就放弃会静默漏掉可比公司。
+        self.assertGreaterEqual(len(attempts), 3, "重试次数太少，一次断连就放弃了")
+        self.assertEqual(len(attempts), len(p._RETRY_WAITS) + 1,
+                         "重试次数与退避表不一致 —— 改了一处忘了另一处")
+        # 退避必须**递增**（抖动是 ±30%，所以只比大小关系）
+        waits = list(p._RETRY_WAITS)
+        self.assertEqual(waits, sorted(waits), "退避没有递增，限流时会越撞越糟")
+        self.assertGreater(waits[-1], waits[0] * 2, "最后一次退避没有明显变长")
         msg = str(cm.exception)
         self.assertIn("代码", msg)
         self.assertIn("网络", msg)
         self.assertIn("限流", msg)
+        self.assertIn("没有价格数据", msg, "必须写明：失败不等于没有数据")
 
     def test_succeeds_after_a_transient_drop(self):
         import http.client

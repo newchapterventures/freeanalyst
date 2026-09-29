@@ -57,6 +57,7 @@ from __future__ import annotations
 
 import http.client
 import json
+import random
 import time
 import urllib.parse
 from dataclasses import dataclass
@@ -79,7 +80,14 @@ US_PREFIXES = ("105", "106", "107")
 
 USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"
 
-_MIN_INTERVAL = 0.25
+#: 请求间隔（秒）。实测：4 次/秒时东财会**偶发掐连接**（同一次会话里同一支票
+#: 一个请求失败、下一个成功），降到 2.5 次/秒后明显变稳。
+#: 代价可接受：取 3 家同行约 6–9 个请求，合计 3–4 秒（前缀还有缓存）。
+_MIN_INTERVAL = 0.4
+
+#: 失败后的等待（秒）—— **指数退避 + 抖动**。
+#: 抖动是必要的：多个请求同时被限流时，固定间隔会让它们**一起**回来再一起撞墙。
+_RETRY_WAITS = (0.6, 1.5, 3.2)
 _last_call = [0.0]
 
 CACHE_DIR = Path(__file__).resolve().parent.parent / "cache" / "prices"
@@ -202,7 +210,8 @@ def _fetch_rows(secid: str, beg: str, end: str, adjust: int) -> list[str] | None
     url = f"{BASE}?{urllib.parse.urlencode(params)}"
 
     raw: bytes | None = None
-    for attempt in range(3):
+    attempts = len(_RETRY_WAITS) + 1
+    for attempt in range(attempts):
         _throttle()
         try:
             raw = net.guarded_get(
@@ -214,16 +223,18 @@ def _fetch_rows(secid: str, beg: str, end: str, adjust: int) -> list[str] | None
             )
             break
         except (OSError, http.client.HTTPException) as e:
-            if attempt == 2:
+            if attempt >= len(_RETRY_WAITS):
                 raise PriceError(
-                    f"查询 {secid} 时东财断开了连接，重试 3 次都没成功。\n"
+                    f"查询 {secid} 时东财断开了连接，重试 {attempts} 次都没成功。\n"
                     f"三种可能，请核实是哪一种：\n"
                     f"  1. 这个代码在东财不存在（实测不存在的代码会被直接掐连接）\n"
                     f"  2. 网络问题\n"
-                    f"  3. 请求被限流（当前限速 {1 / _MIN_INTERVAL:.0f} 次/秒）\n\n"
+                    f"  3. 请求被限流（当前限速 {1 / _MIN_INTERVAL:.1f} 次/秒）\n\n"
                     f"**不把它当成「没有价格数据」处理** —— 那会悄悄漏掉可比公司。"
                 ) from e
-            time.sleep(0.5 * (attempt + 1))
+            wait = _RETRY_WAITS[attempt]
+            # 抖动：±30%，避免几个请求退避后**同时**回来再一起撞限流
+            time.sleep(wait * (0.85 + 0.3 * random.random()))
     if raw is None:
         return None
 
