@@ -234,19 +234,48 @@ class TestMultiplesGate(unittest.TestCase):
         self.assertIn("未声明", out["error"])
         self.assertNotIn("不支持的指标", out["error"], "又拿「不支持」糊弄人了")
 
-    def test_cn_multiple_says_shares_are_the_missing_piece(self):
-        """★ A 股同行问倍数 —— 缺的是**股数**（要从盘口接口取，而那两个主机没开）。
+    def test_cn_multiple_asks_for_consent_before_fetching(self):
+        """★ A 股倍数现在**做得出来** —— 但先要问一句「同意吗」。
 
-        这条以前测的是"跨市场"那个理由；**接线之后跨市场的情形被路由消掉了**
-        （同行永远与标的同市场），所以这里改成钉真正的那个原因。
-        跨市场那道闸本身另有单测（`TestMarketScopeLayer`）。
+        以前这条钉的是"缺股数所以拒绝"。股数接上之后（主力腾讯盘口，
+        在按次授权名单里），没有同意时应返回 `needs_consent` ——
+        **不是**失败，**也不是**一个被 except 吞掉的缺口。
+
+        （实测踩到过第二种：`build_cn_peer_multiples` 里的 `except Exception`
+        把 `HostConsentRequired` 吞成了"缺口：取不到股数"，于是界面上
+        永远弹不出确认框 —— 机制看着在，其实一次都不会触发。）
         """
-        out = webapp.api_comps({"tickers": "600519,MGA", "metric": "ev_ebitda",
-                                "target_unit": "人民币千元"})
+        out = webapp.api_comps({"tickers": "600519", "metric": "pe",
+                                "target_market": "cn", "as_of": "2025-12-31"})
         self.assertFalse(out["ok"])
-        self.assertIn("股数", out["error"])
-        self.assertIn("白名单", out["error"])
-        self.assertIn("拍板", out["error"], "要明说这件事由用户决定")
+        self.assertIn("needs_consent", out, "★ 该问一句，而不是报失败")
+        nc = out["needs_consent"]
+        self.assertEqual(nc["host"], "qt.gtimg.cn", "主力源是腾讯")
+        self.assertTrue(nc["question"])
+        self.assertIn("这一次", nc["note"], "要说清这是**按次**的")
+        self.assertNotIn("error", out, "这不是失败")
+
+    def test_cn_ev_multiples_refused_because_the_fields_do_not_exist(self):
+        """EV 类要**净债务**和**折旧**，东财两个字段都没有 —— 如实不算。"""
+        out = webapp.api_comps({"tickers": "600519", "metric": "ev_ebitda",
+                                "target_market": "cn", "as_of": "2025-12-31",
+                                "consent": ["qt.gtimg.cn"]})
+        self.assertFalse(out["ok"])
+        self.assertIn("净债务", out["error"])
+        self.assertIn("折旧", out["error"])
+
+    def test_a_consent_for_a_host_we_never_offered_does_not_count(self):
+        """★ 安全相关：前端回传的主机名必须先在服务端名单里核过。
+
+        编一个名单外的名字，不是"用户同意了那个主机"，而是**没同意**。
+        """
+        got = webapp._host_consents(["evil.example.com", "qt.gtimg.cn"])
+        self.assertEqual([c.host for c in got], ["qt.gtimg.cn"])
+        self.assertEqual(webapp._host_consents(None), [])
+        self.assertEqual(webapp._host_consents("qt.gtimg.cn"), [],
+                         "字符串不算 —— 只认列表，免得'顺手传个假的'也过")
+        self.assertEqual(webapp._host_consents({"qt.gtimg.cn": 1}), [],
+                         "字典也不算")
 
     def test_ev_multiple_computes_with_net_debt(self):
         """EV 类已经能算了 —— 前提是**净债务取得到**；取不到就记缺口。"""

@@ -129,10 +129,10 @@ class PublicEgressBlocked(RuntimeError):
 
 #: 需要按次授权的主机 -> 给人看的用途说明（弹窗上要显示这个，不只显示主机名）
 CONSENT_HOSTS: dict[str, str] = {
-    "push2.eastmoney.com":
-        "取 A 股的「总股本」，用来算市值（市值 = 基准日收盘价 × 总股本）",
     "qt.gtimg.cn":
-        "备用取「总市值」，与当日现价相除得到股数",
+        "取 A 股「总市值」，与当日现价相除得到股数（算市值用的主力源）",
+    "push2.eastmoney.com":
+        "退路：取 A 股「总股本」（实测它从 Python 里一律拒连，成功率低，留着备用）",
 }
 
 

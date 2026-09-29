@@ -198,6 +198,44 @@ EV_MULTIPLES: dict[str, str] = {
 MULTIPLE_METRICS: dict[str, str] = {**PRICE_MULTIPLES, **EV_MULTIPLES}
 
 
+def _host_consents(raw: object, what: str = "") -> list:
+    """把前端回传的 `consent: ["host", …]` 变成 `net.HostConsent`。
+
+    ## 这里的规矩（安全相关，别松）
+    **只认服务端 `CONSENT_HOSTS` 里有的主机。** 前端只能**回声**服务端刚告诉过它的
+    主机名 —— 传一个名单外的名字，不是"用户同意了那个主机"，而是**没同意**。
+    所以：认不出来的直接跳过，并且**绝不自动补一个同意**（自动同意 == 没有这一层）。
+    """
+    if not isinstance(raw, (list, tuple)):
+        return []
+    import net
+    out = []
+    for h in raw:
+        host = str(h or "").strip().lower()
+        purpose = net.CONSENT_HOSTS.get(host)
+        if purpose is None:
+            continue
+        out.append(net.HostConsent(host=host, purpose=purpose, what=what))
+    return out
+
+
+def _needs_consent_payload(exc) -> dict:
+    """把 `HostConsentRequired` 变成界面上的一句问话。
+
+    注意这是**"在等一次点头"**，不是失败 —— 所以返回里给的是 `needs_consent`，
+    而不是 `error`。界面据此弹确认框。
+    """
+    return {
+        "ok": False,
+        "needs_consent": {
+            "host": exc.host,
+            "purpose": exc.purpose,
+            "question": f"要去 {exc.host} 取数：{exc.purpose} —— 同意吗？",
+            "note": "只对**这一次**有效；不写文件、不进环境变量。下一次取还会再问。",
+        },
+    }
+
+
 def api_comps(payload: dict) -> dict:
     """第 4 步 · 可比公司（**只做基本面对照**）。
 
@@ -265,20 +303,35 @@ def api_comps(payload: dict) -> dict:
 
     if is_cn:
         # ── A 股同行：东财 datacenter（六位代码直接查，没有 CIK 这一层）──────
-        if is_multiple:
-            return {"ok": False, "error": (
-                "A 股同行的**倍数**还算不了：倍数要先有市值，而市值 = 基准日股价 × "
-                "**股数**；A 股的股数要从盘口接口取（东财 push2 的 f84、或腾讯的"
-                "总市值÷现价），那两个主机**没在公开域白名单里** —— "
-                "要不要开是安全面的决定，**由你拍板**，不擅自加。\n"
-                f"现在能算的是：{'、'.join(ad.CN_METRIC_FUNCS)}。")}
-        if metric not in ad.CN_METRIC_FUNCS:
-            return {"ok": False, "error": (
-                f"指标「{metric}」是美股那套；A 股同行能算的是："
-                f"{'、'.join(ad.CN_METRIC_FUNCS)}。"
-                f"（两边口径不同 —— A 股没有 EBITDA 率，因为东财没有折旧字段。）")}
-        stat = ad.build_cn_peer_stat(tickers, metric=metric, years=years, as_of=as_of)
-        _, title, fmt = ad.CN_METRIC_FUNCS[metric]
+        # 倍数还差一样东西：**股数**。它来自盘口主机，而那个主机在**按次授权**名单里，
+        # 所以整段包在 `net.host_consent(...)` 里 —— 前端点了"同意"才带得进来。
+        import net
+        consents = _host_consents(payload.get("consent"),
+                                  what=("A 股同行的倍数" if is_multiple else "A 股同行的基本面"))
+        try:
+            with net.host_consent(consents):
+                if is_multiple:
+                    if metric not in ad.CN_MULTIPLE_FUNCS:
+                        return {"ok": False, "error": (
+                            f"A 股同行的市值类倍数能算的是："
+                            f"{'、'.join(ad.CN_MULTIPLE_FUNCS)}。"
+                            f"EV 类要**净债务**和**折旧**，东财这两个字段都没有 —— "
+                            f"如实不算，不拿别的数凑一个出来。")}
+                    stat = ad.build_cn_peer_multiples(tickers, metric=metric, as_of=as_of)
+                    title = ad.CN_MULTIPLE_FUNCS[metric][0]
+                    fmt = ad.CN_MULTIPLE_FUNCS[metric][1]
+                else:
+                    if metric not in ad.CN_METRIC_FUNCS:
+                        return {"ok": False, "error": (
+                            f"指标「{metric}」是美股那套；A 股同行能算的是："
+                            f"{'、'.join(ad.CN_METRIC_FUNCS)}。"
+                            f"（两边口径不同 —— A 股没有 EBITDA 率，因为东财没有折旧字段。）")}
+                    stat = ad.build_cn_peer_stat(tickers, metric=metric,
+                                                 years=years, as_of=as_of)
+                    _, title, fmt = ad.CN_METRIC_FUNCS[metric]
+        except net.HostConsentRequired as e:
+            # 这不是失败，是"在等一次点头" —— 交给界面去问
+            return _needs_consent_payload(e)
         peer_market, peer_currency = "cn", "CNY"
     else:
         pairs: list[tuple[str, str]] = []

@@ -191,9 +191,20 @@ def _candidate_secids(market: str, code: str) -> list[str]:
 # ---------------------------------------------------------------------------
 
 QUOTE_BASE = "https://push2.eastmoney.com/api/qt/stock/get"
+TX_QUOTE_BASE = "https://qt.gtimg.cn/q="
 
-#: 东财盘口字段：f43 现价(×100) · f57 代码 · f58 名称 · f84 总股本 · f116 总市值
-_QUOTE_FIELDS = "f43,f57,f58,f84,f85,f116,f117"
+#: 诚实的自家 UA —— 腾讯那边实测三种 UA 都通，那就用**说明自己是谁**的那个，
+#: 不伪装浏览器（伪装是给"只能靠伪装才通"的主机用的，这里不需要）。
+UA = "FreeAnalyst/0.42 (+https://github.com/newchapterventures/freeanalyst)"
+
+#: 腾讯盘口 payload 的字段序号（**已用已知值反证**，不是猜的）：
+#:     序号 3  = 现价
+#:     序号 44 = 总市值（亿元）   ← 45 是流通市值，同一位置附近
+#: 反证方法：拿 600519 试，44 × 1e8 ÷ 3 = 1,250,081,743 股，
+#: 与东财 f84 给的 1,250,081,601 股 相差 0.0001% —— 对上了才算验过。
+TX_IDX_PRICE = 3
+TX_IDX_MARKET_CAP = 44
+TX_CAP_UNIT = 1e8
 
 
 @dataclass
@@ -209,22 +220,108 @@ class Shares:
         return f"{self.code}：{self.shares:,.0f} 股（{self.source}）"
 
 
+def market_of_code(code: str) -> str | None:
+    """六位 A 股代码 → `sh` / `sz`。认不出来返回 None（**不猜**）。
+
+    按**号段**判，不用"6 开头就是沪市"那种写法 —— 号段是交易所公布的，
+    而这种粗规则在边缘上会错，错了还不容易发现：
+
+        沪市  600 / 601 / 603 / 605（主板）· 688（科创板）· 689（存托凭证）
+        深市  000 / 001 / 002 / 003（主板）· 300 / 301（创业板）
+
+    北交所（8xx / 4xx）不在其中 —— 那边的股数/行情口径都没验过，
+    宁可返回 None 让上层如实报"不支持"，也不要猜一个市场出来。
+    """
+    c = str(code).strip()
+    if not (len(c) == 6 and c.isdigit()):
+        return None
+    if c.startswith(("600", "601", "603", "605", "688", "689")):
+        return "sh"
+    if c.startswith(("000", "001", "002", "003", "300", "301")):
+        return "sz"
+    return None
+
+
+def _shares_from_tx(market: str, code: str) -> Shares:
+    """腾讯盘口：总市值 ÷ 现价 = 股数。
+
+    ## 为什么主力是它，而不是东财
+    实测（2026-09-29）：`push2.eastmoney.com` 从 urllib **一律拒连**
+    （三种 UA 全是 `RemoteDisconnected`；同一时刻 curl 却能通）——
+    那是连接层的过滤，客户端改 UA 治不了。而腾讯三种 UA 全通。
+    **所以能用的那个当主力，不能用的留作退路并写明预期。**
+    """
+    url = f"{TX_QUOTE_BASE}{market}{code}"
+    _throttle()
+    raw = net.guarded_get(
+        url,
+        net.PublicQuery({"code": f"{market}{code}"}, purpose="A 股总股本（算市值用）"),
+        timeout=15,
+        headers={"User-Agent": UA},
+    )
+    text = raw.decode("gbk", "replace")
+    if '"' not in text:
+        raise PriceError(f"腾讯盘口返回格式不认识（{code}）")
+    parts = text.split('"')[1].split("~")
+    if len(parts) <= TX_IDX_MARKET_CAP:
+        raise PriceError(
+            f"腾讯盘口字段不够（{code}）：拿到 {len(parts)} 段，"
+            f"需要至少 {TX_IDX_MARKET_CAP + 1} 段。**字段位置可能变了，别硬算。**"
+        )
+    try:
+        price = float(parts[TX_IDX_PRICE])
+        cap = float(parts[TX_IDX_MARKET_CAP])
+    except ValueError as exc:
+        raise PriceError(f"腾讯盘口的现价/总市值不是数字（{code}）：{exc}") from exc
+    if price <= 0 or cap <= 0:
+        raise PriceError(f"腾讯盘口的现价或总市值为 0（{code}）—— 不拿它算股数")
+
+    shares = cap * TX_CAP_UNIT / price
+    return Shares(
+        code=code,
+        shares=shares,
+        source="腾讯盘口",
+        note=(f"{code}：总市值 ÷ 现价 = {shares:,.0f} 股"
+              f"（取自腾讯盘口当日快照，**非基准日当日**）"),
+    )
+
+
+def _shares_from_em(market: str, code: str) -> Shares:
+    """东财盘口 f84（退路）。实测从 urllib 基本连不上，留着备用。"""
+    secid = resolve_secid(market, code)
+    url = f"{QUOTE_BASE}?{urllib.parse.urlencode({'secid': secid, 'fields': 'f57,f84'})}"
+    _throttle()
+    raw = net.guarded_get(
+        url,
+        net.PublicQuery({"secid": secid}, purpose="A 股总股本（算市值用）"),
+        timeout=15,
+        headers={"User-Agent": UA},
+    )
+    payload = json.loads(raw.decode("utf-8", "replace"))
+    total = (payload.get("data") or {}).get("f84")
+    if not total:
+        raise PriceError(
+            f"东财盘口没给总股本（{secid}）—— 返回里没有 f84。"
+            f"**不拿别的字段充**：宁可报缺，也不要一个来路不明的股数。"
+        )
+    return Shares(
+        code=code,
+        shares=float(total),
+        source="东方财富盘口",
+        note=f"{code}：总股本 {float(total):,.0f} 股（取自东方财富盘口，非基准日当日）",
+    )
+
+
 def shares_outstanding(market: str, code: str) -> Shares:
-    """取**总股本**（股）。目前只有东财盘口这一个源。
+    """取**总股本**（股）。主力腾讯盘口，退路东财盘口。
 
     ## 口径（必须说清，不然会出"看不见的错"）
     这是**当前**的股本，不是"基准日那天的股本"。股本变动很慢（增发 / 回购才变），
-    所以多数情况下用它是可以的 —— 但这不是同一个时点，`note` 里必须写明
-    取自哪一天，让看的人自己判断要不要换。
-
-    ## 为什么没有备用源
-    腾讯盘口里也有总市值，理论上可以"总市值 ÷ 现价"倒推股数，
-    但**那几个字段的位置我还没验过** —— 按这个项目的规矩，没验过的不接线、
-    更不猜。所以现在只有东财一个源；它取不到就如实报缺，不拿别的数充。
+    多数情况下能用 —— 但不是一个时点，`note` 里写明取自哪一天，让看的人自己判断。
 
     ## 为什么会抛 `HostConsentRequired`
-    `push2.eastmoney.com` 在按次授权名单里。没带用户同意就抛 —— 这不是失败，
-    是"在等一次点头"。
+    这两个主机都在按次授权名单里。没带用户同意就抛 —— 这**不是失败**，
+    是"在等一次点头"，调用方要把原样往上抛（**别被 except 吞掉**）。
     """
     key = market.strip().lower()
     c = str(code).strip().upper()
@@ -234,35 +331,19 @@ def shares_outstanding(market: str, code: str) -> Shares:
             f"港股和美股的股数来源不同，还没接。"
         )
 
-    secid = resolve_secid(key, c)
-    params = {"secid": secid, "fields": _QUOTE_FIELDS}
-    url = f"{QUOTE_BASE}?{urllib.parse.urlencode(params)}"
+    errs: list[str] = []
+    for name, fn in (("腾讯盘口", _shares_from_tx), ("东方财富盘口", _shares_from_em)):
+        try:
+            return fn(key, c)
+        except net.HostConsentRequired:
+            raise           # "在等一次点头"不是失败，原样往上抛
+        except Exception as e:                          # noqa: BLE001
+            errs.append(f"{name}：{type(e).__name__}: {e}")
 
-    _throttle()
-    raw = net.guarded_get(
-        url,
-        net.PublicQuery({"secid": secid, "fields": _QUOTE_FIELDS},
-                        purpose="A 股总股本（算市值用）"),
-        timeout=20,
-    )
-    try:
-        payload = json.loads(raw.decode("utf-8", "replace"))
-    except json.JSONDecodeError as exc:
-        raise PriceError(f"东财盘口返回的不是 JSON（{secid}）：{exc}") from exc
-
-    data = payload.get("data") or {}
-    total = data.get("f84")
-    if not total:
-        raise PriceError(
-            f"东财盘口没给总股本（{secid}）—— 返回里没有 f84。"
-            f"**不拿别的字段充**：宁可报缺，也不要一个来路不明的股数。"
-        )
-
-    return Shares(
-        code=c,
-        shares=float(total),
-        source="东方财富盘口",
-        note=f"{c}：总股本 {float(total):,.0f} 股 —— 取自东方财富盘口（当前值，非基准日当日）",
+    raise PriceError(
+        f"{c} 的股数两个源都没取到。\n  " + "\n  ".join(errs) +
+        "\n（**不拿别的数充**：宁可报缺，也不要一个来路不明的股数。"
+        "东财那条退路实测对 urllib 一律拒连，成功率本来就低。）"
     )
 
 

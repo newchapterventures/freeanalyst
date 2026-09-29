@@ -429,6 +429,130 @@ def build_cn_peer_stat(
     )
 
 
+#: A 股同行的**市值类倍数**：metric -> (显示名, 格式, cn_financials 里的分母键)
+#:
+#: 分母统一取**年度**报告期（口径与美股那条一致：一年一期的分母 × 基准日的价格）。
+CN_MULTIPLE_FUNCS: dict[str, tuple[str, str, str]] = {
+    "pe": ("P / E", ".2f", "净利润(归母)"),
+    "pb": ("P / B", ".2f", "所有者权益(归母)"),
+    "price_to_revenue": ("市值 / 营业收入", ".2f", "营业收入"),
+}
+
+
+def build_cn_peer_multiples(
+    codes: list[str],
+    metric: str = "pe",
+    as_of: str | None = None,
+) -> PeerStat:
+    """A 股同行的「基准日市值 ÷ 同财年分母」。
+
+    ## 跟美股那条的三处不同（都不一样，不能照抄）
+    1. **股数**：美股从 XBRL 申报里拿；A 股从**盘口接口**拿
+       （`prices.shares_outstanding`，**需要按次授权**）。
+    2. **分母**：美股走 EDGAR 的 XBRL；A 股走东财 datacenter 的结构化报表。
+    3. **代码 → 市场**：A 股代码自带号段信息（`prices.market_of_code`），
+       不需要 ticker→CIK 那一步。
+
+    ## 三条不许破的规矩（与美股那条相同）
+    1. 价格**只用不晚于基准日的**；2. 没有基准日就**不算**（不拿最新价充）；
+    3. 任何一家算不出来都记进 `gaps`，**不静默丢弃、不拿均值填**。
+    """
+    if metric not in CN_MULTIPLE_FUNCS:
+        raise ValueError(
+            f"A 股不认识的市值指标 {metric!r}，可用：{'、'.join(CN_MULTIPLE_FUNCS)}"
+        )
+    label, fmt, denom_key = CN_MULTIPLE_FUNCS[metric]
+
+    if not as_of:
+        return PeerStat(
+            metric=label, values=[], labels=[], unit=fmt,
+            source="市值类倍数需要基准日",
+            gaps=["市值类倍数**必须有基准日**：价格模块只提供「按日期取价」，"
+                  "不提供「最新价」（免得拿今天的股价配去年的报表）。"
+                  "请在「基准日」里填一个日期再取。"],
+        )
+
+    from datasources import cn_financials as cf
+    from datasources import prices as px
+    import net
+
+    values: list[float] = []
+    labels: list[str] = []
+    gaps: list[str] = []
+    basis: list[str] = []
+
+    for code in codes:
+        c = str(code).strip()
+        mkt = px.market_of_code(c)
+        if mkt is None:
+            gaps.append(f"{c}：不是可识别的 A 股主板/创业板/科创板代码"
+                        f"（北交所与港股、美股的口径都还没接）")
+            continue
+
+        # 分母：最近一个**年度**报告期（从基准日那年往前找）
+        year = int(str(as_of)[:4])
+        vals: dict = {}
+        used = None
+        for _ in range(3):
+            try:
+                got = cf.fetch(c, report_date=f"{year}-12-31")
+            except Exception as e:                      # noqa: BLE001
+                gaps.append(f"{c}：财报取数失败（{type(e).__name__}）")
+                break
+            v = (got.get("values") or {}).get(denom_key) or {}
+            if v.get("value") is not None:
+                vals, used = got.get("values") or {}, f"{year}-12-31"
+                break
+            year -= 1
+        if used is None:
+            gaps.append(f"{c}：近三年年报里都没有「{denom_key}」")
+            continue
+
+        denom = float(vals[denom_key]["value"])
+        if denom <= 0:
+            gaps.append(f"{c}：分母非正（{denom:,.0f}），倍数没有意义")
+            continue
+
+        # 股数：**这一步会要用户同意**（push2 在按次授权名单里）
+        try:
+            sh = px.shares_outstanding(mkt, c)
+        except net.HostConsentRequired:
+            # ★ 这一条**必须原样往上抛**（实测踩到）：
+            #   下面那个 `except Exception` 会把它吞成一个"缺口：取不到股数"，
+            #   于是界面上**永远弹不出确认框** —— 机制看着在，其实一次都不会触发。
+            #   "在等一次点头"不是失败，不能当失败处理。
+            raise
+        except Exception as e:                          # noqa: BLE001
+            gaps.append(f"{c}：取不到股数（{type(e).__name__}）")
+            continue
+
+        # ★ `close_on` 取不到时返回 **None**（不是抛错）—— LSP 提醒的。
+        #   直接 .close 会炸；更坏的情况是被 except 吞掉，报成一个看不懂的缺口。
+        try:
+            bar = px.close_on(mkt, c, as_of)
+        except Exception as e:                          # noqa: BLE001
+            gaps.append(f"{c}：取 {as_of} 收盘价失败（{type(e).__name__}）")
+            continue
+        if bar is None:
+            gaps.append(f"{c}：{as_of} 那天没有收盘价"
+                        f"（基准日可能不是交易日 —— 换个交易日再试）")
+            continue
+
+        mcap = bar.close * sh.shares
+        values.append(mcap / denom)
+        labels.append(c)
+        basis.append(
+            f"{c}：股价 {bar.date}（{bar.source}）× 股数（{sh.source}）"
+            f" ÷ {denom_key} 期末 {used}"
+        )
+
+    return PeerStat(
+        metric=label, values=values, labels=labels, unit=fmt,
+        source="股东财：东方财富 datacenter｜价格：东方财富日线｜股数：东方财富盘口",
+        gaps=gaps, basis=basis,
+    )
+
+
 def build_peer_multiples(
     peers: list[tuple[str, str, str]],
     metric: str = "pe",
