@@ -41,6 +41,9 @@ class PeerRow:
     """一家可比公司的原始数据。**缺的字段留 None，不用 0 填。**"""
 
     name: str
+    #: **这家公司在哪个市场**（`us` / `cn` / `hk` / 空=不知道）。
+    #: 为什么要有这个字段：beta 对应各自市场的指数、估值中枢也各市场不同 ——
+    #: 跨市场套倍数会带进方向不明的偏差（用户 2026-09-29 提的）。
     market: str = ""
     code: str = ""
     as_of: str = ""
@@ -72,9 +75,25 @@ class PeerRow:
 
 @runtime_checkable
 class CompsSource(Protocol):
-    """可比公司数据源的接口。**实现它就能插进来。**"""
+    """可比公司数据源的接口。**实现它就能插进来。**
+
+    除了 `name` / `available()` / `peers()`，每个源还要声明**自己覆盖哪个市场**：
+
+        market: str      # "us" / "cn" / "hk"
+        currency: str    # "USD" / "CNY" / "HKD"
+
+    为什么市场必须是**源自己声明**的（而不是调用方写死）：
+    beta 对应各自市场的指数、估值中枢也各市场不同，所以"同市场比对"是硬条件。
+    覆盖三个市场（中/美/港）就要有多个源，调用方**不能假设**手里的源是哪个市场的 ——
+    否则加第二个源时，所有比较逻辑都要返工。
+
+    一个源**只覆盖一个市场**。同一家的 A/H 两地上市是两个市场的事，
+    由市场层（`webapp._comps_scope`）处理，不在源里混。
+    """
 
     name: str
+    market: str
+    currency: str
 
     def available(self) -> tuple[bool, str]:
         """能不能用。返回 `(可用?, 说明)`。

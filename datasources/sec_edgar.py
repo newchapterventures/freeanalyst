@@ -60,6 +60,11 @@ _last_call = [0.0]
 CACHE_DIR = Path(__file__).resolve().parent.parent / "cache" / "sec"
 CACHE_TTL = 24 * 3600  # 一天
 
+#: 这个源覆盖的市场与币种 —— **由源自己声明**，调用方不许写死。
+#: （中/港的源接进来后，市场层靠这两个字段判断"能不能同台比"。）
+MARKET = "us"
+CURRENCY = "USD"
+
 
 class SecEdgarError(RuntimeError):
     pass

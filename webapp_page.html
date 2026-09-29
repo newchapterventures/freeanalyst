@@ -449,6 +449,13 @@
         </select></label>
       <label><span data-i18n="s4.years"></span><input id="cYears" value="3"></label>
       <label><span data-i18n="s4.asof"></span><input id="cAsof" placeholder="2024-12-31"></label>
+      <label><span data-i18n="s4.market"></span>
+        <select id="cMkt">
+          <option value="" data-i18n="s4.k.auto"></option>
+          <option value="us" data-i18n="s4.k.us"></option>
+          <option value="cn" data-i18n="s4.k.cn"></option>
+          <option value="hk" data-i18n="s4.k.hk"></option>
+        </select></label>
     </div>
     <div style="margin-top:14px">
       <button class="act amber" id="cBtn" onclick="comps()" data-i18n="s4.btn"></button>
@@ -537,6 +544,8 @@ const I18N = {
     "s4.notice": "<b>这一步给的是基本面分布，不是倍数。</b>EDGAR 有财报、<b>没有股价</b> —— 市值 / EV / EV·EBITDA 取不到（要做倍数得再接一个价格源，那个源还没接）。<b>目前只支持美股（EDGAR）。</b>标的若在 A 股 / 港股，<b>这一页的多少要看得分清楚</b>：同行基本面（增速 / 利润率 / 规模）是<b>公司属性</b>，跨市场对照有意义；<b>倍数和 beta 不是</b> —— 它们各自绑定市场的指数与估值中枢，跨市场套用会带进方向不明的偏差（工具会在结果上方直接点出来）。样本不足 3 家时，<b>不给中位数当结论</b>。",
     "s4.tickers": "可比公司代码（美股，逗号分隔）",
     "s4.metric": "对照指标",
+    "s4.market": "标的所在市场",
+    "s4.k.auto": "自动（按报表币种判断）", "s4.k.us": "美股", "s4.k.cn": "A 股", "s4.k.hk": "港股",
     "s4.m.cagr": "近三年收入 CAGR", "s4.m.margin": "EBITDA 率", "s4.m.scale": "营业收入规模",
     "s4.years": "年数（CAGR 用）", "s4.asof": "基准日（只用该日已披露的财报，可留空）",
     "s4.btn": "取同行基本面",
@@ -698,6 +707,8 @@ const I18N = {
     "s4.notice": "<b>This step gives fundamentals, not multiples.</b> EDGAR has filings but <b>no share prices</b> — market cap / EV / EV·EBITDA cannot be derived (multiples would need a price source, not wired yet). <b>US listings only for now (EDGAR).</b> If the target is an A-share / HK listing, <b>sort out which half of this page you may use</b>: peer fundamentals (growth / margin / scale) are <b>company attributes</b> and do transfer across markets; <b>multiples and beta do not</b> — each is tied to its own market's index and valuation level, so using them across markets imports a bias of unknown direction (the tool states this above the results). With fewer than 3 peers, <b>no median is presented as a conclusion</b>.",
     "s4.tickers": "Peer tickers (US, comma-separated)",
     "s4.metric": "Metric",
+    "s4.market": "Target's market",
+    "s4.k.auto": "Auto (from reporting currency)", "s4.k.us": "US", "s4.k.cn": "A-share", "s4.k.hk": "Hong Kong",
     "s4.m.cagr": "3-year revenue CAGR", "s4.m.margin": "EBITDA margin",
     "s4.m.scale": "Revenue scale",
     "s4.years": "Years (for CAGR)", "s4.asof": "As-of date (filings disclosed by then; may be blank)",
@@ -975,7 +986,8 @@ async function comps(){
     const out = await post("/api/comps", {tickers: tickers,
       metric: $("cMetric").value, years: $("cYears").value || 3,
       as_of: ($("cAsof").value || "").trim(),
-      target_unit: (STATE.data && STATE.data.unit) || ""});
+      target_unit: (STATE.data && STATE.data.unit) || "",
+      target_market: $("cMkt").value || ""});
     $("cBtn").disabled = false;
     if(!out.ok){
       $("cMsg").innerHTML = '<span class="bad">' + esc(out.error || "") + '</span>';
@@ -1003,6 +1015,14 @@ function renderComps(){
   if(d.market_warning)
     h += '<div class="notice issue" style="white-space:pre-wrap;margin-bottom:12px">' +
          md(d.market_warning) + '</div>';
+  // 绝对金额跨币种时，同行分布自身有效、但与标的比规模要先换算 —— 说清楚
+  if(d.scale_note)
+    h += '<div class="notice issue" style="white-space:pre-wrap;margin-bottom:12px">' +
+         md(d.scale_note) + '</div>';
+  // 声明与币种推断不一致等 —— 记录性说明，不吓人
+  if(d.scope && d.scope.notes && d.scope.notes.length)
+    h += '<div class="mut" style="margin-bottom:12px;font-size:12px">' +
+         d.scope.notes.map(n => md(n)).join('<br>') + '</div>';
   if(!d.enough) h += '<div class="notice issue" style="margin-bottom:12px">' +
       esc(t("s4.thin").replace("{n}", d.n)) + '</div>';
   h += '<table><thead><tr><th>' + esc(d.title) + '</th><th class="num">' +

@@ -118,6 +118,69 @@ def _comps_market_warning(target_unit: str, peer_market: str = "us") -> str:
             f"跨市场对照有意义；倍数不是。）")
 
 
+#: 市场 → 该市场的报表币种。**只用于在用户没说时补一个默认**，
+#: 不是断言（港股里人民币报表很常见，所以：声明 > 币种线索 > 这个默认）。
+_MARKET_CURRENCY = {"us": "USD", "cn": "CNY", "hk": "HKD"}
+
+
+def _comps_scope(target_market: str, target_unit: str, peer_market: str,
+                 peer_currency: str = "", target_currency: str = "") -> dict:
+    """第 4 步的**市场层**：谁和谁能同台比、哪一半能用。
+
+    这是"覆盖中/美/港"的地基 —— 三个市场就要有多个源，而**跨市场的对照必须分级**：
+
+    | 比什么 | 同市场 | 跨市场 |
+    |---|---|---|
+    | **基本面比率**（增速 / 利润率） | ✓ | ✓ **公司属性**，跨市场有意义 |
+    | **绝对规模**（收入是多少钱） | ✓ | ✗ 币种不同，数不能并列 |
+    | **倍数**（PE / EV·EBITDA）与 **beta** | ✓ | ✗✗ 各自绑定市场的指数与估值中枢 |
+
+    所以这里返回的是**许可**（谁能用），不是一句提示 —— 后面的倍数路径要靠它拦，
+    免得哪天接了价格源，跨市场的倍数**静默**混进结论里。
+
+    ## 目标市场：**用户声明的优先**，其次按币种推断
+    实测理由：港股里**人民币报表很常见**（内地企业在港上市），所以"报表是人民币"
+    推不出"它在 A 股" —— 币种只是**线索**，声明才是**依据**。两者不一致时说清楚。
+    """
+    declared = (target_market or "").strip().lower()
+    inferred = _market_of(target_unit)
+    market = declared or inferred
+    same_market = bool(market) and market == peer_market
+    # 币种：今天只有一个源（USD），所以同行币种取源的声明。
+    # 标的币种：用户给的优先；没给就从**市场**补一个默认（人民币报表 → CNY）；
+    # 市场也判不出来才算"不知道"（不知道就不许断言币种相同）。
+    # ⚠ 这个补法是实测踩出来的：只传了 `target_unit` 不传 `target_currency` 时，
+    #   `same_currency` 会被算成 True，于是**跨币种的绝对规模也放行了** ✗。
+    cur_peer = (peer_currency or "").upper()
+    cur_target = (target_currency or "").upper() or _MARKET_CURRENCY.get(market, "")
+    same_cur = (not cur_target) or (not cur_peer) or cur_target == cur_peer
+    notes: list[str] = []
+    if declared and inferred and declared != inferred:
+        notes.append(
+            f"你声明标的是{MARKET_NAME.get(declared, declared)}，"
+            f"但报表口径看着像{MARKET_NAME.get(inferred, inferred)}"
+            f"（港股里人民币报表很常见）—— **按你的声明走**，这里记录一下。")
+    if not market:
+        notes.append("标的的市场判不出来（报表单位里没有币种线索，你也没声明）—— "
+                     "所以下面**不假设**它和同行同市场。")
+    return {
+        "target_market": market,
+        "target_market_declared": declared,
+        "target_market_inferred": inferred,
+        "peer_market": peer_market,
+        "target_currency": cur_target,
+        "peer_currency": cur_peer,
+        "same_market": same_market,
+        "same_currency": same_cur,
+        # ①② 基本面比率永远可用；绝对规模要币种一致
+        "ratios_allowed": True,
+        "scale_allowed": same_cur,
+        # ③ 倍数与 beta：**硬条件是同市场 + 同币种**
+        "multiples_allowed": bool(same_market and same_cur),
+        "notes": notes,
+    }
+
+
 def api_comps(payload: dict) -> dict:
     """第 4 步 · 可比公司（**只做基本面对照**）。
 
@@ -178,16 +241,30 @@ def api_comps(payload: dict) -> dict:
 
     stat = ad.build_peer_stat(pairs, metric=metric, years=years, as_of=as_of)
     _, title, fmt = ad.METRIC_FUNCS[metric]
-    peer_market = "us"          # EDGAR = 美股 —— **目前只支持美股**，别的地方还没接源
+    # 市场与币种**由源自己声明** —— 不许在这里写死（接中/港源时全靠这个）
+    peer_market = se.MARKET
+    target_unit = payload.get("target_unit") or ""
+    scope = _comps_scope(payload.get("target_market") or "", target_unit,
+                         peer_market, se.CURRENCY,
+                         payload.get("target_currency") or "")
+    # 绝对规模（收入是多少钱）跨币种**不能直接并列**：同行分布自身是同一币种、有效，
+    # 但"标的 vs 它们"要先换算。比率（增速/利润率）没这个问题。
+    scale_note = ""
+    if metric == "revenue_scale" and not scope["same_currency"]:
+        scale_note = (f"⚠ 口径：这一列是**绝对金额**，同行是{scope['peer_currency']}、"
+                      f"标的是{scope['target_currency'] or '另一种币种'} —— "
+                      f"**同行分布自身有效**（同一币种），但标的与它们比规模**要先换算币种**。")
     return {
         "ok": True, "metric": metric, "title": title, "fmt": fmt,
         "unit": stat.unit, "n": stat.n, "min_comps": MIN_COMPS,
         "enough": stat.n >= MIN_COMPS,
         "peer_market": peer_market,
-        "target_market": _market_of(payload.get("target_unit") or ""),
+        "target_market": scope["target_market"],
+        # 市场层：谁和谁能同台比、哪一半能用（倍数路径以后靠 multipliers_allowed 拦）
+        "scope": scope,
+        "scale_note": scale_note,
         # 标的和同行**不在同一个市场**时，说清这一步的输出**不能**怎么用
-        "market_warning": _comps_market_warning(payload.get("target_unit") or "",
-                                                peer_market),
+        "market_warning": _comps_market_warning(target_unit, peer_market),
         "rows": [{"label": lab, "value": v}
                  for lab, v in zip(stat.labels, stat.values)],
         "p25": stat.quantile(0.25), "median": stat.median(), "p75": stat.quantile(0.75),

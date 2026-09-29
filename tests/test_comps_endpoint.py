@@ -142,5 +142,61 @@ class TestCompsMarketConsistency(unittest.TestCase):
         self.assertTrue(out["market_warning"], "跨市场却没警告")
 
 
+class TestMarketScopeLayer(unittest.TestCase):
+    """市场层（`_comps_scope`）—— "覆盖中/美/港"的地基。
+
+    跨市场对照**必须分级**：基本面比率可以比，绝对规模要同币种，
+    倍数与 beta **必须同市场 + 同币种**。
+    """
+
+    def test_same_market_and_currency_permits_everything(self):
+        s = webapp._comps_scope("us", "千美元", "us", "USD", "USD")
+        self.assertTrue(s["same_market"])
+        self.assertTrue(s["multiples_allowed"])
+        self.assertTrue(s["scale_allowed"])
+
+    def test_cross_market_blocks_multiples_but_not_ratios(self):
+        s = webapp._comps_scope("", "人民币千元", "us", "USD", "CNY")
+        self.assertFalse(s["same_market"])
+        self.assertFalse(s["multiples_allowed"], "跨市场竟然允许套倍数")
+        self.assertTrue(s["ratios_allowed"], "跨市场连比率都不给比，太紧")
+        self.assertFalse(s["scale_allowed"], "跨币种竟然允许比绝对规模")
+
+    def test_currency_is_inferred_when_only_the_unit_is_known(self):
+        """★ 实测踩到的坑：页面只传单位（不传币种）时，
+        `same_currency` 曾被算成 True，于是**跨币种的绝对规模也放行了** ✗。"""
+        s = webapp._comps_scope("", "人民币千元", "us", "USD")
+        self.assertEqual(s["target_currency"], "CNY")
+        self.assertFalse(s["same_currency"])
+        self.assertFalse(s["scale_allowed"])
+        self.assertFalse(s["multiples_allowed"])
+
+    def test_declaration_beats_currency_inference(self):
+        """港股里人民币报表很常见 —— 所以**声明优先**，币种只是线索。"""
+        s = webapp._comps_scope("hk", "人民币千元", "us", "USD", "HKD")
+        self.assertEqual(s["target_market"], "hk")
+        self.assertEqual(s["target_market_inferred"], "cn")
+        self.assertTrue(any("按你的声明走" in n for n in s["notes"]),
+                        "声明与推断不一致时必须说明")
+
+    def test_unknown_market_is_not_assumed_to_match(self):
+        """判不出市场时**不许假设同市场**（宁可少说，不可多说）。"""
+        s = webapp._comps_scope("", "", "us", "USD", "")
+        self.assertEqual(s["target_market"], "")
+        self.assertFalse(s["same_market"])
+        self.assertFalse(s["multiples_allowed"])
+        self.assertTrue(s["notes"])
+
+    def test_source_declares_its_market(self):
+        """市场和币种必须由**源自己**声明 —— 接口里不许写死。"""
+        from datasources import sec_edgar
+        self.assertEqual(sec_edgar.MARKET, "us")
+        self.assertEqual(sec_edgar.CURRENCY, "USD")
+        import inspect
+        src = inspect.getsource(webapp.api_comps)
+        self.assertIn("se.MARKET", src)
+        self.assertNotIn('peer_market = "us"', src)
+
+
 if __name__ == "__main__":
     unittest.main()
