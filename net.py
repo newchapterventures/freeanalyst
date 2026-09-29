@@ -39,6 +39,9 @@ import re
 import time
 import urllib.parse
 import urllib.request
+from collections.abc import Iterable, Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -66,6 +69,11 @@ DEFAULT_ALLOWED_HOSTS: frozenset[str] = frozenset({
     # ⚠️ 美股在这个接口上**必须带交易所后缀**（usAAPL.OQ / usAAPL.N），所以会多探一次；
     # 探中的后缀会缓存。三个源都只走历史日线，行为与东财那条完全同构。
     "web.ifzq.gtimg.cn",
+    # ── 下面两个是**按次授权**那一层的主机（2026-09-29 用户拍板"先开"）──────────
+    # 用途只有一个：取 A 股的**股数**（算市值用：市值 = 基准日收盘价 × 总股本）。
+    # 它们在白名单里的**同时**又列在 CONSENT_HOSTS 里 —— 所以每取一次都要带用户同意。
+    "push2.eastmoney.com",   # 盘口：f84 总股本 / f116 总市值
+    "qt.gtimg.cn",           # 备用：总市值 ÷ 现价 = 股数
 })
 
 AUDIT_PATH = Path(
@@ -95,6 +103,98 @@ _CJK_RUN = re.compile(r"[\u4e00-\u9fff]{%d,}" % (MAX_CJK_RUN + 1))
 
 class PublicEgressBlocked(RuntimeError):
     """出境请求被公开域闸门拦下。"""
+
+
+# ---------------------------------------------------------------------------
+# 新主机：**按次授权**
+#
+# 用户的原话（2026-09-29）：
+#
+# > 新主机什么时候去启动抓取，需要用户的同意
+#
+# 所以公开域其实是**两层**，两层的问法不一样：
+#
+#     1. 白名单     —— "这个主机允许不允许？"      装一次就定了（改代码/环境变量）
+#     2. 按次授权   —— "**这一次**去取，同意吗？"  每次真去取都要带
+#
+# 下面这些主机两样都占：既在白名单里，又在 `CONSENT_HOSTS` 里。
+# 于是**日常数据源不会天天弹窗**（日线、SEC 都不在名单里，不问），
+# 而"取 A 股股数"这种新开的口子，每取一次都要你点头。
+#
+# **刻意不做全局开关。** 一个 `OPEN_ALL_HOSTS=1` 之类的环境变量会让
+# 「材料不出本机」这句话失去意义 —— 装完就一直是开着的。
+# 注意：`FREEANALYST_EXTRA_HOSTS` 能**加进白名单**，但**绕不过这一层** ——
+# 只要主机名在 `CONSENT_HOSTS` 里，照样要按次授权（有测试钉着）。
+# ---------------------------------------------------------------------------
+
+#: 需要按次授权的主机 -> 给人看的用途说明（弹窗上要显示这个，不只显示主机名）
+CONSENT_HOSTS: dict[str, str] = {
+    "push2.eastmoney.com":
+        "取 A 股的「总股本」，用来算市值（市值 = 基准日收盘价 × 总股本）",
+    "qt.gtimg.cn":
+        "备用取「总市值」，与当日现价相除得到股数",
+}
+
+
+class HostConsentRequired(RuntimeError):
+    """访问需要按次授权的主机，而这次调用**没带**用户的同意。
+
+    这不是"失败"，是**在等一次点头** —— 所以调用方应该把它变成一句
+    「要不要同意」的问话，而不是报成"取数失败"。
+    """
+
+    def __init__(self, host: str, purpose: str) -> None:
+        self.host = host
+        self.purpose = purpose
+        super().__init__(f"主机 {host} 需要按次授权：{purpose}")
+
+
+@dataclass(frozen=True)
+class HostConsent:
+    """用户对「**这一次**去这个新主机取数」的显式授权。
+
+    **按次，不是一次授权永久生效** —— 照 `guard.CloudConsent` 的同一套做法：
+
+    - `host`     去哪个主机（例如 `push2.eastmoney.com`）
+    - `purpose`  干什么用（要跟 `CONSENT_HOSTS` 里写的一致，用途不符不算数）
+    - `what`     取什么（给人看的描述，弹窗上要能让用户看懂）
+    """
+
+    host: str
+    purpose: str
+    what: str = ""
+    approved_by: str = "user"
+
+
+#: 这一次调用里的授权。用 contextvar 而不是全局变量 ——
+#: **出了 `host_consent(...)` 这个范围就失效**，这正是"按次"的意思。
+_CONSENT: ContextVar[dict[str, HostConsent]] = ContextVar("fa_host_consent", default={})
+
+
+@contextmanager
+def host_consent(consents: Iterable[HostConsent]) -> Iterator[None]:
+    """在这一次调用里，把用户对新主机的同意放进去。
+
+        with net.host_consent([net.HostConsent("push2.eastmoney.com", 用途, "总股本")]):
+            ...取数...
+
+    出了这个 `with` 就失效。**不写进任何文件、也不是环境变量** ——
+    免得变成"一次点头、以后一直开"。
+    """
+    token = _CONSENT.set({c.host.lower(): c for c in consents})
+    try:
+        yield
+    finally:
+        _CONSENT.reset(token)
+
+
+def consent_for(host: str) -> HostConsent | None:
+    """本次调用里用户对这个主机的同意（没有就是 None）。"""
+    return _CONSENT.get().get((host or "").lower())
+
+
+def host_needs_consent(host: str) -> bool:
+    return (host or "").lower() in CONSENT_HOSTS
 
 
 @dataclass
@@ -179,14 +279,31 @@ def guarded_get(
     allow = allowed_hosts(query.extra_hosts)
     ok_host = host in allow
 
+    # 第二层：需要按次授权的主机，**这一次**得带用户的同意。
+    # 白名单没通过就是 BLOCK；白名单过了但要授权而没带，就是"在等一次点头"。
+    wants = CONSENT_HOSTS.get(host)
+    consent = consent_for(host)
+    if not ok_host:
+        decision = "BLOCK"
+    elif wants and consent is None:
+        decision = "CONSENT-REQUIRED"
+    elif wants:
+        decision = "ALLOW-CONSENT"
+    else:
+        decision = "ALLOW"
+
     _audit({
         "event": "public_egress",
         "domain": "public",
-        "decision": "ALLOW" if ok_host else "BLOCK",
+        "decision": decision,
         "host": host,
         "path": parsed.path,
         "params": query.params,          # 只有公开查询词，可公开审计
         "purpose": query.purpose,
+        # 用户点头的那一次，把"点了什么头"也记下来 —— 事后能证明是用户放的
+        **({"consent": {"host": consent.host, "purpose": consent.purpose,
+                        "what": consent.what, "approved_by": consent.approved_by}}
+           if consent is not None else {}),
     })
 
     if not ok_host:
@@ -195,6 +312,11 @@ def guarded_get(
             f"当前白名单：{sorted(allow)}。"
             f"新增数据源时必须显式加进来——不允许通配。"
         )
+
+    if wants and (consent is None or (consent.purpose and consent.purpose != wants)):
+        # 用途不符也不算数 —— 照 CloudConsent 的规矩：
+        # 拿 A 用途的授权去调 B 用途，不算授权。
+        raise HostConsentRequired(host, wants)
 
     full = url
     if query.params:
