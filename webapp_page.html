@@ -462,6 +462,9 @@
         <small data-i18n="ask.sub"></small></h2>
     <div class="notice" data-i18n-html="ask.notice"></div>
     <div id="askLog" style="margin-top:12px"></div>
+    <div style="margin-top:12px">
+      <button class="act" id="askPlanBtn" onclick="planNext()" data-i18n="ask.plan"></button>
+    </div>
     <div class="grid2" style="margin-top:12px">
       <label><span data-i18n="ask.input"></span>
         <input id="askText" placeholder="租金　/　增长率按 5%" onkeydown="askKey(event)"></label>
@@ -559,6 +562,12 @@ const I18N = {
     "ask.drop": "忽略",
     "ask.adopted": "已填入「{k}」—— 这是你的判断，报告里会标明来源。",
     "ask.nofield": "第 5 步还没有「{k}」这一栏（先让材料解析完成）。",
+    "ask.plan": "带我把剩下的填完",
+    "ask.left": "还差 {n} 项（共 {t} 项）。先问这个：",
+    "ask.done": "清单上的 {n} 项都齐了 —— 可以生成估值报告了。",
+    "ask.ref": "材料里推出来的参考值",
+    "ask.useRef": "沿用这个参考值",
+    "ask.refbad": "这一项材料里推不出来 —— 要你自己给",
     "step.1": "载入材料", "step.2": "报表识别与勾稽校验",
     "step.3": "行业建议 · 未接入", "step.4": "可比公司",
     "step.5": "估值假设", "step.6": "估值结论",
@@ -679,6 +688,12 @@ const I18N = {
     "ask.drop": "Dismiss",
     "ask.adopted": "Filled into \"{k}\" — this is your judgement; the report will show its source.",
     "ask.nofield": "Step 5 has no field named \"{k}\" yet (let the materials finish parsing).",
+    "ask.plan": "Walk me through the rest",
+    "ask.left": "{n} of {t} items still missing. Asking about this one first:",
+    "ask.done": "All {n} items are filled — you can generate the valuation report.",
+    "ask.ref": "Reference derived from the materials",
+    "ask.useRef": "Use this reference",
+    "ask.refbad": "This one cannot be derived from the materials — it has to come from you",
     "s4.title": "Comparable companies", "s4.sub": "Peer fundamentals — fetch, compare, keep the trail",
     "s4.notice": "<b>This step gives fundamentals, not multiples.</b> EDGAR has filings but <b>no share prices</b> — market cap / EV / EV·EBITDA cannot be derived (multiples would need a price source, not wired yet). <b>US listings only for now.</b> With fewer than 3 peers, <b>no median is presented as a conclusion</b>.",
     "s4.tickers": "Peer tickers (US, comma-separated)",
@@ -1060,18 +1075,74 @@ function renderProposal(p){
     '<button class="act" onclick="dropProposal()">' + esc(t("ask.drop")) + "</button>");
 }
 
-// 采纳 = **填进第 5 步那个真实的输入框** —— 按标签文字找，不依赖 DOM 结构。
+// 「已填了哪些」—— 按 `data-key` **精确读**（输入框本来就带这个属性），不靠猜标签。
+function filledMap(){
+  const out = {};
+  document.querySelectorAll("#questions [data-key]").forEach(el => {
+    const v = (el.value || "").trim();
+    if(v) out[el.getAttribute("data-key")] = v;
+  });
+  return out;
+}
+
+// 带我把剩下的填完 —— **次序由服务端算**（依据是"用户的成本"，见 webapp._ask_order），
+// 页面只负责问、填、和问下一项。它不会替用户决定任何值。
+async function planNext(){
+  if(!STATE.path){ pushAsk("bad", esc(t("ask.nopath"))); return; }
+  const btn = $("askPlanBtn"); if(btn) btn.disabled = true;
+  try{
+    const out = await post("/api/ask",
+      {action:"plan", path:STATE.path, filled:filledMap()});
+    if(btn) btn.disabled = false;
+    if(!out.ok){ pushAsk("bad", esc(out.error || "")); return; }
+    STATE.plan = out;
+    if(!out.next){ pushAsk("ok", esc(t("ask.done").replace("{n}", out.total))); return; }
+    const q = out.next;
+    // 参考值只有**像个数**的时候才给「沿用」按钮 —— "数据不足"不能当值填进去。
+    const usable = /\d/.test(q.reference || "");
+    pushAsk("ok",
+      "<b>" + esc(t("ask.left").replace("{n}", out.missing).replace("{t}", out.total)) +
+      "</b><br>→ <b>" + esc(q.label) + "</b>　<span class=\"mut\">" + esc(q.why) + "</span>" +
+      (q.hint ? '<br><span class="mut">' + esc(q.hint) + "</span>" : "") +
+      (usable
+        ? '<br><span class="mut">' + esc(t("ask.ref")) + "：" + esc(q.reference) + "</span> " +
+          '<button class="act" onclick="adoptPlan()">' + esc(t("ask.useRef")) + "</button>"
+        : '<br><span class="mut">' + esc(t("ask.refbad")) + "</span>"));
+    STATE.proposal = {key:q.key, label:q.label, value:q.reference || "",
+                      source:"材料参考值 · 用户确认", confidence:"中"};
+  }catch(e){
+    if(btn) btn.disabled = false;
+    pushAsk("bad", esc(String(e)));
+  }
+}
+
+// 沿用参考值 → 填进真实的输入框 → **接着问下一项**
+function adoptPlan(){
+  const p = STATE.proposal;
+  if(!p || !p.value) return;
+  const el = document.querySelector('#questions [data-key="' + p.key + '"]');
+  if(!el){ pushAsk("bad", esc(t("ask.nofield").replace("{k}", p.label))); return; }
+  el.value = p.value + " @" + p.source;
+  el.dispatchEvent(new Event("input", {bubbles:true}));
+  pushAsk("ok", esc(t("ask.adopted").replace("{k}", p.label)) + "　<b>" + esc(p.value) + "</b>");
+  STATE.proposal = null;
+  planNext();
+}
+
+// 采纳 = **填进第 5 步那个真实的输入框** —— 按 `data-key` 精确找（标签是退路）。
 // 填进去的格式沿用既有约定：`值 @来源`（报告里"结果的软肋"会按来源列出来）。
 function adopt(){
   const p = STATE.proposal;
   if(!p) return;
-  let hit = null;
-  document.querySelectorAll("#questions input, #questions select, #questions textarea")
-    .forEach(b => {
-      if(hit) return;
-      const lab = (b.closest("label") || b.parentElement || {}).textContent || "";
-      if(lab.indexOf(p.label) >= 0) hit = b;
-    });
+  let hit = document.querySelector('#questions [data-key="' + p.key + '"]');
+  if(!hit){
+    document.querySelectorAll("#questions input, #questions select, #questions textarea")
+      .forEach(b => {
+        if(hit) return;
+        const lab = (b.closest("label") || b.parentElement || {}).textContent || "";
+        if(lab.indexOf(p.label) >= 0) hit = b;
+      });
+  }
   if(!hit){ pushAsk("bad", esc(t("ask.nofield").replace("{k}", p.label))); return; }
   hit.value = p.value + " @" + p.source;
   hit.dispatchEvent(new Event("input", {bubbles:true}));

@@ -259,7 +259,12 @@ def api_ask(payload: dict) -> dict:
                            int(payload.get("limit") or 20))
     if action == "propose":
         return _ask_propose(path, (payload.get("text") or "").strip())
-    return {"ok": False, "error": f"不认识的动作：{action}（可用：search / propose）"}
+    if action == "plan":
+        filled = payload.get("filled") or []
+        if isinstance(filled, dict):        # 页面传字典也行，只取键
+            filled = list(filled.keys())
+        return _ask_plan(path, {str(k) for k in filled})
+    return {"ok": False, "error": f"不认识的动作：{action}（可用：search / propose / plan）"}
 
 
 #: 一句话里的常见说法 → **问题清单里标签的片段**。
@@ -279,6 +284,118 @@ _ASK_ALIASES: tuple[tuple[str, str], ...] = (
     # （只有「乘数用的指标」这类，指标名在选项里不在标签里）→ 留着也永远匹配不上，
     # 只会让人以为"说 EBITDA 就能识别"。核对脚本：`/tmp/check_aliases.py`。
 )
+
+
+#: 「判断」类项按**对估值的影响**排序 —— 表短、可审阅，每条都写明"为什么先问它"。
+#: 按**标签片段**匹配（和 `_ASK_ALIASES` 同一套办法，不写死键名 —— 键会漂）。
+_ASK_IMPACT: tuple[tuple[str, str], ...] = (
+    ("增长", "收入增长是 DCF 的主驱动，敏感性网格第一个动的就是它"),
+    ("利润率", "利润率决定 EBITDA 基数 —— 乘数法和 DCF 都吃它"),
+    ("ebitda", "利润率决定 EBITDA 基数 —— 乘数法和 DCF 都吃它"),
+    ("折旧摊销", "EBITDA = 营业利润 + 折旧摊销；缺它，两个比率一起空掉"),
+    ("资本开支", "资本开支占收入比直接决定自由现金流能不能为正"),
+    ("营运资本", "营运资本的增量会吃掉增长里的现金，高增长公司尤其明显"),
+    ("净债务", "净债务偏低会让股权价值偏高 —— 漏掉它是最危险的漏项"),
+    ("永续增长", "终值占 DCF 大头，而且有硬上界（长期名义 GDP 增速）"),
+    ("折现率", "WACC 是最敏感的输入之一，动一点结论就动一截"),
+    ("税率", "有效税率影响税后现金流"),
+)
+
+
+def _ask_why(q: intake.Q, origin: str) -> str:
+    """这一项**为什么现在问**、以及它从哪来。让人不用猜对话的次序。"""
+    if origin == intake.ORIGIN_DERIVED:
+        return "报表里能推算出来 —— 工具已给出参考值，确认或改一个数即可"
+    if origin == intake.ORIGIN_EXTERNAL:
+        return "这是公司之外的市场信息（工具不提供、也不该编），需要你查一下"
+    if origin == intake.ORIGIN_FILING:
+        return "报表里直接有的数 —— 一般扫描时已填好，核对即可"
+    label = getattr(q, "label", "") or ""
+    for frag, why in _ASK_IMPACT:
+        if frag in label or frag.lower() in label.lower():
+            return why
+    return "你对未来的判断 —— 报表不涉及，只能由你给"
+
+
+def _impact_rank(q: intake.Q) -> int:
+    """这一项在**影响表**里的次序（表外的排最后）。用于稳定排序。"""
+    label = (getattr(q, "label", "") or "").lower()
+    for i, (frag, _why) in enumerate(_ASK_IMPACT):
+        if frag in label or frag.lower() in label:
+            return i
+    return len(_ASK_IMPACT)
+
+
+def _ask_order(qs: list[intake.Q], filled: set[str]) -> list[tuple[intake.Q, str]]:
+    """还差哪些 + **先问哪个** + 为什么是这个次序。
+
+    ## 排序依据是**用户的成本**，不是"重要性"的玄学
+      ① `财报推算` —— 工具已经有参考值，用户只需点头 = **零成本** → 先清掉
+      ② `判断`     —— 再分两小步：
+                     a. **点一下就好**的（有 options/suggest，如"估值目的""立场"）→ 便宜，先问
+                     b. 要动脑的**数值项** → 按影响表排（见 `_ASK_IMPACT`）
+                     ⚠️ 这一层**显式写出来**：实测它原先只是"清单顺序的巧合"——
+                        估值目的那几项恰好排在前面 —— 换个清单就不成立了 ✗
+      ③ `外部`     —— 要去查资料（外部作业）→ 放最后，因为它会打断思路
+      ④ `财报`     —— 报表里直接有的，扫描时一般已填好
+    排序**稳定**：同档同秩保持清单原顺序（每次问的次序都一样，可预期）。
+    """
+    buckets: dict[str, list[intake.Q]] = {
+        intake.ORIGIN_DERIVED: [], intake.ORIGIN_JUDGMENT: [],
+        intake.ORIGIN_EXTERNAL: [], intake.ORIGIN_FILING: [],
+    }
+    for q in qs:
+        key = getattr(q, "key", "")
+        if not key or key in filled:
+            continue
+        buckets.setdefault(getattr(q, "origin", "") or "", []).append(q)
+
+    out: list[tuple[intake.Q, str]] = []
+
+    def take(origin: str) -> None:
+        out.extend((q, _ask_why(q, origin)) for q in buckets.get(origin, []))
+
+    take(intake.ORIGIN_DERIVED)
+
+    judge = buckets.get(intake.ORIGIN_JUDGMENT, [])
+    pickable = [q for q in judge
+                if getattr(q, "options", ()) or getattr(q, "suggest", ())]
+    thoughtful = [q for q in judge if q not in pickable]
+    thoughtful.sort(key=_impact_rank)          # 稳定：同秩保持原顺序
+    for q in pickable + thoughtful:
+        out.append((q, _ask_why(q, intake.ORIGIN_JUDGMENT)))
+
+    take(intake.ORIGIN_EXTERNAL)
+    take(intake.ORIGIN_FILING)
+    return out
+
+
+def _ask_plan(path: str, filled: set[str]) -> dict:
+    """第 5 步的**问答计划**：还差哪些、先问哪个、为什么是这个次序。
+
+    `filled` **由页面传**（页面上已经填了哪些键）—— 服务端**不猜**用户在页面上填了什么。
+    每项都带 `reference`（材料里推出来的参考值）与 `origin`，界面据此决定
+    「沿用参考」还是「要你给」。
+    """
+    mat = _CACHE.get(path)
+    if mat is None:
+        return {"ok": False, "error": "这份材料还没载入过 —— 先在第一步解析它"}
+
+    qs = [q for q in intake.questions(mat) if getattr(q, "key", "")]
+    order = _ask_order(qs, filled)
+
+    def pub(q, why: str) -> dict:
+        return {"key": q.key, "label": q.label, "hint": q.hint, "unit": q.unit,
+                "origin": q.origin, "reference": q.reference, "group": q.group,
+                "options": list(getattr(q, "options", ()) or ()),
+                "suggest": list(getattr(q, "suggest", ()) or ()),
+                "why": why}
+
+    return {"ok": True, "total": len(qs),
+            "filled": len([q for q in qs if q.key in filled]),
+            "missing": len(order),
+            "next": pub(*order[0]) if order else None,
+            "order": [pub(q, why) for q, why in order]}
 
 
 def _ask_search(path: str, q: str, limit: int = 20) -> dict:
