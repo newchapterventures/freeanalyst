@@ -402,6 +402,26 @@
     <div class="step off" id="s4"><span class="n">04</span><span data-i18n="step.4"></span></div>
     <div class="step" id="s5"><span class="n">05</span><span data-i18n="step.5"></span></div>
     <div class="step" id="s6"><span class="n">06</span><span data-i18n="step.6"></span></div>
+    <!-- 07 是**另一条路**（财务分析），默认不显示；选了它才亮 -->
+    <div class="step hide" id="s7"><span class="n">07</span><span data-i18n="step.7"></span></div>
+  </div>
+
+  <!-- ── 入口：先问做什么 ─────────────────────────────────────────────
+       两条路共用「扫材料 + 认三张表」，之后分岔：
+         估值      → 假设 → 可比公司 → 报告
+         财务分析  → 杜邦分解（只读三张表，**不用回答任何假设**）
+       用**选择题**而不是对话框：不需要模型、一眼看懂、选错了他自己知道。
+       （对话框要先做意图识别 —— 那会把"模型不卡脖子"这条底线破掉。） -->
+  <div class="card" id="cardMode">
+    <h2><span class="idx">00</span><span data-i18n="mode.title"></span>
+        <small data-i18n="mode.sub"></small></h2>
+    <div class="grid2" style="gap:10px">
+      <button class="act" id="modeAppraise" onclick="setMode('appraise')"
+              data-i18n="mode.appraise"></button>
+      <button class="act" id="modeAnalyse" onclick="setMode('analyse')"
+              data-i18n="mode.analyse"></button>
+    </div>
+    <div id="modeMsg" class="mut" style="margin-top:10px;font-size:12px"></div>
   </div>
 
   <div class="notice" data-i18n-html="notice.scope"></div>
@@ -432,6 +452,18 @@
     <div id="meta" style="margin-top:14px"></div>
     <div id="unitBox" style="margin-top:14px"></div>
     <div id="srvNote" class="notice quiet hide" style="margin:14px 0 0" data-i18n="s2.srvnote"></div>
+  </div>
+
+  <!-- ── 07 · 财务分析（另一条路的终点）────────────────────────────────
+       **只读三张表**，不碰假设 —— 所以它跟在 card2（三张表）后面，
+       而不是跟在估值流程后面。 -->
+  <div class="card hide" id="card7">
+    <h2><span class="idx">07</span><span data-i18n="s7.title"></span>
+        <small data-i18n="s7.sub"></small></h2>
+    <div class="notice" style="margin-bottom:14px" data-i18n-html="s7.notice"></div>
+    <div><button class="act" id="anBtn" onclick="analyse()" data-i18n="s7.btn"></button></div>
+    <div id="anMsg" class="mut" style="margin-top:10px;font-size:12px"></div>
+    <div id="anOut" style="margin-top:12px"></div>
   </div>
 
   <div class="card hide" id="card4">
@@ -607,7 +639,7 @@ const I18N = {
     "ask.refbad": "这一项材料里推不出来 —— 要你自己给",
     "step.1": "载入材料", "step.2": "报表识别与勾稽校验",
     "step.3": "行业建议 · 未接入", "step.4": "可比公司",
-    "step.5": "估值假设", "step.6": "估值结论",
+    "step.5": "估值假设", "step.6": "估值结论", "step.7": "财务分析",
     "notice.scope": "<b>本期实现第 1、2、5、6 步，以及第 4 步（可比公司 · 只做基本面）。</b>第 3 步（行业建议）尚需接入流程层，<b>还没做</b> —— 不呈现为可用功能。可比公司参数也可在第 5 步的可选输入中提供，该路径已贯通。",
     "s1.title": "载入尽调材料", "s1.sub": "标的材料目录，或单一 PDF 文件",
     "s1.ph": "/path/to/target/materials/　或　目标公司 2024 年度审计报告.pdf",
@@ -623,6 +655,18 @@ const I18N = {
     "s1.running": "<span class=\"warn\">正在解析材料…</span>（PDF 需光学识别，可能耗时数分钟；请保持页面开启）",
     "s1.ok": "<span class=\"ok\">解析完成</span>",
     "s2.title": "报表识别与勾稽校验",
+// ── 入口（两条路）+ 07 财务分析 ──
+"mode.title": "你要做什么？", "mode.sub": "两个功能，各自独立",
+"mode.appraise": "① 估值　（三张表 → 估值区间：DCF + 乘数法）",
+"mode.analyse": "② 财务分析　（杜邦分解：ROE = 净利率 × 周转率 × 权益乘数）",
+"mode.msgAppraise": "走完整流程：假设 → 可比公司 → 估值报告。",
+"mode.msgAnalyse": "只读三张表，不用回答任何假设。",
+"s7.title": "财务分析（杜邦分解）",
+"s7.sub": "ROE 拆成 净利率 × 总资产周转率 × 权益乘数",
+"s7.btn": "算一下",
+"s7.notice": "只用到三张表里的四个数（净利润 / 营业收入 / 总资产 / 所有者权益）—— <b>不需要任何假设</b>，也不去网上取任何东西。",
+"s7.notapp": "不适用（或数还没凑齐）：",
+"s7.factor": "项目", "s7.value": "数值", "s7.unit": "单位",
     "s2.sub": "三张报表识别结果 · 勾稽校验状态 · 金额单位与会计口径",
     "s2.srvnote": "服务端产出的文本（报表标签、勾稽项名称、假设条目、报告正文）目前为中文；英文界面仅覆盖界面文案。引擎层词表为后续工作。",
     "th.statement": "报表", "th.source": "来源", "th.mapped": "映射行数", "th.status": "状态",
@@ -674,7 +718,7 @@ const I18N = {
     "pill.declare": "Missing inputs are declared, never assumed",
     "step.1": "Load materials", "step.2": "Extraction & reconciliation",
     "step.3": "Industry guidance · not wired", "step.4": "Comparables",
-    "step.5": "Valuation assumptions", "step.6": "Valuation conclusion",
+    "step.5": "Valuation assumptions", "step.6": "Valuation conclusion", "step.7": "Financial analysis",
     "notice.scope": "<b>Steps 1, 2 and 5, 6 plus Step 4 (comparables, fundamentals only) are implemented in this build.</b> Step 3 (industry guidance) requires the workflow layer and is <b>not built</b> — it is not presented as available. Comparable inputs can also be supplied under Step 5; that path is wired.",
     "s1.title": "Load due diligence materials", "s1.sub": "Target material folder, or a single PDF",
     "s1.ph": "/path/to/target/materials/　or　Target FY2024 audit report.pdf",
@@ -690,6 +734,18 @@ const I18N = {
     "s1.running": "<span class=\"warn\">Parsing materials…</span> (PDF requires OCR and may take several minutes; keep this page open)",
     "s1.ok": "<span class=\"ok\">Parsing complete</span>",
     "s2.title": "Extraction & reconciliation",
+// ── entry (two paths) + 07 financial analysis ──
+"mode.title": "What do you want to do?", "mode.sub": "two independent tools",
+"mode.appraise": "① Valuation　(statements → value range: DCF + multiples)",
+"mode.analyse": "② Financial analysis　(DuPont: ROE = margin × turnover × leverage)",
+"mode.msgAppraise": "Full flow: assumptions → comparables → valuation report.",
+"mode.msgAnalyse": "Reads the three statements only — no assumptions to answer.",
+"s7.title": "Financial analysis (DuPont)",
+"s7.sub": "ROE split into margin × asset turnover × equity multiplier",
+"s7.btn": "Compute",
+"s7.notice": "Uses only four numbers from the statements (net income / revenue / total assets / equity) — <b>no assumptions</b>, and nothing is fetched from the internet.",
+"s7.notapp": "Not applicable (or inputs incomplete):",
+"s7.factor": "Item", "s7.value": "Value", "s7.unit": "Unit",
     "s2.sub": "Statements identified · reconciliation status · reporting unit and accounting basis",
     "s2.srvnote": "Text produced by the engine (statement labels, reconciliation item names, assumption entries, report body) is currently Chinese only; the English interface covers interface copy. Engine-level translation tables are follow-up work.",
     "th.statement": "Statement", "th.source": "Source", "th.mapped": "Rows mapped", "th.status": "Status",
@@ -969,6 +1025,78 @@ function wireDrop(){
   });
 }
 
+// ─── 入口：两条路（估值 / 财务分析）─────────────────────────────────────
+// 共用「扫材料 + 认三张表」，之后分岔。**默认估值** —— 老用户看不出变化。
+function setMode(m){
+  STATE.mode = m;
+  const isAn = m === "analyse";
+  $("modeAppraise").classList.toggle("on", !isAn);
+  $("modeAnalyse").classList.toggle("on", isAn);
+  $("modeMsg").textContent = t(isAn ? "mode.msgAnalyse" : "mode.msgAppraise");
+  $("s7").classList.toggle("hide", !isAn);          // 07 只在财务分析时出现
+  if(!isAn) $("card7").classList.add("hide");
+  if(STATE.data) applyMode();                       // 已经扫过了：立刻重排
+}
+
+// 按模式决定显示哪些卡片。**只在财务分析时藏 03–06** ——
+// 估值模式一个字都不动（老流程保持原样）。
+function applyMode(){
+  const isAn = STATE.mode === "analyse";
+  if(!isAn) return;
+  ["card4","cardAsk","card5","card6"].forEach(id => {
+    const el = $(id); if(el) el.classList.add("hide");
+  });
+  ["s3","s4","s5","s6"].forEach(id => {
+    const el = $(id); if(el) el.classList.add("off");
+  });
+  if(STATE.data) $("card7").classList.remove("hide");
+}
+
+async function analyse(){
+  if(!STATE.path){ $("anMsg").textContent = t("s1.needpath"); return; }
+  $("anBtn").disabled = true;
+  $("anMsg").innerHTML = t("s1.running");
+  try{
+    const d = await post("/api/analyse", {path: STATE.path, unit: STATE.unit});
+    $("anBtn").disabled = false;
+    if(!d.ok){ $("anMsg").innerHTML = '<span class="bad">' + esc(d.error || "") + '</span>'; return; }
+    $("anMsg").innerHTML = "";
+    renderDupont(d);
+  }catch(e){
+    $("anBtn").disabled = false;
+    $("anMsg").innerHTML = '<span class="bad">' + esc(String(e)) + '</span>';
+  }
+}
+
+// 杜邦的渲染。**算不出来就说算不出来** —— 不显示一堆"—"糊过去。
+function renderDupont(d){
+  const head = '<div class="mut" style="font-size:12px;margin-bottom:8px">' +
+    esc(d.period || "") + (d.unit ? " · " + esc(t("s7.unit")) + " " + esc(d.unit) : "") +
+    '</div>';
+  if(!d.applicable){
+    $("anOut").innerHTML = head + '<div class="notice issue">' + esc(t("s7.notapp")) +
+      " " + esc(d.why_not || "") + '</div>';
+    return;
+  }
+  let h = head + '<table><thead><tr><th>' + esc(t("s7.factor")) +
+          '</th><th class="num">' + esc(t("s7.value")) + '</th></tr></thead><tbody>';
+  for(const raw of d.lines){
+    const s = String(raw).trim();
+    if(!s || s.indexOf("杜邦分析（") === 0) continue;
+    const m = s.match(/^(.*?)\s{2,}(.*)$/);
+    h += "<tr><td>" + esc(m ? m[1] : s) + '</td><td class="num">' +
+         esc(m ? m[2] : "") + "</td></tr>";
+  }
+  h += "</tbody></table>";
+  for(const n of (d.notes || []))
+    h += '<div class="notice quiet" style="margin-top:10px">' + esc(n) + "</div>";
+  $("anOut").innerHTML = h;
+}
+
+// 上屏：默认「估值」—— 老流程一个字都不变。两件事一定是**人选的**，不替他猜。
+STATE.mode = STATE.mode || "appraise";
+setMode(STATE.mode);
+
 function scan(){
   if(DEMO_DONE){
     $("scanMsg").innerHTML = t("demo.msg");
@@ -998,6 +1126,7 @@ function scan(){
     $("cardAsk").classList.remove("hide");
     $("card5").classList.remove("hide");
     $("srvNote").classList.remove("hide");
+    applyMode();                       // 财务分析模式下：藏掉 03–06、亮出 07
     $("card2").scrollIntoView({behavior:"smooth", block:"start"});
   }).catch(e => {
     $("scanBtn").disabled = false;

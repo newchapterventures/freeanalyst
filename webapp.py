@@ -58,9 +58,10 @@ DEFAULT_PORT = 8765
 #: 接口清单与版本 —— 页面拿它跟自己对表。
 #: **真踩过**：页面加了「选择文件夹…」，但跑着的服务还是旧进程（Python 代码不会热加载），
 #: 于是点下去只回一句 `unknown endpoint`。现在页面能自己发现这件事并说清楚。
-VERSION = "0.42"
+VERSION = "0.43"
 ENDPOINTS = ("health", "scan", "appraise", "pick", "config", "gate", "cloud-check",
-             "pull", "pull-status", "model-check", "onboarded", "comps", "ask")
+             "pull", "pull-status", "model-check", "onboarded", "comps", "ask",
+             "analyse")
 #: 页面依赖的**能力**标记（比接口更细一层：同一个接口也可能少字段）。
 #: 页面会逐条核对，缺哪条就提示"服务是旧进程"。
 #: 真踩过：百分比字段加进引擎后没重启服务，页面上那些框**静默地没有 %** ——
@@ -869,6 +870,38 @@ def api_appraise(path: str, unit: str, answers: dict[str, str],
 
 # ─────────────────── 模型配置页（本机 / 云端 / 用途 / 审计） ───────────────────
 
+def api_analyse(path: str, unit: str = "") -> dict:
+    """**第 07 步：财务分析**（现在只承接杜邦分解）。
+
+    ## 为什么它是独立的一条路，而不是估值流程的最后一步
+    它**只读三张表**里的四个数（净利 / 收入 / 总资产 / 权益），
+    不碰任何假设 —— 所以想做财务分析的人**不该**先回答"永续增长率是多少"。
+    两条路共用的是「扫材料 + 认三张表」，之后分岔：
+
+        扫材料 → 三张表 ─┬→ 估值（假设 → 可比 → 报告）
+                        └→ 财务分析（杜邦）
+
+    ## 缺数就明说
+    返回 `applicable=False` + `why_not`，**不拿 0 填、也不假装跑过**。
+    """
+    key = str(path)
+    mat = _CACHE.get(key) or intake.scan(path, unit=unit)
+    _CACHE[key] = mat
+
+    from valuation.dupont import analyse as _dupont
+
+    d = _dupont(mat.statements)
+    return {
+        "ok": True,
+        "applicable": d.applicable,
+        "why_not": d.why_not,
+        "lines": d.as_lines(),
+        "notes": list(d.notes),
+        "unit": getattr(mat.statements, "unit", "") or "",
+        "period": getattr(mat.statements, "period", "") or "",
+    }
+
+
 def api_audit(n: int = 20) -> list[dict]:
     """出网审计的尾巴 —— **让"发了什么"看得见**。
 
@@ -1312,6 +1345,10 @@ class Handler(BaseHTTPRequestHandler):
                                            bool(body.get("consent_ok"))))
             elif self.path == "/api/onboarded":
                 self._json(api_onboarded())
+            elif self.path == "/api/analyse":
+                # 第 07 步：财务分析（只读三张表，不碰假设）
+                self._json(api_analyse(body.get("path") or "",
+                                       body.get("unit") or ""))
             elif self.path == "/api/comps":
                 self._json(api_comps(body or {}))
             elif self.path == "/api/ask":
