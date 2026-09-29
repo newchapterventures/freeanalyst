@@ -168,6 +168,7 @@ def run_report(cfg: dict, base: Path, *, statements=None,
         from financials.cli import StatementConfigError, apply_facts, run_statements
         try:
             st = run_statements(cfg, out, base)
+            statements = st                      # 让后面的分析层也能用上
             filled = apply_facts(cfg, st)
             if filled:
                 out.append("\n  已自动填入（事实类，均可核对到行）：")
@@ -175,6 +176,19 @@ def run_report(cfg: dict, base: Path, *, statements=None,
                     out.append(f"    · {line}")
         except StatementConfigError as exc:
             out.append(f"\n  ⚠ 三张表解析跳过：{exc}")
+
+    # ---------------- 经营回报：杜邦分解 ----------------
+    #
+    # 放在**三张表之后、假设之前**，因为它是**事实层**：
+    # 只用四个已经取到的数（净利 / 收入 / 总资产 / 权益），不依赖任何假设。
+    # （这也是它跟估值流程可以**分开**的原因 —— 见 docs/进化路线.md 的"两条路"。）
+    if statements is not None:
+        from valuation.dupont import analyse as _dupont
+
+        dp = _dupont(statements)
+        out.append(hr("经营回报（杜邦分解）"))
+        for line in dp.as_lines():
+            out.append("  " + line)
 
     # ---------------- WACC（可选，只有 DCF 需要） ----------------
     wacc_val: float | None = None
