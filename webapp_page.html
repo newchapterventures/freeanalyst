@@ -296,6 +296,13 @@
   .onb-lang button{background:transparent;border:0;color:var(--mut);font-family:var(--mono);
        font-size:10.5px;letter-spacing:.06em;padding:4px 9px;cursor:pointer}
   .onb-lang button.on{color:var(--pri);background:rgba(0,229,160,.10)}
+  /* 最后一屏的两条路：整行大按钮，悬停有明确反馈（改动要看得见） */
+  #onbMode{display:flex;flex-direction:column;gap:10px;margin:18px 0 4px}
+  .modebtn{display:block;width:100%;text-align:left;padding:13px 15px;cursor:pointer;
+       background:rgba(255,255,255,.02);border:1px solid var(--line);border-radius:6px;
+       color:var(--fg);font-family:inherit;font-size:13.5px;line-height:1.5;
+       transition:border-color .15s ease, background .15s ease}
+  .modebtn:hover{border-color:var(--pri);background:rgba(0,229,160,.06)}
 </style></head><body><div class="wrap">
 
   <!-- 首次引导（三屏）。**不写术语**：用的人是不写代码的 associate。
@@ -311,8 +318,17 @@
       </div>
       <h2><span class="tick">▸</span><span id="onbTitle"></span></h2>
       <div id="onbBody"></div>
+      <!-- 最后一屏：**在这里选做什么**。
+           放在弹层里而不是页面顶上——页面本体已经很长，再摆一张大卡
+           只会让新用户更无从下手（2026-09-29 用户意见）。 -->
+      <div id="onbMode" class="hide">
+        <button class="modebtn" id="onbModeAppraise" onclick="onbPick('appraise')"
+                data-i18n="mode.appraise"></button>
+        <button class="modebtn" id="onbModeAnalyse" onclick="onbPick('analyse')"
+                data-i18n="mode.analyse"></button>
+      </div>
       <div class="onb-foot">
-        <span class="onb-dots" id="onbDots"><i></i><i></i><i></i></span>
+        <span class="onb-dots" id="onbDots"><i></i><i></i><i></i><i></i></span>
         <span class="onb-key" data-i18n="onb.hint"></span>
         <div class="onb-lang" role="group">
           <button type="button" data-onblang="zh">中文</button>
@@ -370,6 +386,8 @@
            少一层 JS 依赖 —— JS 没跑、图还没渲染完，它也在。 -->
       <div class="byline">by New Chapter Ventures</div>
     </div>
+    <a class="doclink" id="modeLink" href="#" onclick="onbShow(3);return false"
+       data-i18n="nav.mode"></a>
     <a class="doclink" id="docLink" href="/doc" data-i18n="nav.doc"></a>
     <a class="doclink gear" id="cfgLink" href="/config" data-i18n="nav.config"></a>
     <div class="lang" role="group">
@@ -404,24 +422,6 @@
     <div class="step" id="s6"><span class="n">06</span><span data-i18n="step.6"></span></div>
     <!-- 07 是**另一条路**（财务分析），默认不显示；选了它才亮 -->
     <div class="step hide" id="s7"><span class="n">07</span><span data-i18n="step.7"></span></div>
-  </div>
-
-  <!-- ── 入口：先问做什么 ─────────────────────────────────────────────
-       两条路共用「扫材料 + 认三张表」，之后分岔：
-         估值      → 假设 → 可比公司 → 报告
-         财务分析  → 杜邦分解（只读三张表，**不用回答任何假设**）
-       用**选择题**而不是对话框：不需要模型、一眼看懂、选错了他自己知道。
-       （对话框要先做意图识别 —— 那会把"模型不卡脖子"这条底线破掉。） -->
-  <div class="card" id="cardMode">
-    <h2><span class="idx">00</span><span data-i18n="mode.title"></span>
-        <small data-i18n="mode.sub"></small></h2>
-    <div class="grid2" style="gap:10px">
-      <button class="act" id="modeAppraise" onclick="setMode('appraise')"
-              data-i18n="mode.appraise"></button>
-      <button class="act" id="modeAnalyse" onclick="setMode('analyse')"
-              data-i18n="mode.analyse"></button>
-    </div>
-    <div id="modeMsg" class="mut" style="margin-top:10px;font-size:12px"></div>
   </div>
 
   <div class="notice" data-i18n-html="notice.scope"></div>
@@ -656,11 +656,11 @@ const I18N = {
     "s1.ok": "<span class=\"ok\">解析完成</span>",
     "s2.title": "报表识别与勾稽校验",
 // ── 入口（两条路）+ 07 财务分析 ──
-"mode.title": "你要做什么？", "mode.sub": "两个功能，各自独立",
+"nav.mode": "选择功能",
+"onb.4.t": "你要做什么？",
+"onb.4.b": "两个功能，各自独立。<br>① <b>估值</b>：走完整流程 —— 假设 → 可比公司 → 估值报告。<br>② <b>财务分析</b>：只读三张表，把 ROE 拆成 净利率 × 周转率 × 权益乘数，<b>不用回答任何假设</b>。<br>定了以后还能随时改（顶栏「选择功能」）。",
 "mode.appraise": "① 估值　（三张表 → 估值区间：DCF + 乘数法）",
 "mode.analyse": "② 财务分析　（杜邦分解：ROE = 净利率 × 周转率 × 权益乘数）",
-"mode.msgAppraise": "走完整流程：假设 → 可比公司 → 估值报告。",
-"mode.msgAnalyse": "只读三张表，不用回答任何假设。",
 "s7.title": "财务分析（杜邦分解）",
 "s7.sub": "ROE 拆成 净利率 × 总资产周转率 × 权益乘数",
 "s7.btn": "算一下",
@@ -735,11 +735,11 @@ const I18N = {
     "s1.ok": "<span class=\"ok\">Parsing complete</span>",
     "s2.title": "Extraction & reconciliation",
 // ── entry (two paths) + 07 financial analysis ──
-"mode.title": "What do you want to do?", "mode.sub": "two independent tools",
+"nav.mode": "Choose tool",
+"onb.4.t": "What do you want to do?",
+"onb.4.b": "Two independent tools.<br>① <b>Valuation</b> — the full flow: assumptions → comparables → valuation report.<br>② <b>Financial analysis</b> — reads the three statements only, splitting ROE into margin × turnover × leverage. <b>No assumptions to answer.</b><br>You can switch at any time from the top bar.",
 "mode.appraise": "① Valuation　(statements → value range: DCF + multiples)",
 "mode.analyse": "② Financial analysis　(DuPont: ROE = margin × turnover × leverage)",
-"mode.msgAppraise": "Full flow: assumptions → comparables → valuation report.",
-"mode.msgAnalyse": "Reads the three statements only — no assumptions to answer.",
 "s7.title": "Financial analysis (DuPont)",
 "s7.sub": "ROE split into margin × asset turnover × equity multiplier",
 "s7.btn": "Compute",
@@ -1026,16 +1026,25 @@ function wireDrop(){
 }
 
 // ─── 入口：两条路（估值 / 财务分析）─────────────────────────────────────
-// 共用「扫材料 + 认三张表」，之后分岔。**默认估值** —— 老用户看不出变化。
+// **入口在首次引导的最后一屏**（用户 2026-09-29 的意见：页面已经很长，
+// 再在顶上摆一张大卡，新用户更无从下手）。返回用户走顶栏的「选择功能」。
+// 共用「扫材料 + 认三张表」，之后分岔。**默认估值** —— 老流程一个字都不变。
 function setMode(m){
-  STATE.mode = m;
-  const isAn = m === "analyse";
-  $("modeAppraise").classList.toggle("on", !isAn);
-  $("modeAnalyse").classList.toggle("on", isAn);
-  $("modeMsg").textContent = t(isAn ? "mode.msgAnalyse" : "mode.msgAppraise");
+  STATE.mode = (m === "analyse") ? "analyse" : "appraise";
+  const isAn = STATE.mode === "analyse";
   $("s7").classList.toggle("hide", !isAn);          // 07 只在财务分析时出现
   if(!isAn) $("card7").classList.add("hide");
   if(STATE.data) applyMode();                       // 已经扫过了：立刻重排
+  // 引导弹层里的两个选项：给选中态（弹层没开时这两个元素可能不在，一律空安全）
+  const a = $("onbModeAppraise"), b = $("onbModeAnalyse");
+  if(a) a.classList.toggle("on", !isAn);
+  if(b) b.classList.toggle("on", isAn);
+}
+
+// 在引导里选完 → 记下并关掉弹层。**没有"默认"这一说**：选了什么就是什么。
+function onbPick(m){
+  setMode(m);
+  onbDone();
 }
 
 // 按模式决定显示哪些卡片。**只在财务分析时藏 03–06** ——
@@ -1620,11 +1629,17 @@ const STATE = { path:"", unit:"", data:null };
 // 天天用的功能不该每次都被一段介绍挡着（那是骚扰，不是引导）。
 function onbShow(i){
   ONB_I = i;
-  const n = 3;
+  const n = 4;
+  const last = (i === n - 1);
   $("onbTitle").innerHTML = t("onb." + (i+1) + ".t");
   $("onbBody").innerHTML = t("onb." + (i+1) + ".b");
-  $("onbNext").textContent = (i === n-1) ? t("onb.start") : t("onb.next");
+  $("onbNext").textContent = last ? t("onb.start") : t("onb.next");
   $("onbSkip").textContent = t("onb.skip");
+  // 最后一屏：**把"跳过""下一步"收起来，换成两条路的选择** ——
+  // "做什么"必须由人选，不给默认。
+  $("onbMode").classList.toggle("hide", !last);
+  $("onbNext").classList.toggle("hide", last);
+  $("onbSkip").classList.toggle("hide", last);
   const idx = $("onbIdx");
   if(idx) idx.textContent = String(i+1).padStart(2, "0") + " / " +
                             String(n).padStart(2, "0");
@@ -1637,7 +1652,7 @@ function onbShow(i){
 }
 
 function onbNext(){
-  if(ONB_I >= 2){ onbDone(); return; }
+  if(ONB_I >= 3){ onbDone(); return; }     // 最后一屏（04）正常不会走到这里
   onbShow(ONB_I + 1);
 }
 
