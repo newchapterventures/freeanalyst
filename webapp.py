@@ -237,8 +237,14 @@ def api_comps(payload: dict) -> dict:
 
     metric = (payload.get("metric") or "revenue_cagr").strip()
     target_unit_early = payload.get("target_unit") or ""
-    scope_early = _comps_scope(payload.get("target_market") or "", target_unit_early,
-                               se.MARKET, se.CURRENCY,
+    # **先定标的的市场**，再用它决定"同行从哪来、什么币种"。
+    # 顺序反了会给出错理由 —— 实测踩到：A 股标的问倍数时，报的是"同行在美股"，
+    # 而真因是 A 股缺股数（两个都是"不能算倍数"，但不是一回事）。
+    _declared = (payload.get("target_market") or "").strip().lower()
+    is_cn = (_declared or _market_of(target_unit_early)) == "cn"
+    peer_market0, peer_currency0 = ("cn", "CNY") if is_cn else (se.MARKET, se.CURRENCY)
+    scope_early = _comps_scope(_declared, target_unit_early,
+                               peer_market0, peer_currency0,
                                payload.get("target_currency") or "")
     if metric in MULTIPLE_METRICS:
         # 三类原因要分开说 —— 说错了用户会去改错的地方
@@ -250,40 +256,65 @@ def api_comps(payload: dict) -> dict:
                 f"倍数各自绑定市场的指数与估值中枢，跨市场会带进方向不明的偏差。"
                 f"请用**同市场**同行，或改用基本面比率。")}
     is_multiple = metric in MULTIPLE_METRICS
-    if not is_multiple and metric not in ad.METRIC_FUNCS:
-        usable = "、".join(list(ad.METRIC_FUNCS) + list(MULTIPLE_METRICS))
-        return {"ok": False, "error": f"不支持的指标：{metric}（可用：{usable}）"}
+    # A 股同行用东财那套指标（没有 EBITDA 率，见 docs/数据源-中港财务.md）
+    all_metrics = {**ad.METRIC_FUNCS, **ad.CN_METRIC_FUNCS, **MULTIPLE_METRICS}
+    if metric not in all_metrics:
+        return {"ok": False, "error": f"不支持的指标：{metric}（可用：{'、'.join(all_metrics)}）"}
     years = int(payload.get("years") or 3)
     as_of = (payload.get("as_of") or "").strip() or None
 
-    pairs: list[tuple[str, str]] = []
-    missing: list[str] = []
-    for t in tickers:
-        cik = se.ticker_to_cik(t)
-        if cik:
-            pairs.append((cik, t))
-        else:
-            missing.append(t)
-    if missing:
-        return {"ok": False, "error":
-                f"这些代码在 SEC 查不到 → {'、'.join(missing)}。"
-                "**目前只支持美股** —— A 股/港股还没有免接口的数据源。"
-                "（留空不是缺陷：拿不到同行分布时，不凑一个参照系才是对的。）"}
-
-    if is_multiple:
-        # 市值类倍数：**市值 = 基准日收盘价 × 股数**，分母在同一份财报里。
-        # 三样东西必须齐：代码（价格源要）、CIK（财报要）、基准日（两边都要）。
-        stat = ad.build_peer_multiples(
-            [(cik, code, code) for cik, code in pairs],
-            metric=metric, as_of=as_of, market=se.MARKET, unit=se.CURRENCY)
-        title, fmt = MULTIPLE_METRICS[metric], ad.MULTIPLE_FUNCS[metric][1]
+    if is_cn:
+        # ── A 股同行：东财 datacenter（六位代码直接查，没有 CIK 这一层）──────
+        if is_multiple:
+            return {"ok": False, "error": (
+                "A 股同行的**倍数**还算不了：倍数要先有市值，而市值 = 基准日股价 × "
+                "**股数**；A 股的股数要从盘口接口取（东财 push2 的 f84、或腾讯的"
+                "总市值÷现价），那两个主机**没在公开域白名单里** —— "
+                "要不要开是安全面的决定，**由你拍板**，不擅自加。\n"
+                f"现在能算的是：{'、'.join(ad.CN_METRIC_FUNCS)}。")}
+        if metric not in ad.CN_METRIC_FUNCS:
+            return {"ok": False, "error": (
+                f"指标「{metric}」是美股那套；A 股同行能算的是："
+                f"{'、'.join(ad.CN_METRIC_FUNCS)}。"
+                f"（两边口径不同 —— A 股没有 EBITDA 率，因为东财没有折旧字段。）")}
+        stat = ad.build_cn_peer_stat(tickers, metric=metric, years=years, as_of=as_of)
+        _, title, fmt = ad.CN_METRIC_FUNCS[metric]
+        peer_market, peer_currency = "cn", "CNY"
     else:
-        stat = ad.build_peer_stat(pairs, metric=metric, years=years, as_of=as_of)
-        _, title, fmt = ad.METRIC_FUNCS[metric]
-    # 市场与币种**由源自己声明** —— 不许在这里写死（接中/港源时全靠这个）
-    peer_market = se.MARKET
+        pairs: list[tuple[str, str]] = []
+        missing: list[str] = []
+        for t in tickers:
+            cik = se.ticker_to_cik(t)
+            if cik:
+                pairs.append((cik, t))
+            else:
+                missing.append(t)
+        if missing:
+            return {"ok": False, "error":
+                    f"这些代码在 SEC 查不到 → {'、'.join(missing)}。"
+                    "**标的在美股时，同行也要是美股代码**；"
+                    "若标的是 A 股，请把上面的「标的所在市场」选成 A 股（或让单位带人民币）。"
+                    "（留空不是缺陷：拿不到同行分布时，不凑一个参照系才是对的。）"}
+
+        if is_multiple:
+            # 市值类倍数：**市值 = 基准日收盘价 × 股数**，分母在同一份财报里。
+            # 三样东西必须齐：代码（价格源要）、CIK（财报要）、基准日（两边都要）。
+            stat = ad.build_peer_multiples(
+                [(cik, code, code) for cik, code in pairs],
+                metric=metric, as_of=as_of, market=se.MARKET, unit=se.CURRENCY)
+            title, fmt = MULTIPLE_METRICS[metric], ad.MULTIPLE_FUNCS[metric][1]
+        else:
+            stat = ad.build_peer_stat(pairs, metric=metric, years=years, as_of=as_of)
+            _, title, fmt = ad.METRIC_FUNCS[metric]
+        # 市场与币种**由源自己声明** —— 不许在这里写死（接中/港源时全靠这个）
+        peer_market, peer_currency = se.MARKET, se.CURRENCY
+
     target_unit = target_unit_early
-    scope = scope_early
+    # 市场层**按同行的实际市场重算** —— cn 分支的同行是人民币，不能用美股那套币种。
+    # （倍数那道闸在分支里已经先判过了，所以这里重算不会改变它的结论。）
+    scope = _comps_scope(payload.get("target_market") or "", target_unit_early,
+                         peer_market, peer_currency,
+                         payload.get("target_currency") or "")
     # 绝对规模（收入是多少钱）跨币种**不能直接并列**：同行分布自身是同一币种、有效，
     # 但"标的 vs 它们"要先换算。比率（增速/利润率）没这个问题。
     scale_note = ""

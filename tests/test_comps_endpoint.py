@@ -46,10 +46,13 @@ class TestCompsEndpoint(unittest.TestCase):
         self.assertIn("不支持的指标", out["error"])
 
     def test_only_us_tickers_with_reason_and_way_out(self):
+        """美股标的给了查不到的代码 → 说清**怎么办**，不是一句"只支持美股"。"""
         with mock.patch("datasources.sec_edgar.ticker_to_cik", return_value=None):
-            out = webapp.api_comps({"tickers": "600519, 0700"})
+            out = webapp.api_comps({"tickers": "600519, 0700", "target_market": "us"})
         self.assertFalse(out["ok"])
-        self.assertIn("只支持美股", out["error"])
+        self.assertIn("SEC 查不到", out["error"])
+        self.assertIn("同行也要是美股代码", out["error"])
+        self.assertIn("A 股", out["error"], "得告诉 A 股标的该怎么选")
         self.assertIn("不凑一个参照系", out["error"])
 
     def test_returns_distribution_and_flags_small_sample(self):
@@ -134,12 +137,25 @@ class TestCompsMarketConsistency(unittest.TestCase):
         self.assertIn("同市场", w)                            # 给可走的路
 
     def test_endpoint_reports_the_target_market(self):
+        """★ 人民币标的现在**自动走 A 股同行** —— 路由按标的的市场选源。
+
+        这是接线的核心变化：以前只认美股，现在同一个接口按市场分流。
+        """
+        with mock.patch("valuation.advisor.build_cn_peer_stat") as cn_stat:
+            cn_stat.return_value = _stat()
+            out = webapp.api_comps({"tickers": "600519", "target_unit": "人民币千元",
+                                    "metric": "op_margin"})
+        self.assertEqual(out["peer_market"], "cn")
+        self.assertEqual(out["target_market"], "cn")
+        self.assertTrue(cn_stat.called, "人民币标的没走 A 股那条路")
+
+    def test_us_target_still_uses_the_us_path(self):
         with mock.patch("datasources.sec_edgar.ticker_to_cik", return_value="0000001"), \
              mock.patch("valuation.advisor.build_peer_stat", return_value=_stat()):
-            out = webapp.api_comps({"tickers": "LEA", "target_unit": "人民币千元"})
+            out = webapp.api_comps({"tickers": "LEA", "target_market": "us",
+                                    "target_currency": "USD"})
         self.assertEqual(out["peer_market"], "us")
-        self.assertEqual(out["target_market"], "cn")
-        self.assertTrue(out["market_warning"], "跨市场却没警告")
+        self.assertTrue(out["market_warning"] == "" or "口径" in out["market_warning"])
 
 
 class TestMarketScopeLayer(unittest.TestCase):
@@ -218,15 +234,19 @@ class TestMultiplesGate(unittest.TestCase):
         self.assertIn("未声明", out["error"])
         self.assertNotIn("不支持的指标", out["error"], "又拿「不支持」糊弄人了")
 
-    def test_cross_market_multiple_is_refused_for_the_market_reason(self):
-        """源有行情、但跨市场 —— 理由应该是**市场**，不是缺价。"""
-        from datasources import sec_edgar
-        with mock.patch.object(sec_edgar, "HAS_PRICES", True):
-            out = webapp.api_comps({"tickers": "LEA,MGA", "metric": "ev_ebitda",
-                                    "target_unit": "人民币千元"})
+    def test_cn_multiple_says_shares_are_the_missing_piece(self):
+        """★ A 股同行问倍数 —— 缺的是**股数**（要从盘口接口取，而那两个主机没开）。
+
+        这条以前测的是"跨市场"那个理由；**接线之后跨市场的情形被路由消掉了**
+        （同行永远与标的同市场），所以这里改成钉真正的那个原因。
+        跨市场那道闸本身另有单测（`TestMarketScopeLayer`）。
+        """
+        out = webapp.api_comps({"tickers": "600519,MGA", "metric": "ev_ebitda",
+                                "target_unit": "人民币千元"})
         self.assertFalse(out["ok"])
-        self.assertIn("跨市场", out["error"])
-        self.assertIn("同市场", out["error"])
+        self.assertIn("股数", out["error"])
+        self.assertIn("白名单", out["error"])
+        self.assertIn("拍板", out["error"], "要明说这件事由用户决定")
 
     def test_ev_multiple_computes_with_net_debt(self):
         """EV 类已经能算了 —— 前提是**净债务取得到**；取不到就记缺口。"""

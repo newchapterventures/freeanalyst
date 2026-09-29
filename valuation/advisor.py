@@ -294,6 +294,141 @@ _DENOM_TAGS.update({
 })
 
 
+#: A 股同行的指标：metric -> (显示名, 格式, 怎么算)
+CN_METRIC_FUNCS: dict[str, tuple[str, str, str]] = {
+    "revenue_cagr": ("近三年收入 CAGR", ".2%",
+                     "用营业总收入；A 股利润表是**年内累计**，年与年之间可直接比"),
+    "op_margin": ("营业利润率", ".1%",
+                  "**不是 EBITDA 率** —— 东财没有固定资产折旧字段，"
+                  "算不出 EBITDA（见 docs/数据源-中港财务.md）"),
+    "revenue_scale": ("营业总收入规模", ",.0f", "最近一个年度报告期"),
+}
+
+
+def build_cn_peer_stat(
+    codes: list[str],
+    metric: str = "revenue_cagr",
+    years: int = 3,
+    as_of: str | None = None,
+) -> PeerStat:
+    """A 股同行的**基本面分布**（不含倍数）。
+
+    ## 为什么先只做基本面
+    算倍数要市值 = 基准日价 × **股数**，而 A 股的股数要打盘口接口
+    （东财 `push2` / 腾讯 `qt.gtimg.cn`）—— 那两个主机**没在白名单里**，
+    而且模块注释里明确写过"不用 push2"。要不要开是**安全面的决定**，
+    所以这一层先做到不需要新主机就能给的东西：**增速 / 利润率 / 规模**。
+
+    ## 口径
+    用 `datasources.cn_financials`（东财 datacenter 结构化报表，四套行业模板）。
+    取不到的每一家都记进 gaps —— 不静默丢弃，也不拿 0 填。
+
+    `as_of` 给了就只用到该日为止的**年度**报告期（A 股的年度报告期是 12-31）。
+    """
+    if metric not in CN_METRIC_FUNCS:
+        raise ValueError(f"不认识的 A 股指标 {metric!r}，可用：{'、'.join(CN_METRIC_FUNCS)}")
+    label, fmt, howto = CN_METRIC_FUNCS[metric]
+
+    from datasources import cn_financials as cf
+
+    # 结果里的键要跟 `cn_financials` 的 `values` 对齐。
+    # ★ 实测踩到：这里一开始写死成「营业总收入」，而模块给的是「营业收入」，
+    #   三家全部落空、还报成"没取到营业总收入"，看不出真因。
+    #   所以下面**取不到键就大声报错**，不静默变 0。
+    REV, OP = "营业收入", "营业利润"
+
+    # 要几个年度报告期：CAGR 要 years+1 个，其余要 1 个
+    want_years = (years + 1) if metric == "revenue_cagr" else 1
+    # 起始年份：有 as_of 就从那年往前找；没有就从**今年**往前找。
+    # ★ 实测踩到：这里一开始写了个兜底 9999，结果去要「9999-12-31」的报告期，
+    #   三家全部落空、样本 0 —— 而且报的是"没取到营业总收入"，看不出真因。
+    if as_of:
+        start_year = int(str(as_of)[:4])
+    else:
+        from datetime import date
+        start_year = date.today().year
+
+    values: list[float] = []
+    labels: list[str] = []
+    gaps: list[str] = []
+    basis: list[str] = []
+
+    for code in codes:
+        series: list[tuple[int, float]] = []      # (年, 营业总收入)
+        rows: list[dict] = []
+        year = start_year
+        # 向前找足够的年度报告期；找不到就停（不跳年拼序列 —— 那会把增速算错）
+        for _ in range(want_years + 2):
+            try:
+                got = cf.fetch(code, report_date=f"{year}-12-31")
+            except Exception as e:                # noqa: BLE001
+                gaps.append(f"{code}：取数失败（{type(e).__name__}）")
+                series = []
+                break
+            vals = got.get("values") or {}
+            if REV not in vals:
+                gaps.append(f"{code}：模块返回的键里没有「{REV}」——"
+                            f"（实际有：{'、'.join(vals) or '空'}）**概念名漂了**，要修对应关系")
+                series = []
+                break
+            rev = (vals.get(REV) or {}).get("value")
+            if rev is None:
+                year -= 1
+                continue
+            series.append((year, float(rev)))
+            rows.append(got)
+            year -= 1
+            if len(series) >= want_years:
+                break
+
+        if not series:
+            if not any(code in g for g in gaps):
+                gaps.append(f"{code}：没取到可用的年度营业总收入")
+            continue
+
+        if metric == "revenue_scale":
+            y, rev = series[0]
+            values.append(rev)
+            basis.append(f"{code}：{y}-12-31 营业总收入")
+            labels.append(code)
+            continue
+
+        if metric == "op_margin":
+            op = (rows[0].get("values") or {}).get(OP) or {}
+            rev = series[0][1]
+            if op.get("value") is None:
+                gaps.append(f"{code}：缺营业利润（同一期）")
+                continue
+            if rev <= 0:
+                gaps.append(f"{code}：营业总收入非正，率没有意义")
+                continue
+            values.append(float(op["value"]) / rev)
+            basis.append(f"{code}：{series[0][0]}-12-31 营业利润 ÷ 营业总收入")
+            labels.append(code)
+            continue
+
+        # revenue_cagr：必须够 years 年，且**不跳年**
+        if len(series) < years + 1:
+            gaps.append(f"{code}：只拿到 {len(series)} 个年度期，算 {years} 年 CAGR 不够"
+                        f"（**不跳年拼序列**：跳一年会把增速算错）")
+            continue
+        a_year, a_rev = series[0]
+        b_year, b_rev = series[years]
+        if a_year - b_year != years or b_rev <= 0:
+            gaps.append(f"{code}：可用年度期不连续（{b_year}→{a_year}），不拼")
+            continue
+        values.append((a_rev / b_rev) ** (1 / years) - 1)
+        basis.append(f"{code}：{b_year}-12-31 → {a_year}-12-31 营业总收入，{years} 年")
+        labels.append(code)
+
+    tail = f"｜截止 {as_of} 已披露" if as_of else ""
+    return PeerStat(
+        metric=label, values=values, labels=labels, unit=fmt,
+        source=f"东方财富 datacenter 结构化报表（A 股）{tail}｜口径：{howto}",
+        gaps=gaps, basis=basis,
+    )
+
+
 def build_peer_multiples(
     peers: list[tuple[str, str, str]],
     metric: str = "pe",
