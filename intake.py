@@ -357,22 +357,46 @@ def _scan_html(paths: list[Path], unit: str,
     return S, cands, detected, unused
 
 
-def _pick_company_line(lines: list[str]) -> str:
+#: 文档标题 / 日期 —— 封面上它们**不是**公司名（实测 OCR 会把它们读出来）
+_TITLE_LIKE = re.compile(
+    r"\d{4}|年度报告|半年度报告|中报|年報|季度报告|报告全文|第[一二三四]季度")
+
+
+def _trim_brand(line: str) -> str:
+    """「中国平安 PINGAN」→「中国平安」：后面那截是外文品牌名，中文名在前。"""
+    for sep in (" ", "　"):
+        if sep in line:
+            head, _, tail = line.partition(sep)
+            if head and tail and all(ord(c) < 128 or c in "．.·" for c in tail):
+                return head.strip()
+    return line
+
+
+def _pick_company_line(lines: list[str], *, loose: bool = False) -> str:
     """从封面文字里挑出**公司名**那一行；挑不出返回空串。
 
-    ★ 判据是**量出来的**（2026-09-30，三份真实年报）：
+    ★ 判据是**量出来的**（2026-09-30，真实年报的封面）：
 
-        某 A 股年报   第 1 页有独立一行「北京某某数据科技集团股份有限公司」  → 能挑到 ✓
+        某 A 股年报   第 1 页有独立一行「某某某某数据科技集团股份有限公司」  → 能挑到 ✓
         某 H 股年报   第 1 页是**图片封面**，文字层只有「二零二六年中报」      → 挑不到 ✗
         某 A 股年报   第 1 页是 `(cid:…)` 乱码（字体没嵌 ToUnicode）           → 挑不到 ✗
 
-    所以这个函数**经常挑不出来** —— 那不是它坏了，是那页真的读不出来。
+    后两类靠 `loose=True`（OCR 出来的词）兜：规则同样是量出来的 ——
+    某 H 股年报封面 OCR 逐词得到
+
+        '中国平安'(✓ 第一个) 'PINGAN'(✓) '专业'(2 字 ✗) '二零二六年中报'(标题 ✗)
+
+    → 取**第一条**像名字的（≥4 字、不像文档标题 / 日期）。规范的「…公司」全称
+    优先于这个宽口径：只要全页任何一处出现它就采用它。
+
     **挑不出来就返回空串，绝不拿文件名冒充**（题面问的是"报告封面上那个"）。
     """
     best = ""
     for raw in lines:
         ln = raw.strip()
         if not (4 <= len(ln) <= 40):
+            continue
+        if loose and _TITLE_LIKE.search(ln):
             continue
         # 名字后面粘着文档标题的（「…公司2025年年度报告」）—— 切掉后面那段
         for tail in ("2", "２０"):
@@ -384,20 +408,81 @@ def _pick_company_line(lines: list[str]) -> str:
             return ln                      # 最强的信号，直接采用
         if ln.endswith(("公司", "集团")) and not best:
             best = ln
+        elif loose and not best:
+            best = _trim_brand(ln)          # 宽口径：第一条像名字的
     return best
 
 
 def cover_name(mat: "Materials") -> str:
-    """从材料**第一页**读公司名 —— 读不到返回空串。
+    """从材料封面读公司名（见 `cover_facts`）—— 读不到返回空串。"""
+    return cover_facts(mat)["name"]
 
-    ★ 为什么不用 `Materials.label`（文件名）：实测踩过。那道题问的是
-    "标的名称（报告封面上那个）"，而默认值曾经给的是文件名 ——
-    于是报告标题、输出目录全印成了「某公司2026年半年度报告」这种。
-    **文件名是「材料」的名字，不是「标的」的名字**，两者不能混。
 
-    只读文字层（`extract_tables=False, ocr_fallback=False`），**不触发 OCR** ——
-    这一层要给界面秒回，不能在提问的时候卡几十秒。
-    封面是图片、或字体没嵌 ToUnicode 时读不出来 → 返回空串，让用户自己填。
+#: 封面上的股票代码：A 股 6 位、港股 5 位，但也有写 3 位的（「股份代号：857」）。
+#: 实测封面常见写法：「股票代码：601857」「证券代码 601857」「股份代號：857」。
+#: 因为**必须带标签**才认，所以放宽到 1–6 位不会被随便一个数字骗到。
+_CODE_RE = re.compile(
+    r"(?:股票代码|证券代码|股份代号|股份代號|股票代号|证券代号)\s*[:：]?\s*([0-9]{1,6})")
+
+
+#: 封面**看前两页** —— 第 1 页常常是图或乱码，公司名与代码常在第 2 页的声明里。
+COVER_PAGES = 2
+
+
+def _lines_from_text(doc) -> list[str]:
+    out: list[str] = []
+    for page in doc.pages[:COVER_PAGES]:
+        out += (page.raw_text or "").splitlines()
+    return out
+
+
+def _lines_from_ocr(path: Path) -> list[str]:
+    """文字层读不出封面时，用**本机 OCR** 再读一次（macOS Vision，约 2 秒/页，不出网）。
+
+    这是"封面是图片 / 字体没嵌 ToUnicode"那两类材料的唯一出路 ——
+    用户的话（2026-09-30）："封面是哪个公司、股票代码是什么，应该一目了然。
+    如果这都解析不出来，那么报表里的数字我也担心其准确性。"
+    说得很对：本机就能读，没有理由不读。
+
+    ★ **逐词返回，不是逐行** —— 实测（某 H 股年报封面）：
+          (0.066, 0.060, '中国平安 PINGAN')      ← 公司名，左上
+          (0.678, 0.061, '专业 让生活更简单')    ← 口号，同一水平线的**右侧**
+          (0.078, 0.932, '二零二六年中报')       ← 文档标题，页面底部
+      按行拼会把「名字 + 口号」粘成一串；按词给，挑第一个就对了。
+    """
+    from ingest import ocr as ocr_mod
+
+    if not ocr_mod.available():
+        return []
+    try:
+        got = ocr_mod.ocr_pages(path, first=1, last=COVER_PAGES)
+    except Exception:                                     # noqa: BLE001
+        return []
+    out: list[str] = []
+    for n in sorted(got):
+        for row in got[n]:
+            for word in row:
+                text = str(word[-1]).strip()               # 词元是 (x, y, 文本)
+                if text:
+                    out.append(text)
+    return out
+
+
+def _pick_cover_code(lines: list[str]) -> str:
+    """挑出封面上的股票代码；挑不出返回空串。"""
+    for ln in lines:
+        m = _CODE_RE.search(ln)
+        if m:
+            return m.group(1)
+    return ""
+
+
+def cover_facts(mat: "Materials") -> dict[str, str]:
+    """封面上的**公司名**与**股票代码** —— 这是最容易的一件事，就该读得出来。
+
+    顺序：**文字层**（快，秒回）→ 读不出名字就退回**本机 OCR**（约 2 秒/页，不出网）。
+    两条路都拿不到 → 返回空串，**绝不拿文件名冒充**（文件名是材料名，不是标的名）。
+    返回 `{"name", "code", "how"}`；`how` 说明这两个值是怎么来的（给人看）。
     """
     from ingest import pdf as ingest_pdf
 
@@ -405,22 +490,34 @@ def cover_name(mat: "Materials") -> str:
     if mat.is_file:
         paths.append(mat.directory)
     paths += [c.path for c in mat.candidates]
+
     seen: set[Path] = set()
     for p in paths:
         if p in seen or p.suffix.lower() != ".pdf":
             continue
         seen.add(p)
+
+        lines: list[str] = []
         try:
             doc = ingest_pdf.extract_pdf(p, extract_tables=False,
                                          ocr_fallback=False)
+            lines = _lines_from_text(doc)
         except Exception:                                 # noqa: BLE001
-            continue                                      # 读不了就换下一份
-        if not doc.pages:
-            continue
-        name = _pick_company_line((doc.pages[0].raw_text or "").splitlines())
+            lines = []
+        name, code = _pick_company_line(lines), _pick_cover_code(lines)
         if name:
-            return name
-    return ""
+            return {"name": name, "code": code, "how": "文字层"}
+
+        lines = _lines_from_ocr(p)                        # 文字层不行 → 本机 OCR
+        # OCR 出来的词没有版式全称可依赖 → 用宽口径（判据同样是量出来的）
+        name = _pick_company_line(lines, loose=True)
+        code = _pick_cover_code(lines)
+        if name:
+            return {"name": name, "code": code, "how": "本机 OCR"}
+        if code:
+            return {"name": "", "code": code, "how": "本机 OCR"}
+
+    return {"name": "", "code": "", "how": ""}
 
 
 def _scan_excel(paths: list[Path], unit: str,
@@ -760,12 +857,21 @@ def questions(mat: Materials, *, growth_years: int = 5) -> list[Q]:
     # 给错了用户看得见（在问答清单里明写着），不给他就得自己想起来。
     cur_default = "USD" if "US GAAP" in (cur("gaap") or "") else "CNY"
 
+    # 封面上那两样（公司名 / 股票代码）—— 最该一目了然的东西，先读出来
+    _cf = cover_facts(mat)
+    _hint = ("默认值是从报告封面读出来的公司名；**读不到就是空的** —— "
+             "文件名不是封面名，不拿它冒充。")
+    if _cf["code"]:
+        _hint += f"封面上的股票代码：**{_cf['code']}**。"
+    if _cf["how"]:
+        _hint += f"（读法：{_cf['how']}）"
+    elif not _cf["name"]:
+        _hint += "（文字层和本机 OCR 都没读到，请照封面填）"
+
     qs = [
         # ── 场景：六项不定，方法无从选 ──
         Q("target", "标的名称（报告封面上那个）", group="场景",
-          default=cover_name(mat),
-          hint="默认值是从报告第一页读出来的公司名；**读不到就是空的** —— "
-               "文件名不是封面名，不拿它冒充"),
+          default=_cf["name"], hint=_hint),
         Q("unit", "金额单位（**错 1000 倍就是这里错**）", group="场景",
           default=mat.unit, hint="点选一个；清单里没有的单位可以自己写",
           suggest=("元", "千元", "万元", "百万元", "千美元", "百万美元")),

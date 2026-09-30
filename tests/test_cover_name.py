@@ -42,8 +42,28 @@ class CoverNameTest(unittest.TestCase):
         """「某某2026年半年度报告」—— 这是文件名那种串，不该被当成公司名。"""
         self.assertEqual(intake._pick_company_line(["某某2026年半年度报告"]), "")
 
-    def test_an_image_cover_yields_nothing(self):
+    def test_an_image_cover_yields_nothing_in_strict_mode(self):
         self.assertEqual(intake._pick_company_line(["二零二六年中报"]), "")
+
+    def test_the_cover_code_is_read(self):
+        lines = ["某某某某集团股份有限公司", "股票代码：123456", "2025 年年度报告"]
+        self.assertEqual(intake._pick_cover_code(lines), "123456")
+
+    def test_a_three_digit_hk_code_is_read(self):
+        self.assertEqual(intake._pick_cover_code(["股份代號：789", "年報"]), "789")
+
+    def test_a_bare_number_is_not_a_code(self):
+        """必须带标签才认 —— 否则年份、页码都会被当成代码。"""
+        self.assertEqual(intake._pick_cover_code(["2025 年年度报告", "第 3 页"]), "")
+
+    def test_loose_mode_takes_the_first_name_like_word_and_skips_titles(self):
+        """实测：某 H 股年报封面 OCR 逐词 —— 名字在最前，图标标题在最后。"""
+        lines = ["中国平安 PINGAN", "专业 让生活更简单", "专业．价值", "二零二六年中报"]
+        self.assertEqual(intake._pick_company_line(lines, loose=True), "中国平安")
+
+    def test_strict_mode_does_not_pick_a_bare_brand(self):
+        self.assertEqual(intake._pick_company_line(["中国平安 PINGAN",
+                                                    "二零二六年中报"]), "")
 
     def test_cid_garbage_yields_nothing(self):
         lines = [": 601628", "(cid:34)(cid:32901)(cid:29296)(cid:10175)",
