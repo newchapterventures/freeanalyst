@@ -200,6 +200,38 @@ def _cluster_lines(words: list[dict], tol: float = 3.0) -> list[list[dict]]:
     return out
 
 
+def looks_like_split_rows(words: list[dict], *, min_rows: int = 6,
+                          threshold: float = 0.25) -> bool:
+    """这一页是不是「科目名与金额**分成两行**」的版式 —— **只有这种才该按坐标配对**。
+
+    ## 判据是量出来的（2026-09-30，两份公开来源材料）
+
+        错位版式：纯金额行占 **43–44%**，标签与金额同行的只有 1 行
+        正常版式：纯金额行占 **2%**，标签与金额同行 18–20 行
+
+    差 20 倍 —— 所以 0.25 这个阈值不是拍脑袋定的。
+
+    ## 为什么必须先判版式，而不是"看结果好不好"
+    我第一版的做法是：坐标配对的结果**映射行更多就采用** ✗。错在哪：
+    **错配同样会映射出更多行**（甚至把同一个数塞给两个不同科目）。
+    实测代价：某 A 股年报的资产总计与所有者权益拿到了同一个数，
+    勾稽从"差 184 万"变成"差 172 亿" ✗✗ —— 而这份材料的标签和金额本来就在同一行，
+    坐标配对根本没有用武之地。
+
+    **量版式是量事实；量"行数多少"是量我自己的猜。**
+    """
+    lines = _cluster_lines(words)
+    if len(lines) < min_rows:
+        return False
+    num_only = 0
+    for ln in lines:
+        has_lab = any(not _is_number(str(w.get("text", ""))) for w in ln)
+        has_num = any(_is_number(str(w.get("text", ""))) for w in ln)
+        if has_num and not has_lab:
+            num_only += 1
+    return (num_only / len(lines)) >= threshold
+
+
 def parse_words_rows(words: list[dict], *, max_values: int = 2) -> list[list[str]]:
     """按**坐标**配对：左边是科目名，右边是金额 —— 金额归给**垂直中心最近**的科目。
 

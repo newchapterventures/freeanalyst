@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import unittest
 
-from ingest.layout import parse_words_rows
+from ingest.layout import looks_like_split_rows, parse_words_rows
 
 
 def w(text: str, x0: float, top: float, h: float = 6.0) -> dict:
@@ -88,6 +88,49 @@ class TestWordsRows(unittest.TestCase):
         self.assertEqual(rows[0][1], "")
         self.assertEqual(rows[0][2], "")
         self.assertEqual(rows[0][3], "143,319")
+
+
+def _split_page() -> list[dict]:
+    """错位版式：标签行与金额行**分开**，金额行比标签行高 7 点（实测形状）。"""
+    out = []
+    for i in range(10):
+        y = 135.0 + i * 15
+        out += [w(f"{i + 1}", 367, y), w(f"{i}00,000", 430, y), w(f"{i}00,001", 530, y)]
+        out.append(w(f"科目{i}", 71, y + 7.2))
+    return out
+
+
+def _normal_page() -> list[dict]:
+    """正常版式：标签与金额**在同一行**（实测形状）。"""
+    out = []
+    for i in range(10):
+        y = 135.0 + i * 15
+        out += [w(f"科目{i}", 71, y), w(f"{i}", 367, y),
+                w(f"{i}00,000", 430, y), w(f"{i}00,001", 530, y)]
+    return out
+
+
+class TestLayoutGate(unittest.TestCase):
+    """要不要按坐标配对，由**版式本身**决定 —— 不是由"结果好不好"决定。
+
+    实测（两份公开来源材料）：
+        错位版式：纯金额行占 **43–44%**，标签与金额同行的只有 1 行
+        正常版式：纯金额行占 **2%**，标签与金额同行 18–20 行
+
+    我第一版拿"映射行更多"当判据 ✗ —— 错配同样会映射出更多行，
+    结果把一份正常版式材料的勾稽从"差 184 万"弄成"差 172 亿"。
+    """
+
+    def test_split_layout_is_flagged(self) -> None:
+        self.assertTrue(looks_like_split_rows(_split_page()))
+
+    def test_normal_layout_is_not_flagged(self) -> None:
+        self.assertFalse(looks_like_split_rows(_normal_page()),
+                         "正常版式不该走坐标配对 —— 硬用会把本来对的行配错")
+
+    def test_too_few_lines_is_not_judged(self) -> None:
+        """行太少就不判（样本不足时宁可照旧）。"""
+        self.assertFalse(looks_like_split_rows(_normal_page()[:8]))
 
 
 if __name__ == "__main__":

@@ -281,13 +281,15 @@ def page_rows(pg) -> list[list[str]]:
     if _mappable_rows(rows) >= _MIN_MAPPABLE_ROWS:
         return rows
 
-    # 按坐标配对（情形 3）。比文字流稳 —— 文字流只能看到先后顺序，
-    # 坐标能看到"哪一个更近"。
+    # 按坐标配对（情形 3）—— **只在这页确实是"标签与金额分成两行"的版式时才试**。
+    # 判据量的是**版式本身**（纯金额行占比），不是"结果好不好"：
+    # 错配也会映射出更多行，用行数当质量信号会放过错配（真踩过，见 layout 里的说明）。
     coord: list[list[str]] = []
     try:
         from ingest import layout as _layout
 
-        coord = _layout.parse_words_rows(pg.words())
+        if _layout.looks_like_split_rows(pg.words()):
+            coord = _layout.parse_words_rows(pg.words())
     except Exception:                                # noqa: BLE001
         coord = []                                   # 坐标取不到就跳过，不影响别的路
     if coord and _mappable_rows(coord) > _mappable_rows(rows):
