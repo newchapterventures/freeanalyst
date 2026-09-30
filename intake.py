@@ -729,8 +729,7 @@ def questions(mat: Materials, *, growth_years: int = 5) -> list[Q]:
         Q("beta_unlevered", "去杠杆 beta", group="折现率",
           hint="上市可比公司的无杠杆 beta",
           reference="由你提供 —— **同市场**可比上市公司的去杠杆 beta。"
-                    "第 4 步「可比公司」目前只取美股基本面（EDGAR），"
-                    "**不提供 beta**；而且 beta 对应各自市场的指数，"
+                    "第 4 步「可比公司」**不提供 beta**；而且 beta 对应各自市场的指数，"
                     "标的在 A 股/港股时不能用美股同行的 β 代替。"),
         Q("cost_of_debt", "债务成本", group="折现率", unit="%",
           hint="实际借款利率或 LPR+利差",
