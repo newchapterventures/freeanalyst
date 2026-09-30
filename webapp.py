@@ -891,6 +891,32 @@ def api_analyse(path: str, unit: str = "") -> dict:
     from valuation.dupont import analyse as _dupont
 
     d = _dupont(mat.statements)
+
+    # ── 落盘 ────────────────────────────────────────────────
+    # 财务分析**没有假设**，所以只需要一个文件（估值那边是"配置 + 报告"两份）。
+    # 放在 out/<标的>/ 里 —— 与估值报告同一个约定，工具不往材料目录里写东西。
+    files: dict[str, str] = {}
+    out_dir = ""
+    try:
+        import datetime as _dt
+
+        from valuation.analyse_report import build_report as _build
+
+        out = intake.out_dir_for(mat, None)
+        out.mkdir(parents=True, exist_ok=True)
+        stem = intake._slug(getattr(mat, "label", "") or "财务分析")
+        rep = out / f"{stem}.财务分析.txt"          # 别叫 path：那个名字是函数参数
+        rep.write_text(
+            _build(mat.statements, d, target=getattr(mat, "label", "") or "",
+                   generated_at=_dt.datetime.now().strftime("%Y-%m-%d %H:%M"),
+                   version=VERSION),
+            encoding="utf-8")
+        files["report"] = str(rep)
+        out_dir = str(out)
+    except Exception as exc:                             # noqa: BLE001
+        # **不许静默吞掉**：写不出去要让页面看见，否则人以为存下来了。
+        files["error"] = f"{type(exc).__name__}: {exc}"
+
     return {
         "ok": True,
         "applicable": d.applicable,
@@ -899,6 +925,8 @@ def api_analyse(path: str, unit: str = "") -> dict:
         "notes": list(d.notes),
         "unit": getattr(mat.statements, "unit", "") or "",
         "period": getattr(mat.statements, "period", "") or "",
+        "files": files,
+        "out_dir": out_dir,
     }
 
 

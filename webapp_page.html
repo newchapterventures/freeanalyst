@@ -667,6 +667,8 @@ const I18N = {
 "s7.notice": "只用到三张表里的四个数（净利润 / 营业收入 / 总资产 / 所有者权益）—— <b>不需要任何假设</b>，也不去网上取任何东西。",
 "s7.notapp": "不适用（或数还没凑齐）：",
 "s7.factor": "项目", "s7.value": "数值", "s7.unit": "单位",
+"s7.saved": "报告已存到：",
+"s7.savefail": "报告没存下来：",
     "s2.sub": "三张报表识别结果 · 勾稽校验状态 · 金额单位与会计口径",
     "s2.srvnote": "服务端产出的文本（报表标签、勾稽项名称、假设条目、报告正文）目前为中文；英文界面仅覆盖界面文案。引擎层词表为后续工作。",
     "th.statement": "报表", "th.source": "来源", "th.mapped": "映射行数", "th.status": "状态",
@@ -746,6 +748,8 @@ const I18N = {
 "s7.notice": "Uses only four numbers from the statements (net income / revenue / total assets / equity) — <b>no assumptions</b>, and nothing is fetched from the internet.",
 "s7.notapp": "Not applicable (or inputs incomplete):",
 "s7.factor": "Item", "s7.value": "Value", "s7.unit": "Unit",
+"s7.saved": "Report saved to:",
+"s7.savefail": "Report was NOT saved:",
     "s2.sub": "Statements identified · reconciliation status · reporting unit and accounting basis",
     "s2.srvnote": "Text produced by the engine (statement labels, reconciliation item names, assumption entries, report body) is currently Chinese only; the English interface covers interface copy. Engine-level translation tables are follow-up work.",
     "th.statement": "Statement", "th.source": "Source", "th.mapped": "Rows mapped", "th.status": "Status",
@@ -1119,6 +1123,14 @@ function renderDupont(d){
   h += "</tbody></table>";
   for(const n of (d.notes || []))
     h += '<div class="notice quiet" style="margin-top:10px">' + esc(n) + "</div>";
+  // 落盘结果要说出来 —— 存哪儿了、没存下来是什么原因，都得看得见
+  if(d.files && d.files.report)
+    h += '<div class="notice quiet" style="margin-top:12px">' + esc(t("s7.saved")) +
+         '<div style="margin-top:6px;word-break:break-all">' +
+         esc(d.files.report) + "</div></div>";
+  if(d.files && d.files.error)
+    h += '<div class="notice issue" style="margin-top:12px">' + esc(t("s7.savefail")) +
+         esc(d.files.error) + "</div>";
   $("anOut").innerHTML = h;
 }
 
