@@ -117,6 +117,11 @@ class Materials:
         **真实材料常常就是一份 PDF**，不是整整齐齐一个目录。
         这时候拿整个文件名当标的名，报告封面会变成
         「某公司2024年审计报告.pdf」，所以去掉后缀。
+
+        ★ **注意：这是「材料」的名字，不是「标的」的名字。**
+        两者别混 —— 实测踩过：界面那道题问的是"标的名称（报告封面上那个）"，
+        而默认值给的是这个（文件名），于是报告标题印成了文件名。
+        要封面上那个名字，用 `cover_name(...)`。
         """
         return self.directory.stem if self.is_file else self.directory.name
 
@@ -350,6 +355,72 @@ def _scan_html(paths: list[Path], unit: str,
     if not S.unit:
         S.unit = unit
     return S, cands, detected, unused
+
+
+def _pick_company_line(lines: list[str]) -> str:
+    """从封面文字里挑出**公司名**那一行；挑不出返回空串。
+
+    ★ 判据是**量出来的**（2026-09-30，三份真实年报）：
+
+        某 A 股年报   第 1 页有独立一行「北京某某数据科技集团股份有限公司」  → 能挑到 ✓
+        某 H 股年报   第 1 页是**图片封面**，文字层只有「二零二六年中报」      → 挑不到 ✗
+        某 A 股年报   第 1 页是 `(cid:…)` 乱码（字体没嵌 ToUnicode）           → 挑不到 ✗
+
+    所以这个函数**经常挑不出来** —— 那不是它坏了，是那页真的读不出来。
+    **挑不出来就返回空串，绝不拿文件名冒充**（题面问的是"报告封面上那个"）。
+    """
+    best = ""
+    for raw in lines:
+        ln = raw.strip()
+        if not (4 <= len(ln) <= 40):
+            continue
+        # 名字后面粘着文档标题的（「…公司2025年年度报告」）—— 切掉后面那段
+        for tail in ("2", "２０"):
+            idx = ln.find(tail)
+            if idx >= 6 and ln[:idx].endswith(("公司", "集团")):
+                ln = ln[:idx]
+                break
+        if ln.endswith(("股份有限公司", "集团有限公司", "有限公司")):
+            return ln                      # 最强的信号，直接采用
+        if ln.endswith(("公司", "集团")) and not best:
+            best = ln
+    return best
+
+
+def cover_name(mat: "Materials") -> str:
+    """从材料**第一页**读公司名 —— 读不到返回空串。
+
+    ★ 为什么不用 `Materials.label`（文件名）：实测踩过。那道题问的是
+    "标的名称（报告封面上那个）"，而默认值曾经给的是文件名 ——
+    于是报告标题、输出目录全印成了「某公司2026年半年度报告」这种。
+    **文件名是「材料」的名字，不是「标的」的名字**，两者不能混。
+
+    只读文字层（`extract_tables=False, ocr_fallback=False`），**不触发 OCR** ——
+    这一层要给界面秒回，不能在提问的时候卡几十秒。
+    封面是图片、或字体没嵌 ToUnicode 时读不出来 → 返回空串，让用户自己填。
+    """
+    from ingest import pdf as ingest_pdf
+
+    paths: list[Path] = []
+    if mat.is_file:
+        paths.append(mat.directory)
+    paths += [c.path for c in mat.candidates]
+    seen: set[Path] = set()
+    for p in paths:
+        if p in seen or p.suffix.lower() != ".pdf":
+            continue
+        seen.add(p)
+        try:
+            doc = ingest_pdf.extract_pdf(p, extract_tables=False,
+                                         ocr_fallback=False)
+        except Exception:                                 # noqa: BLE001
+            continue                                      # 读不了就换下一份
+        if not doc.pages:
+            continue
+        name = _pick_company_line((doc.pages[0].raw_text or "").splitlines())
+        if name:
+            return name
+    return ""
 
 
 def _scan_excel(paths: list[Path], unit: str,
@@ -692,7 +763,9 @@ def questions(mat: Materials, *, growth_years: int = 5) -> list[Q]:
     qs = [
         # ── 场景：六项不定，方法无从选 ──
         Q("target", "标的名称（报告封面上那个）", group="场景",
-          default=mat.label),
+          default=cover_name(mat),
+          hint="默认值是从报告第一页读出来的公司名；**读不到就是空的** —— "
+               "文件名不是封面名，不拿它冒充"),
         Q("unit", "金额单位（**错 1000 倍就是这里错**）", group="场景",
           default=mat.unit, hint="点选一个；清单里没有的单位可以自己写",
           suggest=("元", "千元", "万元", "百万元", "千美元", "百万美元")),
