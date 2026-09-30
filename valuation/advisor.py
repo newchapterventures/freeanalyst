@@ -429,6 +429,106 @@ def build_cn_peer_stat(
     )
 
 
+#: 港股同行的指标：metric -> (显示名, 格式, 口径)
+#:
+#: ★ 与美股 / A 股那两套的**关键差别**：倍数**不自己算**。
+#: 东财那张港股表里 `TOTAL_MARKET_CAP` 是**港元**、利润与权益是**人民币**，
+#: 自己相除会错约 8% 而且从数字上看不出来（详见 `datasources/hk_financials.py`）。
+#: 所以 P/E、P/B 直接用**东财自己算好的** `PE_TTM` / `PB_TTM`，并随值附来源。
+HK_METRIC_FUNCS: dict[str, tuple[str, str, str]] = {
+    "op_margin": ("营业利润率", ".1%",
+                  "营业利润 ÷ 营业收入（东财同一行，同币种相除）"),
+    "net_margin": ("净利率", ".1%", "东财直接给 NET_PROFIT_RATIO —— 比率，与币种无关"),
+    "gross_margin": ("毛利率", ".1%", "东财直接给 GROSS_PROFIT_RATIO"),
+    "revenue_yoy": ("营业收入同比", ".2%", "东财直接给 OPERATE_INCOME_YOY"),
+    "revenue_scale": ("营业收入规模", ",.0f",
+                      "绝对值 —— 币种随源，见数据源模块注释（量级参考用）"),
+    "pe": ("P / E", ".1f", "东财 PE_TTM（它自己处理了币种；本工具不自己相除）"),
+    "pb": ("P / B", ".2f", "东财 PB_TTM（同上）"),
+}
+
+#: 上面哪些是**比率**（与币种无关，跨市场对照才有意义）；
+#: 不在集合里的（规模、P/E、P/B）都带着币种或价格口径。
+HK_RATIO_METRICS: frozenset[str] = frozenset(
+    {"op_margin", "net_margin", "gross_margin", "revenue_yoy"})
+
+#: 港股指标 → 数据源里的键（**逐字来自实测**，不另立一套）。
+HK_FIELD_OF: dict[str, str] = {
+    "net_margin": "净利率",
+    "gross_margin": "毛利率",
+    "revenue_yoy": "收入同比",
+    "revenue_scale": "营业收入",
+    "pe": "市盈率TTM",
+    "pb": "市净率TTM",
+}
+
+
+def build_hk_peer_stat(codes: list[str], metric: str = "op_margin",
+                       as_of: str | None = None) -> PeerStat:
+    """港股同行的分布。一家一条记录 —— 源已经把每一期都列好了，不用翻年份。
+
+    取不到的每一家都记进 gaps（不静默丢、也不拿 0 填），
+    与 A 股 / 美股那两条路的纪律一致。
+    """
+    if metric not in HK_METRIC_FUNCS:
+        raise ValueError(f"不认识的港股指标 {metric!r}，可用：{'、'.join(HK_METRIC_FUNCS)}")
+    label, fmt, howto = HK_METRIC_FUNCS[metric]
+
+    from datasources import hk_financials as hf
+
+    values: list[float] = []
+    labels: list[str] = []
+    gaps: list[str] = []
+    basis: list[str] = []
+
+    for code in codes:
+        try:
+            got = hf.fetch(code)
+        except Exception as e:                            # noqa: BLE001
+            gaps.append(f"{code}：取数失败（{type(e).__name__}）")
+            continue
+        if not got:
+            gaps.append(f"{code}：源里没有这一家的数据")
+            continue
+
+        fields = got.get("fields") or {}
+        name = got.get("name") or code
+        period = got.get("period") or "?"
+
+        if metric == "op_margin":
+            rev, op = fields.get("营业收入"), fields.get("营业利润")
+            if rev is None or op is None:
+                miss = "营业收入" if rev is None else "营业利润"
+                gaps.append(f"{name}：缺{miss}（同一期）")
+                continue
+            if rev <= 0:
+                gaps.append(f"{name}：营业收入非正，率没有意义")
+                continue
+            values.append(float(op) / float(rev))
+            basis.append(f"{name}：{period} 营业利润 ÷ 营业收入（源同一行）")
+        else:
+            key = HK_FIELD_OF[metric]
+            raw = fields.get(key)
+            if raw is None:
+                gaps.append(f"{name}：源里没有「{key}」")
+                continue
+            v = float(raw)
+            # 源给的比率是百分数（29.25 表示 29.25%），存成小数再交给格式串
+            values.append(v / 100.0 if metric in HK_RATIO_METRICS else v)
+            cur = got.get("currency") or ""
+            tag = f"（币种 {cur}）" if metric == "revenue_scale" else ""
+            basis.append(f"{name}：{period} {key}{tag}")
+
+        labels.append(name)
+
+    tail = f"｜截止 {as_of}" if as_of else ""
+    return PeerStat(
+        metric=label, values=values, labels=labels, unit=fmt,
+        source=f"东方财富 datacenter 港股 F10 主要指标{tail}｜口径：{howto}",
+        gaps=gaps, basis=basis,
+    )
+
+
 #: A 股同行的**市值类倍数**：metric -> (显示名, 格式, cn_financials 里的分母键)
 #:
 #: 分母统一取**年度**报告期（口径与美股那条一致：一年一期的分母 × 基准日的价格）。

@@ -485,6 +485,9 @@
           <option value="ev_ebitda" data-i18n="s4.m.evebitda"></option>
           <option value="ev_ebit" data-i18n="s4.m.evebit"></option>
           <option value="ev_revenue" data-i18n="s4.m.evrev"></option>
+          <option value="net_margin" data-i18n="s4.m.netmargin"></option>
+          <option value="gross_margin" data-i18n="s4.m.grossmargin"></option>
+          <option value="revenue_yoy" data-i18n="s4.m.yoy"></option>
         </select></label>
       <label><span data-i18n="s4.years"></span><input id="cYears" value="3"></label>
       <label><span data-i18n="s4.asof"></span><input id="cAsof" placeholder="2024-12-31"></label>
@@ -588,8 +591,8 @@ const I18N = {
     "pill.arith": "算术由代码执行 · 不交由模型",
     "pill.declare": "输入缺失即声明 · 不作假设",
     "s4.title": "可比公司", "s4.sub": "同行基本面对照 —— 取数、对照、留痕",
-    "s4.notice": "<b>这一步能给三类东西：基本面分布（增速 / 利润率 / 规模）、<b>市值类倍数</b>（P/E、P/B、市值/营业收入）、<b>EV 类倍数</b>（EV/EBITDA、EV/EBIT、EV/收入）。</b>倍数的分子都是 <b>基准日收盘价（不复权）× 申报股数</b>，所以<b>必须填基准日</b>：价格模块刻意只提供「按日期取价」，不提供「最新价」（免得拿今天的股价配去年的报表）。EV 类再加 <b>净债务</b>：口径是<b>有息负债（含融资租赁）− 现金类</b>，<b>不含经营租赁、不含应付账款与递延税</b>；<b>每一项组成</b>都会连同口径写进下方的<b>取数依据</b>，可逐项核对。某一家缺债务或现金科目时，<b>那一家记成缺口、不计入</b> —— <b>绝不拿 0 当「无债」，也不拿市值代替 EV</b>（两者都会让倍数系统性偏低，而且从数字上看不出来）。<b>覆盖：标的是美股时走 SEC EDGAR 的官方 XBRL；标的是 A 股时，同行在<b>这一栏填 6 位 A 股代码</b>，走东财的结构化报表（记得把「标的所在市场」选成 A 股，或让单位带人民币）。标的是港股时同行尚未接入。</b>同行基本面（增速 / 利润率 / 规模）是<b>公司属性</b>，跨市场对照有意义；<b>倍数与 beta 不要跨市场对照</b>（工具会在结果上方拦下来）。样本不足 3 家时，<b>不给中位数当结论</b>。",
-    "s4.tickers": "可比公司代码（逗号分隔：美股填美股代码，A 股填 6 位代码）",
+    "s4.notice": "<b>这一步能给三类东西：基本面分布（增速 / 利润率 / 规模）、<b>市值类倍数</b>（P/E、P/B、市值/营业收入）、<b>EV 类倍数</b>（EV/EBITDA、EV/EBIT、EV/收入）。</b>倍数的分子都是 <b>基准日收盘价（不复权）× 申报股数</b>，所以<b>必须填基准日</b>：价格模块刻意只提供「按日期取价」，不提供「最新价」（免得拿今天的股价配去年的报表）。EV 类再加 <b>净债务</b>：口径是<b>有息负债（含融资租赁）− 现金类</b>，<b>不含经营租赁、不含应付账款与递延税</b>；<b>每一项组成</b>都会连同口径写进下方的<b>取数依据</b>，可逐项核对。某一家缺债务或现金科目时，<b>那一家记成缺口、不计入</b> —— <b>绝不拿 0 当「无债」，也不拿市值代替 EV</b>（两者都会让倍数系统性偏低，而且从数字上看不出来）。<b>覆盖：标的是美股时走 SEC EDGAR 的官方 XBRL；标的是 A 股时，同行在<b>这一栏填 6 位 A 股代码</b>，走东财的结构化报表（记得把「标的所在市场」选成 A 股，或让单位带人民币）。标的是港股时，同行在<b>这一栏填 5 位港股代码</b>（如 00700），走东财的港股 F10 主要指标；<b>倍数用源自己算好的 P/E、P/B</b>（那张表里市值是港元、利润是人民币，本工具<b>不自己相除</b>）。</b>同行基本面（增速 / 利润率 / 规模）是<b>公司属性</b>，跨市场对照有意义；<b>倍数与 beta 不要跨市场对照</b>（工具会在结果上方拦下来）。样本不足 3 家时，<b>不给中位数当结论</b>。",
+    "s4.tickers": "可比公司代码（逗号分隔：美股填美股代码，A 股填 6 位代码，港股填 5 位代码）",
     "s4.metric": "对照指标",
     "s4.market": "标的所在市场",
     "s4.k.auto": "自动（按报表币种判断）", "s4.k.us": "美股", "s4.k.cn": "A 股", "s4.k.hk": "港股",
@@ -604,6 +607,9 @@ const I18N = {
     "s4.consent.declined": "好 —— 那就只给基本面（增速 / 利润率 / 规模），不碰那台主机。",
     "s4.m.pe": "P / E（市值类，需基准日）", "s4.m.pb": "P / B（市值类，需基准日）",
     "s4.m.prev": "市值 / 营业收入（市值类，需基准日）",
+    "s4.m.netmargin": "净利率（港股 · 源直接给，比率）",
+    "s4.m.grossmargin": "毛利率（港股 · 源直接给，银行等不适用）",
+    "s4.m.yoy": "营业收入同比（港股 · 源直接给）",
     "s4.m.evebitda": "EV / EBITDA（需基准日）", "s4.m.evebit": "EV / EBIT（需基准日）",
     "s4.m.evrev": "EV / 营业收入（需基准日）",
     "s4.basis": "取数依据",
@@ -792,8 +798,8 @@ const I18N = {
     "ask.useRef": "Use this reference",
     "ask.refbad": "This one cannot be derived from the materials — it has to come from you",
     "s4.title": "Comparable companies", "s4.sub": "Peer fundamentals — fetch, compare, keep the trail",
-    "s4.notice": "<b>This step returns three kinds of things: fundamental distributions (growth / margin / scale), <b>market-cap multiples</b> (P/E, P/B, market cap / revenue) and <b>EV-based multiples</b> (EV/EBITDA, EV/EBIT, EV/Revenue).</b> The numerator of every multiple is <b>closing price on the as-of date (unadjusted) × reported share count</b>, so <b>an as-of date is required</b>: the price module deliberately offers only \"price on a date\", never \"latest price\" (which would pair today's price with last year's balance sheet). EV-based ones add <b>net debt</b>: defined as <b>interest-bearing debt (including finance leases) − cash and equivalents plus short-term investments</b>, <b>excluding operating leases, payables and deferred taxes</b>; the <b>components</b> and the definition are written into <b>Basis</b> below, item by item. If a peer is missing debt or cash line items, <b>that peer is reported as a gap and left out</b> — never filled with 0, and market cap is never substituted for EV (either would bias the multiple downward, invisibly). <b>Coverage: US targets go through SEC EDGAR's official XBRL; for an A-share target, type the 6-digit A-share codes into this field and the peers come from Eastmoney's structured statements (set \"target's market\" to A-share, or let the unit carry CNY). Peers for HK targets are not wired yet.</b> Peer fundamentals (growth / margin / scale) are <b>company attributes</b> and do transfer across markets; <b>multiples and beta do not</b> (the tool blocks them above the results). With fewer than 3 peers, <b>no median is presented as a conclusion</b>.",
-    "s4.tickers": "Peer tickers (comma-separated — US tickers for a US target, 6-digit codes for an A-share target)",
+    "s4.notice": "<b>This step returns three kinds of things: fundamental distributions (growth / margin / scale), <b>market-cap multiples</b> (P/E, P/B, market cap / revenue) and <b>EV-based multiples</b> (EV/EBITDA, EV/EBIT, EV/Revenue).</b> The numerator of every multiple is <b>closing price on the as-of date (unadjusted) × reported share count</b>, so <b>an as-of date is required</b>: the price module deliberately offers only \"price on a date\", never \"latest price\" (which would pair today's price with last year's balance sheet). EV-based ones add <b>net debt</b>: defined as <b>interest-bearing debt (including finance leases) − cash and equivalents plus short-term investments</b>, <b>excluding operating leases, payables and deferred taxes</b>; the <b>components</b> and the definition are written into <b>Basis</b> below, item by item. If a peer is missing debt or cash line items, <b>that peer is reported as a gap and left out</b> — never filled with 0, and market cap is never substituted for EV (either would bias the multiple downward, invisibly). <b>Coverage: US targets go through SEC EDGAR's official XBRL; for an A-share target, type the 6-digit A-share codes into this field and the peers come from Eastmoney's structured statements (set \"target's market\" to A-share, or let the unit carry CNY). For an HK target, type <b>5-digit HK codes</b> here (e.g. 00700); peers come from Eastmoney's HK F10, and <b>P/E / P/B are taken as the source computed them</b> (its market cap is in HKD while profit is in RMB — we do not divide across currencies ourselves).</b> Peer fundamentals (growth / margin / scale) are <b>company attributes</b> and do transfer across markets; <b>multiples and beta do not</b> (the tool blocks them above the results). With fewer than 3 peers, <b>no median is presented as a conclusion</b>.",
+    "s4.tickers": "Peer tickers (comma-separated — US tickers, 6-digit codes for A-shares, 5-digit codes for HK)",
     "s4.metric": "Metric",
     "s4.market": "Target's market",
     "s4.k.auto": "Auto (from reporting currency)", "s4.k.us": "US", "s4.k.cn": "A-share", "s4.k.hk": "Hong Kong",
@@ -810,6 +816,9 @@ const I18N = {
     "s4.m.pe": "P / E (market cap; needs an as-of date)",
     "s4.m.pb": "P / B (market cap; needs an as-of date)",
     "s4.m.prev": "Market cap / Revenue (needs an as-of date)",
+    "s4.m.netmargin": "Net margin (HK · given by the source; a ratio, currency-free)",
+    "s4.m.grossmargin": "Gross margin (HK · given by the source; N/A for banks)",
+    "s4.m.yoy": "Revenue YoY (HK · given by the source)",
     "s4.m.evebitda": "EV / EBITDA (needs an as-of date)",
     "s4.m.evebit": "EV / EBIT (needs an as-of date)",
     "s4.m.evrev": "EV / Revenue (needs an as-of date)",
@@ -1616,6 +1625,35 @@ function showStale(){
 }
 
 // ── 启动：有后端就等人操作；没后端（双击打开、聊天里预览）自动进设计预览 ──
+// 第 4 步的「对照指标」随**标的所在市场**换一套 ——
+// 美股走 SEC EDGAR（CAGR / EBITDA 率 / 各种倍数），A 股走东财（**没有 EBITDA 率**，
+// 因为东财没有折旧字段），港股走东财港股 F10（净利率 / 毛利率 / 收入同比；
+// 倍数用**源算好的** PE、PB —— 那张表里市值是港元、利润是人民币，自己相除会错）。
+// 一张下拉全列出来、用不上的**藏起来** —— 免得选了才看到报错。
+const METRICS_BY_MARKET = {
+  hk: ["op_margin","net_margin","gross_margin","revenue_yoy","revenue_scale","pe","pb"],
+};
+const METRICS_DEFAULT = ["revenue_cagr","ebitda_margin","revenue_scale","op_margin",
+                         "pe","pb","price_to_revenue","ev_ebitda","ev_ebit","ev_revenue"];
+function applyMetricOptions(){
+  const sel = $("cMetric");
+  if(!sel) return;
+  const mkt = ($("cMkt") && $("cMkt").value) || "";
+  const allow = METRICS_BY_MARKET[mkt] || METRICS_DEFAULT;
+  let firstShown = null;
+  sel.querySelectorAll("option").forEach(o => {
+    const ok = allow.indexOf(o.value) >= 0;
+    o.hidden = !ok;
+    o.disabled = !ok;
+    if(ok && !firstShown) firstShown = o;
+  });
+  // 当前选中的那个被藏了，就落到第一个能用的 —— 不留一个"看不见的选项"生效。
+  // 只用 `value` 判断（不碰 `selectedOptions`：那是浏览器专有，桩里没有，
+  // 而"选中的被藏了"这件事用 value 一样判断得出来）。
+  if(firstShown && allow.indexOf(sel.value) < 0){
+    sel.value = firstShown.value;
+  }
+}
 function boot(){
   applyLang(LANG);
 
@@ -1628,6 +1666,9 @@ function boot(){
   // 这是运行期错误）。凡是"上屏要做的事"，一律进 boot()。
   setMode(STATE.mode || "appraise");
   wireDrop();
+  applyMetricOptions();
+  const mk = $("cMkt");
+  if(mk) mk.addEventListener("change", applyMetricOptions);
   wireOnbLang();
   document.querySelectorAll(".lang button").forEach(b => {
     b.addEventListener("click", () => applyLang(b.dataset.lang));

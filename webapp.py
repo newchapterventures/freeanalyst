@@ -280,8 +280,15 @@ def api_comps(payload: dict) -> dict:
     # 顺序反了会给出错理由 —— 实测踩到：A 股标的问倍数时，报的是"同行在美股"，
     # 而真因是 A 股缺股数（两个都是"不能算倍数"，但不是一回事）。
     _declared = (payload.get("target_market") or "").strip().lower()
-    is_cn = (_declared or _market_of(target_unit_early)) == "cn"
-    peer_market0, peer_currency0 = ("cn", "CNY") if is_cn else (se.MARKET, se.CURRENCY)
+    _market0 = _declared or _market_of(target_unit_early)
+    is_cn = _market0 == "cn"
+    is_hk = _market0 == "hk"
+    if is_cn:
+        peer_market0, peer_currency0 = "cn", "CNY"
+    elif is_hk:
+        peer_market0, peer_currency0 = "hk", "HKD"
+    else:
+        peer_market0, peer_currency0 = se.MARKET, se.CURRENCY
     scope_early = _comps_scope(_declared, target_unit_early,
                                peer_market0, peer_currency0,
                                payload.get("target_currency") or "")
@@ -296,7 +303,8 @@ def api_comps(payload: dict) -> dict:
                 f"请用**同市场**同行，或改用基本面比率。")}
     is_multiple = metric in MULTIPLE_METRICS
     # A 股同行用东财那套指标（没有 EBITDA 率，见 docs/数据源-中港财务.md）
-    all_metrics = {**ad.METRIC_FUNCS, **ad.CN_METRIC_FUNCS, **MULTIPLE_METRICS}
+    all_metrics = {**ad.METRIC_FUNCS, **ad.CN_METRIC_FUNCS,
+                   **ad.HK_METRIC_FUNCS, **MULTIPLE_METRICS}
     if metric not in all_metrics:
         return {"ok": False, "error": f"不支持的指标：{metric}（可用：{'、'.join(all_metrics)}）"}
     years = int(payload.get("years") or 3)
@@ -329,11 +337,29 @@ def api_comps(payload: dict) -> dict:
                             f"（两边口径不同 —— A 股没有 EBITDA 率，因为东财没有折旧字段。）")}
                     stat = ad.build_cn_peer_stat(tickers, metric=metric,
                                                  years=years, as_of=as_of)
-                    _, title, fmt = ad.CN_METRIC_FUNCS[metric]
+                    # ★ 元组顺序是 (显示名, 格式, 口径)：原来写成 `_, title, fmt`，
+                    #   于是 title 拿到格式串、fmt 拿到口径说明，**两个字段是反的**
+                    #   （2026-09-30 做港股时对照出来的，A 股这条一样错）。
+                    title, fmt, _howto = ad.CN_METRIC_FUNCS[metric]
         except net.HostConsentRequired as e:
             # 这不是失败，是"在等一次点头" —— 交给界面去问
             return _needs_consent_payload(e)
         peer_market, peer_currency = "cn", "CNY"
+    elif is_hk:
+        # ── 港股同行：东财 datacenter 的港股 F10「主要指标」报表 ────────────
+        # 这条路**不需要新主机、也不需要按次授权**（那台主机已在白名单里）。
+        # 倍数**不自己算** —— 用源算好的 `PE_TTM` / `PB_TTM`：
+        # 那张表里市值是港元、利润是人民币，自己相除会错约 8% 且看不出来。
+        if metric not in ad.HK_METRIC_FUNCS:
+            return {"ok": False, "error": (
+                f"港股同行能算的是：{'、'.join(ad.HK_METRIC_FUNCS)}。"
+                f"EV 类要**净债务**与**折旧**，这个源都没有 —— "
+                f"如实不算，不拿别的数凑一个出来。")}
+        stat = ad.build_hk_peer_stat(tickers, metric=metric, as_of=as_of)
+        # ★ 元组顺序是 (显示名, 格式, 口径) —— 这里原来抄了 A 股那行的解包，
+        #   结果 title 拿到 ".1%"、fmt 拿到口径说明，**两个字段是反的**（2026-09-30 实测）。
+        title, fmt, _howto = ad.HK_METRIC_FUNCS[metric]
+        peer_market, peer_currency = "hk", "HKD"
     else:
         pairs: list[tuple[str, str]] = []
         missing: list[str] = []
@@ -347,7 +373,8 @@ def api_comps(payload: dict) -> dict:
             return {"ok": False, "error":
                     f"这些代码在 SEC 查不到 → {'、'.join(missing)}。"
                     "**标的在美股时，同行也要是美股代码**；"
-                    "若标的是 A 股，请把上面的「标的所在市场」选成 A 股（或让单位带人民币）。"
+                    "若标的是 A 股 / 港股，请把上面的「标的所在市场」选成对应的市场"
+                    "（或让单位带人民币）。"
                     "（留空不是缺陷：拿不到同行分布时，不凑一个参照系才是对的。）"}
 
         if is_multiple:
