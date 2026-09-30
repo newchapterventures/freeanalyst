@@ -172,3 +172,145 @@ def parse_layout_lines(text: str, max_values: int = 2) -> list[list[str]]:
         rows.extend([g, "", "", ""] for g in _group_pending(pending))
 
     return rows
+
+
+# ─────────────────── 按坐标配对（比按文字流可靠） ───────────────────
+
+#: 附注列与金额列之间的最小横向距离 —— 小于它就不算附注号。
+#: 实测（中国人寿第 89 页）：附注列 x≈367，金额列 x≈430 / 530 → 间距 ≈63。
+#: 而**同一列的相邻数字**（被空格切开的千分位）间距只有几个点。
+_NOTE_GAP = 25.0
+
+#: 行距兜底（拿不到足够样本时用）。实测这类页约 15 点。
+_DEFAULT_PITCH = 15.0
+
+
+def _center_y(w: dict) -> float:
+    return (float(w.get("top", 0)) + float(w.get("bottom", 0))) / 2
+
+
+def _cluster_lines(words: list[dict], tol: float = 3.0) -> list[list[dict]]:
+    """把词按**中心 y** 归成视觉行（同一行的中心 y 相差不超过 tol）。"""
+    out: list[list[dict]] = []
+    for w in sorted(words, key=_center_y):
+        if out and abs(_center_y(w) - _center_y(out[-1][-1])) <= tol:
+            out[-1].append(w)
+        else:
+            out.append([w])
+    return out
+
+
+def parse_words_rows(words: list[dict], *, max_values: int = 2) -> list[list[str]]:
+    """按**坐标**配对：左边是科目名，右边是金额 —— 金额归给**垂直中心最近**的科目。
+
+    ## 为什么必须有这条（实测：中国人寿 2025 年报第 89/90 页，公开来源）
+
+    那几页的金额格是**垂直居中**的，所以金额行的 `top` 比科目名行**小约 7 点**：
+
+        1   143,319   86,519    中心 y≈138      ← 附注号 + 本期/上期（在【上】）
+        货币资金                 中心 y≈145      ← 科目名（在【下】）
+        2    50,879   30,560    中心 y≈153
+        买入返售金融资产           中心 y≈160
+
+    按 y 从上到下读出来的**文字流**因此是"金额在前、科目名在后" ✗ ——
+    而纯文本规则（"整行只有数字时用紧邻的**上一行**当标签"，见上面第 147 行那段）
+    会把整张表**错配一位**：实测 `货币资金` 拿到了下一行的 50,879，
+    真正的 143,319 判给了上一行；`资产总计` 因为没人接就整个丢了。
+
+    **坐标不会骗人**：行距约 15 点，而偏移只有 7 点 ——
+    按中心 y 就近配对，配对距离 7 < 15，不会串到隔壁行。
+
+    ## 输出形状
+    与 `parse_layout_lines` 一致：`[科目名, 附注, 本期, 上期, …]`（右侧对齐到 `max_values`）。
+    """
+    if not words:
+        return []
+
+    lines = _cluster_lines(words)
+
+    #: 像**科目名**才算标签行。判据与 `textflow._LABEL_CHARS` 同源：
+    #: 科目名是汉字 + 少量标点，**不含数字**（含数字的是表头/日期/页眉），
+    #: **不以冒号结尾**（那是「资产：」「负债：」这种段标题）。
+    #: ★ 实测为什么不能只靠距离：段标题离第一个金额行 8 点，而真正的科目离它的
+    #: 金额 7 点 —— 两者**太接近**，距离分不开；"像不像科目名"能分开。
+    def _plausible_label(t: str) -> bool:
+        if not t or t.endswith(("：", ":")):
+            return False
+        return not re.search(r"[0-9A-Za-z]", t)
+
+    label_lines: list[tuple[float, str, bool]] = []
+    amount_lines: list[tuple[float, list[tuple[str, float]]]] = []
+
+    for ln in lines:
+        left = [w for w in ln if not _is_number(str(w.get("text", "")))]
+        nums = [w for w in ln if _is_number(str(w.get("text", "")))]
+        if left:
+            label = "".join(str(w.get("text", "")) for w in sorted(
+                left, key=lambda x: float(x.get("x0", 0)))).strip()
+            # 不像科目名的（表头/日期/段标题）：原地留一行，但**不参与配对**
+            if not _plausible_label(label):
+                rows_txt = "".join(str(w.get("text", "")) for w in sorted(
+                    ln, key=lambda x: float(x.get("x0", 0)))).strip()
+                label_lines.append((_center_y(ln[-1]), rows_txt, False))
+                continue
+            if nums:
+                label_lines.append((_center_y(ln[-1]), label, True))
+                amount_lines.append((_center_y(ln[-1]),
+                                     [(str(w.get("text", "")), float(w.get("x0", 0)))
+                                      for w in sorted(
+                                          nums, key=lambda x: float(x.get("x0", 0)))]))
+            else:
+                label_lines.append((_center_y(ln[-1]), label, True))
+        elif nums:
+            amount_lines.append((_center_y(ln[-1]),
+                                 [(str(w.get("text", "")), float(w.get("x0", 0)))
+                                  for w in sorted(
+                                      nums, key=lambda x: float(x.get("x0", 0)))]))
+
+    # 行距（相邻金额行中心距的中位数）—— 用来定"多近才算同一行"
+    centers = sorted(ay for ay, _ in amount_lines)
+    gaps = [b - a for a, b in zip(centers, centers[1:]) if b - a > 0.5]
+    pitch = sorted(gaps)[len(gaps) // 2] if gaps else _DEFAULT_PITCH
+    #: 配对距离上限 = 行距的一半多一点。
+    #: ★ 实测（中国人寿第 89 页）：表头行离第一个金额行 **32 点**，
+    #: 而真正的科目离它的金额只有 **7 点**，行距 15 点 ——
+    #: 不设上限时表头会把第一个金额行**吃掉**，整表错开两位（真踩过）。
+    limit = pitch * 0.55
+
+    # 就近配对：每个金额行只被用一次；科目按 y 顺序处理
+    rows: list[list[str]] = []
+    used: set[int] = set()
+    for ly, label, pairable in sorted(label_lines, key=lambda t: t[0]):
+        if not label:
+            continue
+        if not pairable:
+            # 表头 / 日期 / 段标题：原样留一行，但不占金额行
+            rows.append([label, "", *([""] * max_values)])
+            continue
+        best, best_d = None, None
+        for i, (ay, nums) in enumerate(amount_lines):
+            if i in used or not nums:
+                continue
+            d = abs(ay - ly)
+            if best_d is None or d < best_d:
+                best, best_d = i, d
+        # 太远就不配 —— 宁可留空让人看见，也不要错配（错配是静默的）
+        if best is None or (best_d is not None and best_d > limit):
+            rows.append([label, "", *([""] * max_values)])
+            continue
+        used.add(best)
+        nums = amount_lines[best][1]
+        # 最左边那个短整数**是不是附注号** —— 不能只看"它是小整数"：
+        # ★ 实测：有些页**没有附注列**，那时第一个金额会**被误吃成附注号**，
+        # 于是整页金额又错配一位（中国人寿第 90/91 页就是这个）。
+        # 判据用**横向距离**：附注列与金额列之间有一大段空白（实测 x≈367 vs 430/530）。
+        note = ""
+        if len(nums) > 1 and re.fullmatch(r"\d{1,3}", nums[0][0]):
+            gap = nums[1][1] - nums[0][1]
+            if gap >= _NOTE_GAP:
+                note = nums[0][0]
+                nums = nums[1:]
+        values = [t for t, _x in nums[:max_values]]
+        padded = ([""] * max_values + values)[-max_values:]
+        rows.append([label, note, *padded])
+    return rows

@@ -261,11 +261,15 @@ def page_rows(pg) -> list[list[str]]:
        于是每一行的标签列都是空/占位符（中国人寿 2025 年报第 89/90 页，
        以及中信证券年报第 176/177 页）。这种形态**每行都有值**，
        所以旧的「值列全空」判据碰不到它 —— 表看着正常，科目映射却是 0 个。
+    3. **金额格垂直居中**：科目名与它的金额**不在同一条基线上**
+       （实测：金额行中心比科目行**高约 7 点**，而行距 15 点）。这时按 y 从上到下
+       读出来的文字流是"金额在前、科目名在后"，纯文本规则会**整表错配一位**
+       （中国人寿第 89 页：`货币资金` 拿到了下一行的 50,879）。这一种只能靠**坐标**解。
 
-    两种情形都表现为**一行都认不出科目**（见 `_MIN_MAPPABLE_ROWS`），
+    三种情形都表现为**一行都认不出科目**（见 `_MIN_MAPPABLE_ROWS`），
     所以判据统一成这一条。
 
-    回落**不能更差**：只有文字流解出来的可映射行**更多**时才采用，
+    回落**不能更差**：每一种都只在**可映射行更多**时才采用，
     否则保留原样（宁可照旧，也不要拿更碎的结果换掉能用的结果）。
     """
     from . import textflow
@@ -273,6 +277,21 @@ def page_rows(pg) -> list[list[str]]:
     rows: list[list[str]] = []
     for t in pg.usable_tables():
         rows.extend(t)
+
+    if _mappable_rows(rows) >= _MIN_MAPPABLE_ROWS:
+        return rows
+
+    # 按坐标配对（情形 3）。比文字流稳 —— 文字流只能看到先后顺序，
+    # 坐标能看到"哪一个更近"。
+    coord: list[list[str]] = []
+    try:
+        from ingest import layout as _layout
+
+        coord = _layout.parse_words_rows(pg.words())
+    except Exception:                                # noqa: BLE001
+        coord = []                                   # 坐标取不到就跳过，不影响别的路
+    if coord and _mappable_rows(coord) > _mappable_rows(rows):
+        rows = coord
 
     if _mappable_rows(rows) >= _MIN_MAPPABLE_ROWS:
         return rows

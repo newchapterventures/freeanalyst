@@ -85,6 +85,30 @@ class PdfPage:
     #: `334,719.50` 被认成 `334.719.50`），该人工复核。
     #: 和原生文字一视同仁是不诚实的。
     ocr: bool = False
+    #: 原始 PDF 路径 —— 需要**坐标**时（按位置配对）用它重新打开文件。
+    source: Path | None = None
+    _words: list[dict] | None = None
+
+    def words(self) -> list[dict]:
+        """这一页的词 + 坐标（`x0` / `top` / `bottom` / `text`）。**惰性**，只算一次。
+
+        为什么不在这里一次算完：几百页的文件每页都算一遍是白花的时间，
+        而只有**表格太窄**的少数页才需要坐标（见 `usable_tables`）。
+
+        ## 为什么是"重新打开文件"而不是留一个页对象
+        `extract_pdf` 在 `with pdfplumber.open(...)` 里建页；出了这个块，页对象就废了。
+        留一个**死句柄**比不留更坏 —— 它看着能用，一调就炸。所以存路径、用到时再开。
+        """
+        if self._words is None:
+            self._words = []
+            if self.source is not None:
+                try:
+                    pdfplumber = _import_pdfplumber()
+                    with pdfplumber.open(str(self.source)) as pdf:
+                        self._words = pdf.pages[self.number - 1].extract_words() or []
+                except Exception:                    # noqa: BLE001
+                    self._words = []                 # 取不到就当作没有 —— 回落到别的路
+        return self._words
 
     def usable_tables(self) -> list[list[list[str]]]:
         """能用的表格。**表格太窄时退回按行解析。**
@@ -365,7 +389,7 @@ def extract_pdf(path: str | Path, extract_tables: bool = True,
                     warnings.append(f"第 {i} 页表格抽取失败（{type(e).__name__}）：{e}")
             pages.append(PdfPage(number=i, text=normalize_text(_clean(raw)),
                                  raw_text=_clean_lines(raw),
-                                 tables=tables))
+                                 tables=tables, source=path))
 
     ocr_used, ocr_fixed = _fill_blank_pages_with_ocr(path, pages, warnings) if ocr_fallback else ([], 0)
     #: 嵌入图的原始分辨率 —— 决定"提高渲染倍率有没有用"（见 `source_dpi` 注释）。
