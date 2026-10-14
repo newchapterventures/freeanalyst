@@ -218,6 +218,178 @@ def _key(tool: str, args: dict) -> str:
         return tool + "|" + str(args)
 
 
+class Ask:
+    """循环**停下来等用户**时返回的东西。
+
+    ⚠️ 为什么需要它：`on_ask` 是个同步回调，但网页那边的请求**不能挂着等用户点按钮**。
+    所以循环要能「暂停 → 把问题交出去 → 下次带着答案继续」。
+
+    这一层把「暂停」显式化，网页那边只要存一个 `Session` 就能恢复。
+    """
+
+    __slots__ = ("kind", "payload", "question")
+
+    def __init__(self, kind: str, payload: dict, question: str):
+        self.kind = kind            # confirm | consent
+        self.payload = payload
+        self.question = question
+
+    def as_dict(self) -> dict:
+        return {"kind": self.kind, "payload": self.payload,
+                "question": self.question}
+
+
+class Session:
+    """可暂停、可恢复的一次编排。
+
+    `advance()` 一路走到「要问用户」或者「做完了」为止：
+
+        返回 Ask        → 停下来问用户，带着答案再 `advance((True, None))`
+        返回 Trace      → 结束了
+
+    `run()` 就是拿一个同步回调把这个 Session 一口气驱动完 ——
+    命令行和测试用它，网页用 `Session` 自己驱动。
+    """
+
+    def __init__(self, goal: str, *, model: str = DEFAULT_MODEL,
+                 autonomy: Autonomy = Autonomy.CONFIRM,
+                 only: list[str] | None = None, max_steps: int = 8,
+                 consent: dict[str, Any] | None = None,
+                 system: str = SYSTEM):
+        self.trace = Trace(goal=goal, model=model, autonomy=autonomy)
+        self.tools = R.schema(only=only)
+        self.max_steps = max_steps
+        self.consent = dict(consent or {})
+        self.messages: list[dict] = [{"role": "system", "content": system},
+                                     {"role": "user", "content": goal}]
+        self.seen: dict[str, int] = {}
+        self.n = 0
+        #: 等答案的那一步：(种类, 提问的载荷, 那一步本身)
+        self._pending: tuple[str, dict, Step] | None = None
+
+    # ── 内部：一次推进 ───────────────────────────────────────────
+
+    def _ask(self, kind: str, payload: dict, question: str):
+        """把「要问用户」记下来 —— 由调用方决定是当场答还是暂停交出去。"""
+        return Ask(kind, payload, question)
+
+    def advance(self, answer: tuple[bool, Any] | None = None):
+        """往前走。返回 `Ask`（要问）或 `Trace`（结束）。
+
+        `answer` 是**上一次 `Ask` 的答案**：`(同意吗, 附带的东西)`。
+        """
+        # 先消化上一次的提问
+        if self._pending is not None:
+            kind, payload, step = self._pending
+            self._pending = None
+            ok = bool(answer and answer[0])
+            extra = answer[1] if answer else None
+            if kind == "confirm":
+                step.by = By.USER
+                if not ok:
+                    step.ok = False
+                    step.note = "你拒了这一步"
+                    self.trace.steps.append(step)
+                    return self._finish(Stop.REFUSED, f"你在第 {step.n} 步拒了 {step.tool}")
+            elif kind == "consent":
+                if not ok:
+                    step.ok = False
+                    step.note = f"你拒了授权（{'、'.join(payload['hosts'])}）"
+                    self.trace.steps.append(step)
+                    return self._finish(
+                        Stop.NEEDS_CONSENT,
+                        f"{step.tool} 需要授权访问 {'、'.join(payload['hosts'])}")
+                if isinstance(extra, dict):
+                    self.consent.update(extra)
+            # 答案收下了 → 继续走这一步的执行
+            #
+            # ⚠️ 参数用 `step.args`，**不是 `payload`**。
+            # `payload` 是提问用的载荷（confirm 时形如 `{"tool":…, "args":…}`），
+            # 拿它当参数传下去会让工具收到两个不认识的 kwarg 而失败 ——
+            # 而失败的样子是「工具报错」，看不出是这里传错了。
+            return self._execute(step, step.args)
+
+        if not self.tools:
+            return self._finish(Stop.ERROR, "一个工具都没有注册")
+        if self.n >= self.max_steps:
+            return self._finish(
+                Stop.MAX_STEPS,
+                f"走到 {self.max_steps} 步上限还没给结论 —— "
+                f"可能是卡在某个反复失败的调用上，也可能是目标太大")
+
+        # 问模型下一步
+        try:
+            resp = _chat(self.trace.model, self.messages, self.tools)
+        except LoopError as exc:
+            return self._finish(Stop.ERROR, str(exc))
+
+        calls = _calls(resp)
+        text = ((resp.get("message") or {}).get("content") or "").strip()
+        if not calls:
+            self.trace.stop = Stop.DONE
+            self.trace.final = text
+            return self.trace
+
+        self.n += 1
+        name, args = calls[0]
+        step = Step(n=self.n, tool=name, args=args, by=By.MODEL)
+        if len(calls) > 1:
+            step.note = f"模型一次给了 {len(calls)} 个调用，只走第一个：{name}"
+
+        # ① 重复调用：不真的再跑一遍
+        k = _key(name, args)
+        if k in self.seen:
+            step.ok = False
+            step.note = (f"重复调用（第 {self.seen[k]} 步已经调过同样的参数）"
+                         f"—— 没重新执行，直接把上次的结果还给它")
+            self.trace.steps.append(step)
+            self._feed(name, args, text,
+                       "这个调用刚才已经做过，结果一样，不要重复调。"
+                       "换个做法，或者直接给结论。")
+            return self.advance()
+
+        # ② 每步确认
+        if self.trace.autonomy is Autonomy.CONFIRM:
+            t = R.get(name)
+            what = t.summary if t else "**未注册的工具**"
+            self._pending = ("confirm", {"tool": name, "args": args}, step)
+            return self._ask("confirm", {"tool": name, "args": args},
+                             f"下一步：{name} —— {what}")
+
+        step.by = By.AUTO
+        return self._execute(step, args)
+
+    def _execute(self, step: Step, args: dict):
+        """真去调工具。出网缺授权时**再暂停一次**去问。"""
+        t0 = time.time()
+        result = R.call(step.tool, args, consent=self.consent)
+        if result.needs_consent:
+            self._pending = ("consent", {"hosts": result.hosts,
+                                         "tool": step.tool}, step)
+            return self._ask(
+                "consent", {"hosts": result.hosts, "tool": step.tool},
+                f"{step.tool} 要访问：{'、'.join(result.hosts)}。同意这一次去取吗？")
+        step.seconds = time.time() - t0
+        step.ok = result.ok
+        step.brief = result.brief()
+        self.trace.steps.append(step)
+        self.seen[_key(step.tool, args)] = step.n
+        self._feed(step.tool, args, step.thought, step.brief)
+        return self.advance()
+
+    def _feed(self, name: str, args: dict, text: str, content: str) -> None:
+        self.messages.append({"role": "assistant", "content": text,
+                              "tool_calls": [{"function": {"name": name,
+                                                           "arguments": args}}]})
+        self.messages.append({"role": "tool", "tool_name": name,
+                              "content": content})
+
+    def _finish(self, stop: Stop, stuck: str) -> Trace:
+        self.trace.stop = stop
+        self.trace.stuck = stuck
+        return self.trace
+
+
 def run(goal: str, *, model: str = DEFAULT_MODEL,
         autonomy: Autonomy = Autonomy.CONFIRM,
         only: list[str] | None = None,
@@ -225,115 +397,23 @@ def run(goal: str, *, model: str = DEFAULT_MODEL,
         on_ask: Callable[[str, dict, str], tuple[bool, Any]] | None = None,
         consent: dict[str, Any] | None = None,
         system: str = SYSTEM) -> Trace:
-    """跑一遍编排。
+    """一口气跑完（命令行 / 测试用）。
 
     `on_ask(kind, payload, question)` 是**跟用户交互的那一个口子** ——
-    循环自己不认识界面，只负责问。返回 `(同意吗, 附带的东西)`：
-
-        kind="confirm"   payload={"tool","args"}      执行前要不要走这一步
-        kind="consent"   payload={"hosts","tool"}     要不要授权访问这些主机
-
-    `on_ask=None` 时：`one_click` 一路走；`confirm` 直接停下（没人可问）。
+    返回 `(同意吗, 附带的东西)`。`on_ask=None` 时：
+    `one_click` 一路走；`confirm` 因为没人可问，**当成同意**往下走
+    （网页那边不用这个函数，用 `Session` 自己驱动，能真停下来问）。
     """
-    trace = Trace(goal=goal, model=model, autonomy=autonomy)
-    tools = R.schema(only=only)
-    if not tools:
-        trace.stop = Stop.ERROR
-        trace.stuck = "一个工具都没有注册"
-        return trace
-
-    messages: list[dict] = [{"role": "system", "content": system},
-                            {"role": "user", "content": goal}]
-    #: 已经调过的（工具+参数）→ 第几步。用来挡重复调用。
-    seen: dict[str, int] = {}
-    consent = dict(consent or {})
-
-    for n in range(1, max_steps + 1):
-        try:
-            resp = _chat(model, messages, tools)
-        except LoopError as exc:
-            trace.stop = Stop.ERROR
-            trace.stuck = str(exc)
-            return trace
-
-        calls = _calls(resp)
-        text = ((resp.get("message") or {}).get("content") or "").strip()
-
-        if not calls:
-            # 模型不调工具了 —— 认为它做完了
-            trace.stop = Stop.DONE
-            trace.final = text
-            return trace
-
-        # 一次只走一个（规则这么写的，模型多给了就只取第一个并记下来）
-        name, args = calls[0]
-        step = Step(n=n, tool=name, args=args, by=By.MODEL)
-        if len(calls) > 1:
-            step.note = f"模型一次给了 {len(calls)} 个调用，只走第一个：{name}"
-
-        # ① 重复调用挡掉 —— **不真的再跑一遍**（扫描很贵）
-        k = _key(name, args)
-        if k in seen:
-            step.ok = False
-            step.note = (f"重复调用（第 {seen[k]} 步已经调过同样的参数）"
-                         f"—— 没重新执行，直接把上次的结果还给它")
-            step.seconds = 0.0
-            trace.steps.append(step)
-            messages.append({"role": "assistant", "content": "", "tool_calls": [
-                {"function": {"name": name, "arguments": args}}]})
-            messages.append({"role": "tool", "tool_name": name,
-                             "content": "这个调用刚才已经做过，结果一样，"
-                                        "不要重复调。换个做法，或者直接给结论。"})
-            continue
-
-        # ② 走每一步之前问用户（confirm 模式）
-        if autonomy is Autonomy.CONFIRM and on_ask is not None:
-            t = R.get(name)
-            what = t.summary if t else "**未注册的工具**"
-            allow, _ = on_ask("confirm", {"tool": name, "args": args},
-                              f"下一步：{name} —— {what}")
-            step.by = By.USER
-            if not allow:
-                step.ok = False
-                step.note = "你拒了这一步"
-                trace.steps.append(step)
-                trace.stop = Stop.REFUSED
-                trace.stuck = f"你在第 {n} 步拒了 {name}"
-                return trace
-        elif autonomy is Autonomy.ONE_CLICK:
-            step.by = By.AUTO
-
-        # ③ 执行（出网缺授权时返回 needs_consent，交给 on_ask）
-        t0 = time.time()
-        result = R.call(name, args, consent=consent)
-        if result.needs_consent and on_ask is not None:
-            allow, extra = on_ask(
-                "consent", {"hosts": result.hosts, "tool": name},
-                f"{name} 要访问：{'、'.join(result.hosts)}。同意这一次去取吗？")
-            if allow:
-                if isinstance(extra, dict):
-                    consent.update(extra)
-                result = R.call(name, args, consent=consent)
-            else:
-                step.ok = False
-                step.note = f"你拒了授权（{'、'.join(result.hosts)}）"
-                trace.steps.append(step)
-                trace.stop = Stop.NEEDS_CONSENT
-                trace.stuck = f"{name} 需要授权访问 {'、'.join(result.hosts)}"
-                return trace
-        step.seconds = time.time() - t0
-        step.ok = result.ok
-        step.brief = result.brief()
-        trace.steps.append(step)
-        seen[k] = n
-
-        # ④ 结果喂回去
-        messages.append({"role": "assistant", "content": text, "tool_calls": [
-            {"function": {"name": name, "arguments": args}}]})
-        messages.append({"role": "tool", "tool_name": name,
-                         "content": step.brief})
-
-    trace.stop = Stop.MAX_STEPS
-    trace.stuck = (f"走到 {max_steps} 步上限还没给结论 —— "
-                   f"可能是卡在某个反复失败的调用上，也可能是目标太大")
-    return trace
+    s = Session(goal, model=model, autonomy=autonomy, only=only,
+                max_steps=max_steps, consent=consent, system=system)
+    guard = 0
+    out = s.advance()
+    while isinstance(out, Ask):
+        guard += 1
+        if guard > max_steps + 2:
+            break                       # 防死循环：提问次数也不该无限
+        if on_ask is None:
+            out = s.advance((True, None))
+        else:
+            out = s.advance(on_ask(out.kind, out.payload, out.question))
+    return s.trace

@@ -529,6 +529,33 @@
         <button class="act amber" id="askBtn" onclick="ask()" data-i18n="ask.btn"></button>
       </div>
     </div>
+
+    <!-- ── 编排（agent 循环）─────────────────────────────────────────
+         静态放在这里，不用 JS 造按钮（跟上面那条授权确认条一个规矩）。
+         `test_page_handlers.py` 会检查这里引用的函数名真的定义了。 -->
+    <div style="margin-top:22px;padding-top:18px;border-top:1px solid var(--line)">
+      <div class="mut" style="font-size:12px" data-i18n-html="ag.notice"></div>
+      <div class="grid2" style="margin-top:10px">
+        <label><span data-i18n="ag.goalLabel"></span>
+          <input id="agGoal" onkeydown="agKey(event)" data-i18n-ph="ag.goalPh"></label>
+        <div style="align-self:end;display:flex;gap:8px">
+          <select id="agMode">
+            <option value="confirm" data-i18n="ag.modeConfirm"></option>
+            <option value="one_click" data-i18n="ag.modeOneClick"></option>
+          </select>
+          <button class="act amber" id="agBtn" onclick="agentRun()" data-i18n="ag.btn"></button>
+        </div>
+      </div>
+      <!-- 循环停下来问用户时显示 —— 「要不要走这一步」和「要不要授权」共用这一条 -->
+      <div id="agAsk" class="hide" style="margin-top:12px">
+        <div id="agAskMsg" class="notice issue" style="white-space:pre-wrap"></div>
+        <div style="margin-top:12px">
+          <button class="act" onclick="agentAnswer(true)" data-i18n="ag.yes"></button>
+          <button class="act quiet" onclick="agentAnswer(false)" data-i18n="ag.no"></button>
+        </div>
+      </div>
+      <div id="agLog" style="margin-top:12px"></div>
+    </div>
   </div>
 
   <div class="card need hide" id="card5">
@@ -620,6 +647,27 @@ const I18N = {
     "s4.thin": "⚠ 样本只有 {n} 家 —— 不足 3 家不给中位数当结论（2 家的「中位数」没有意义）。下列数值仅作单家参考。",
     "s4.stat": "P25 / 中位 / P75", "s4.range": "区间", "s4.gaps": "取不到的：",
     "s4.none": "这批代码一家都没取到 —— 换代码，或留空。留空不是缺陷：拿不到同行分布时，不凑一个参照系才是对的。",
+    "ag.title": "编排 · 让模型自己决定下一步",
+    "ag.notice": "<b>这才是 agent 那部分。</b>你给一个目标，模型自己选工具、一步步走。三条同时成立：① <b>每一步都记着「谁定的」</b> —— 它自决的、你点的头、还是你事先授权的；② 出网取数<b>仍然按次问你</b>；③ 数字仍由引擎算，<b>它只决定调什么，不参与计算</b>。",
+    "ag.goalLabel": "目标 —— 你想让它做什么",
+    "ag.goalPh": "看看这份材料：三张表读出来没有？缺什么？还要定哪些假设？",
+    "ag.modeConfirm": "每步确认（它提议，你点头）",
+    "ag.modeOneClick": "一键（它一路走完，只把轨迹给你）",
+    "ag.btn": "开始",
+    "ag.yes": "同意这一步",
+    "ag.no": "停下",
+    "ag.running": "跑着呢…",
+    "ag.byModel": "模型自决",
+    "ag.byUser": "你点头",
+    "ag.byAuto": "授权自决",
+    "ag.stopDone": "它说做完了",
+    "ag.stopMaxSteps": "到步数上限了",
+    "ag.stopRefused": "你拒了某一步",
+    "ag.stopConsent": "卡在授权上",
+    "ag.stopError": "调用不了模型",
+    "ag.stuck": "卡在",
+    "ag.trace": "轨迹",
+    "ag.needModel": "编排要本机模型。先在配置页装一个（装完点「检测」）。",
     "ask.title": "对话 · 检索原文与录入假设",
     "ask.sub": "当前**未启用模型** —— 它只会按关键词检索原文，以及把一句话转成假设",
     "ask.notice": "<b>这个面板现在不接模型</b>，所以它只会做两件事：① <b>检索原文</b>（按关键词找，回文件 + 页码 + 片段 —— 在本地材料上做，不出本机）；② <b>把一句话转成假设</b>（「增长率按 5%」→ 提议填「营业收入增长率」= 5%，来源标「对话输入（未核实）」）。<b>每一处提议都要点「采纳」才生效</b> —— 它不会自己改任何东西，也不会替你算数。装了模型之后，「读懂一段话」接在同一处。",
@@ -774,6 +822,27 @@ const I18N = {
     "s5.title": "Valuation assumptions", "s5.sub": "Inputs only you can provide — the engine will not set them for you",
     "s5.notice": "Append a source to each figure: <code>0.10 @management plan p.12</code>. Prefix the source with <code>高:</code>/<code>中:</code>/<code>低:</code> to set confidence (engine syntax remains Chinese). <b>No source is treated as low confidence</b> and appears under the report's weak points. \"Reference\" shows historical values, <b>not recommended inputs</b>.",
     "s5.btn": "Generate valuation report",
+    "ag.title": "Orchestration · let the model decide the next step",
+    "ag.notice": "<b>This is the agent part.</b> You give a goal; the model picks tools and walks it step by step. Three things hold at once: ① <b>every step records who decided it</b> — the model, you, or a scope you pre-authorised; ② fetching from the network <b>still asks you each time</b>; ③ the numbers are still computed by the engine — <b>it decides what to call, not what the number is</b>.",
+    "ag.goalLabel": "Goal — what you want it to do",
+    "ag.goalPh": "Look at these materials: are the three statements parsed? What is missing?",
+    "ag.modeConfirm": "Confirm each step (it proposes, you approve)",
+    "ag.modeOneClick": "One click (it runs through, you get the trace)",
+    "ag.btn": "Start",
+    "ag.yes": "Approve this step",
+    "ag.no": "Stop",
+    "ag.running": "Running…",
+    "ag.byModel": "model",
+    "ag.byUser": "you approved",
+    "ag.byAuto": "pre-authorised",
+    "ag.stopDone": "it says it is done",
+    "ag.stopMaxSteps": "hit the step limit",
+    "ag.stopRefused": "you refused a step",
+    "ag.stopConsent": "blocked on consent",
+    "ag.stopError": "could not reach the model",
+    "ag.stuck": "Stuck at",
+    "ag.trace": "Trace",
+    "ag.needModel": "Orchestration needs a local model. Install one on the config page, then hit Check.",
     "ask.title": "Dialogue · search the materials, file an assumption",
     "ask.sub": "No model is enabled yet — it can search the materials by keyword and turn one sentence into an assumption",
     "ask.notice": "<b>This panel does not use a model yet.</b> It does exactly two things: ① <b>search the materials</b> (by keyword; returns file + page + snippet — done locally, nothing leaves this machine); ② <b>turn one sentence into an assumption</b> (\"growth 5%\" → proposes Revenue growth = 5%, sourced as \"dialogue input (unverified)\"). <b>Every proposal must be accepted</b> — it never changes anything on its own and never performs arithmetic. Once a model is installed, \"understanding a sentence\" plugs into this same place.",
@@ -1350,6 +1419,84 @@ async function ask(){
       renderProposal(out.proposal);
     }
   }catch(e){ pushAsk("bad", esc(String(e))); }
+}
+
+// ─────────────────── 编排（agent 循环）───────────────────
+//
+// 跟后端的分工：循环跑到「要问用户」就停下，把 Session 存在服务端；
+// 前端拿着 run_id 回来 resume。**所以这里没有轮询，只有一问一答。**
+let AG = { runId: "", ask: null, busy: false };
+
+function agKey(e){ if(e.key === "Enter") agentRun(); }
+
+function agPush(kind, html){
+  const cls = {you:"", ok:"notice ok", bad:"notice issue", mut:"mut"}[kind] || "";
+  $("agLog").insertAdjacentHTML("beforeend",
+    '<div class="' + cls + '" style="margin:8px 0;font-size:13px">' + html + "</div>");
+}
+
+async function agentRun(){
+  if(AG.busy) return;                       // 同一个请求还没回来，别叠加
+  const goal = ($("agGoal").value || "").trim();
+  if(!goal) return;
+  if(!STATE.path){ agPush("bad", esc(t("ask.nopath"))); return; }
+  AG.busy = true; AG.runId = ""; AG.ask = null;
+  $("agLog").innerHTML = "";
+  $("agAsk").classList.add("hide");
+  agPush("mut", esc(t("ag.running")));
+  await agStep({action:"run", path:STATE.path, goal:goal,
+                autonomy:($("agMode").value || "confirm")});
+}
+
+async function agentAnswer(allow){
+  // ⚠️ 不能拿 `busy` 当「等答案」的判据 —— 等的时候正是不 busy 的时候。
+  // 用 `ask` 在不在判断：没有待答的问题就不该响应。
+  if(AG.busy || !AG.ask) return;
+  const hosts = (AG.ask.payload && AG.ask.payload.hosts) || [];
+  $("agAsk").classList.add("hide");
+  AG.busy = true; AG.ask = null;
+  await agStep({action:"resume", path:STATE.path, run_id:AG.runId,
+                allow:!!allow, hosts:hosts});
+}
+
+async function agStep(body){
+  try{
+    const out = await post("/api/ask", body);
+    if(!out.ok){ agPush("bad", esc(out.error || "")); AG.busy = false; return; }
+    AG.runId = out.run_id || AG.runId;
+    renderTrace(out.trace);
+    if(out.state === "asking"){
+      AG.ask = out.ask;
+      $("agAskMsg").textContent = out.ask.question || "";
+      $("agAsk").classList.remove("hide");
+    }
+  }catch(e){ agPush("bad", esc(String(e))); }
+  AG.busy = false;                          // 无论问还是结束，请求都回来了
+}
+
+function renderTrace(tr){
+  if(!tr) return;
+  const byKey = {model:"ag.byModel", user:"ag.byUser", auto:"ag.byAuto"};
+  const stopKey = {done:"ag.stopDone", max_steps:"ag.stopMaxSteps",
+                   refused:"ag.stopRefused", needs_consent:"ag.stopConsent",
+                   error:"ag.stopError"};
+  let html = '<div class="mut" style="font-size:12px">' + esc(t("ag.trace")) +
+             "　" + esc(tr.model) + "　" +
+             esc((tr.autonomy === "one_click") ? t("ag.modeOneClick") : t("ag.modeConfirm")) +
+             "</div>";
+  for(const s of (tr.steps || [])){
+    html += '<div style="margin:7px 0;font-size:13px">' +
+      (s.ok ? "✓" : "✗") + " <b>" + esc(s.tool) + "</b>" +
+      ' <span class="mut">（' + esc(t(byKey[s.by] || "ag.byModel")) +
+      "　" + s.seconds + "s）</span>" +
+      (s.note ? '<br><span class="mut">' + esc(s.note) + "</span>" : "") + "</div>";
+  }
+  html += '<div class="mut" style="font-size:12px;margin-top:8px">' +
+          esc(t(stopKey[tr.stop] || tr.stop)) +
+          (tr.stuck ? "　" + esc(t("ag.stuck")) + "：" + esc(tr.stuck) : "") + "</div>";
+  if(tr.final)
+    html += '<div style="margin-top:10px;white-space:pre-wrap">' + esc(tr.final) + "</div>";
+  $("agLog").innerHTML = html;
 }
 
 function renderProposal(p){

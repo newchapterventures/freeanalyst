@@ -248,5 +248,98 @@ class TestTraceSave(TempTools):
         self.assertIn("连不上", tr.stuck)
 
 
+class TestSessionPauseResume(TempTools):
+    """★ **网页那边不能挂着等用户点按钮** —— 所以循环要能暂停、能恢复。
+
+    命令行用 `run()`（同步回调一口气驱动完）；网页用 `Session` 自己驱动。
+    """
+
+    def test_confirm_mode_pauses_before_each_step(self):
+        loop._chat = FakeModel([("probe", {"x": "a"})])
+        s = loop.Session("目标", autonomy=loop.Autonomy.CONFIRM, max_steps=3)
+        out = s.advance()
+        self.assertIsInstance(out, loop.Ask)
+        self.assertEqual(out.kind, "confirm")
+        self.assertEqual(out.payload["tool"], "probe")
+        self.assertEqual(self.ran, [], "还没点头就不该执行")
+
+    def test_resume_with_yes_executes_and_continues(self):
+        loop._chat = FakeModel([("probe", {"x": "a"})])
+        s = loop.Session("目标", autonomy=loop.Autonomy.CONFIRM, max_steps=3)
+        s.advance()
+        out = s.advance((True, None))
+        self.assertEqual(self.ran, ["a"])
+        self.assertIsInstance(out, loop.Trace)
+        self.assertEqual(out.stop, loop.Stop.DONE)
+        self.assertEqual(out.steps[0].by, loop.By.USER)
+
+    def test_resume_with_no_stops(self):
+        loop._chat = FakeModel([("probe", {"x": "a"}), ("probe", {"x": "b"})])
+        s = loop.Session("目标", autonomy=loop.Autonomy.CONFIRM, max_steps=5)
+        s.advance()
+        out = s.advance((False, None))
+        self.assertIsInstance(out, loop.Trace)
+        self.assertEqual(out.stop, loop.Stop.REFUSED)
+        self.assertEqual(self.ran, [])
+        self.assertIn("拒", out.stuck)
+
+    def test_one_click_does_not_pause(self):
+        loop._chat = FakeModel([("probe", {"x": "a"})])
+        s = loop.Session("目标", autonomy=loop.Autonomy.ONE_CLICK, max_steps=3)
+        out = s.advance()
+        self.assertIsInstance(out, loop.Trace)
+        self.assertEqual(out.steps[0].by, loop.By.AUTO)
+
+    def test_consent_pauses_then_resumes(self):
+        from net import HostConsent
+
+        @R.tool("net_tool", summary="会出网", when="w", when_not="n",
+                parameters={"type": "object", "properties": {}},
+                side_effect=R.SideEffect.EGRESS, hosts=("qt.gtimg.cn",))
+        def net_tool() -> str:
+            return "取到了"
+
+        loop._chat = FakeModel([("net_tool", {})])
+        s = loop.Session("目标", autonomy=loop.Autonomy.ONE_CLICK, max_steps=3)
+        out = s.advance()
+        self.assertIsInstance(out, loop.Ask)
+        self.assertEqual(out.kind, "consent")
+        self.assertIn("qt.gtimg.cn", out.payload["hosts"])
+
+        out = s.advance((True, {"qt.gtimg.cn": HostConsent("qt.gtimg.cn", "测试")}))
+        self.assertIsInstance(out, loop.Trace)
+        self.assertTrue(out.steps[0].ok)
+
+    def test_refusing_consent_stops_cleanly(self):
+        @R.tool("net_tool", summary="会出网", when="w", when_not="n",
+                parameters={"type": "object", "properties": {}},
+                side_effect=R.SideEffect.EGRESS, hosts=("qt.gtimg.cn",))
+        def net_tool() -> str:
+            return "不该走到这"
+
+        loop._chat = FakeModel([("net_tool", {})])
+        s = loop.Session("目标", autonomy=loop.Autonomy.ONE_CLICK, max_steps=3)
+        s.advance()
+        out = s.advance((False, None))
+        self.assertEqual(out.stop, loop.Stop.NEEDS_CONSENT)
+        self.assertIn("qt.gtimg.cn", out.stuck)
+
+    def test_ask_is_serialisable(self):
+        """网页要把这个问题原样交给前端，所以得能变 dict。"""
+        loop._chat = FakeModel([("probe", {"x": "a"})])
+        s = loop.Session("目标", autonomy=loop.Autonomy.CONFIRM, max_steps=3)
+        d = s.advance().as_dict()
+        self.assertEqual(set(d), {"kind", "payload", "question"})
+        json.dumps(d, ensure_ascii=False)
+
+    def test_run_without_callback_treats_confirm_as_yes(self):
+        """命令行没给回调时不能卡死 —— 当成同意往下走。"""
+        loop._chat = FakeModel([("probe", {"x": "a"})])
+        tr = loop.run("目标", autonomy=loop.Autonomy.CONFIRM, max_steps=3,
+                      on_ask=None)
+        self.assertEqual(len(tr.steps), 1)
+        self.assertEqual(self.ran, ["a"])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

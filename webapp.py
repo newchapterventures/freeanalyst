@@ -48,6 +48,7 @@ import urllib.request
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import Any
 
 import intake
 from intake import Answer, Materials, parse_answer
@@ -549,7 +550,90 @@ def api_ask(payload: dict) -> dict:
         if isinstance(filled, dict):        # 页面传字典也行，只取键
             filled = list(filled.keys())
         return _ask_plan(path, {str(k) for k in filled})
-    return {"ok": False, "error": f"不认识的动作：{action}（可用：search / propose / plan）"}
+    if action in ("run", "resume"):
+        return _ask_agent(path, action, payload)
+    return {"ok": False, "error": f"不认识的动作：{action}"
+                                  f"（可用：search / propose / plan / run）"}
+
+
+# ─────────────────── 编排（agent 循环）───────────────────
+#
+# ⚠️ **网页的请求不能挂着等用户点按钮。** 所以循环跑到「要问用户」就停下，
+# 把 `Session` 存在这里；用户点完，前端带着同一个 `run_id` 回来 resume。
+# 这也是「按次授权」在网页这边的落法 —— 授权是**一次**，不是装一次永久生效。
+
+#: run_id → 跑到一半的 Session。进程内存，不落盘（用户刷新页面就重来）。
+_RUNS: dict[str, Any] = {}
+
+#: 一次最多跑几步。太高会让模型绕圈子，太低会半途而废。
+AGENT_MAX_STEPS = 8
+
+#: 没有指定模型时用哪个 —— 跟 `llm/guide.py` 的推荐档一致
+#: （`qwen3.5:9b`：质量 4/5、编排 5/5，6.6GB）
+AGENT_DEFAULT_MODEL = "qwen3.5:9b"
+
+
+def _trace_dict(t: Any) -> dict:
+    """把 `Trace` 变成能过 JSON 的东西。**「谁定的」一定要带上** ——
+    用户明确要求轨迹里能分清哪一步是他拍的。"""
+    return {
+        "goal": t.goal, "model": t.model, "autonomy": t.autonomy.value,
+        "stop": t.stop.value, "stuck": t.stuck, "final": t.final,
+        "steps": [{"n": s.n, "tool": s.tool, "args": s.args, "by": s.by.value,
+                   "ok": s.ok, "brief": s.brief, "seconds": round(s.seconds, 2),
+                   "note": s.note} for s in t.steps],
+    }
+
+
+def _ask_agent(path: str, action: str, payload: dict) -> dict:
+    """跑一步 agent 循环，或者带着用户的回答继续。
+
+    返回两种状态之一：
+
+        state="asking"  停下来问用户（`ask` 里有问题和载荷）
+        state="done"    结束了（`trace` 里有完整轨迹）
+    """
+    from net import CONSENT_HOSTS, HostConsent
+    from tools import loop as lo
+
+    run_id = str(payload.get("run_id") or "")
+    if action == "resume" and run_id in _RUNS:
+        s = _RUNS[run_id]
+        allow = bool(payload.get("allow"))
+        extra = None
+        if allow and (payload.get("hosts") or []):
+            # 用户点的这一下**就是**这次的授权：只为它列出的主机盖章
+            extra = {h: HostConsent(h, CONSENT_HOSTS.get(h, "用户授权的取数"))
+                     for h in payload["hosts"]}
+        out = s.advance((allow, extra))
+    else:
+        goal = str(payload.get("goal") or "").strip()
+        if not goal:
+            return {"ok": False, "error": "要传 goal（你想让它做什么）"}
+        autonomy = (lo.Autonomy.ONE_CLICK if payload.get("autonomy") == "one_click"
+                    else lo.Autonomy.CONFIRM)
+        # ⚠️ **材料路径必须传给循环**，而且要走系统提示 ——
+        # 放在 payload 里循环看不到。实测踩过：不传的话模型会反问
+        # 「请提供材料路径」，然后**一步都不走**（它连工具都没调）。
+        system = lo.SYSTEM
+        if path:
+            system += (f"\n\n本次的材料路径是：{path}\n"
+                       f"调用工具时用这个路径，不要反过来问用户要。")
+        s = lo.Session(goal,
+                       model=str(payload.get("model") or AGENT_DEFAULT_MODEL),
+                       autonomy=autonomy, max_steps=AGENT_MAX_STEPS,
+                       system=system)
+        import uuid
+        run_id = uuid.uuid4().hex[:12]
+        _RUNS[run_id] = s
+        out = s.advance()
+
+    if isinstance(out, lo.Ask):
+        return {"ok": True, "state": "asking", "run_id": run_id,
+                "ask": out.as_dict(), "trace": _trace_dict(s.trace)}
+    _RUNS.pop(run_id, None)
+    return {"ok": True, "state": "done", "run_id": run_id,
+            "trace": _trace_dict(out)}
 
 
 #: 一句话里的常见说法 → **问题清单里标签的片段**。
