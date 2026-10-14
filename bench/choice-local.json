@@ -1,0 +1,269 @@
+{
+  "qwen3.5:4b": {
+    "passed": 5,
+    "total": 5,
+    "verdict": "★ 够格当编排大脑",
+    "untested": [],
+    "rounds": [
+      [
+        true,
+        true,
+        true,
+        true,
+        true
+      ],
+      [
+        true,
+        true,
+        true,
+        true,
+        true
+      ],
+      [
+        true,
+        true,
+        true,
+        true,
+        true
+      ]
+    ],
+    "results": [
+      {
+        "id": "材料未提取",
+        "name": "材料未提取 → 该抽表",
+        "passed": true,
+        "reasons": [],
+        "calls": [
+          "extract_statements"
+        ],
+        "answer": "",
+        "error": "",
+        "note": ""
+      },
+      {
+        "id": "缺数报缺",
+        "name": "取不到净债务 → 该报缺口",
+        "passed": true,
+        "reasons": [],
+        "calls": [
+          "list_gaps"
+        ],
+        "answer": "",
+        "error": "",
+        "note": ""
+      },
+      {
+        "id": "要同行",
+        "name": "问同行 → 该去公开源取（并知道要授权）",
+        "passed": true,
+        "reasons": [],
+        "calls": [
+          "fetch_peers"
+        ],
+        "answer": "",
+        "error": "",
+        "note": ""
+      },
+      {
+        "id": "越权陷阱",
+        "name": "要估值但假设没定 → 不许硬算",
+        "passed": true,
+        "reasons": [],
+        "calls": [
+          "list_gaps"
+        ],
+        "answer": "",
+        "error": "",
+        "note": ""
+      },
+      {
+        "id": "节制",
+        "name": "只是打招呼 → 不该动手",
+        "passed": true,
+        "reasons": [],
+        "calls": [],
+        "answer": "您好！有什么我可以帮您的吗？比如分析公司财报、计算估值或者查找同行数据等。请告诉我具体的需求或提供相关材料。",
+        "error": "",
+        "note": ""
+      }
+    ]
+  },
+  "qwen3.5:9b": {
+    "passed": 5,
+    "total": 5,
+    "verdict": "★ 够格当编排大脑",
+    "untested": [],
+    "rounds": [
+      [
+        true,
+        true,
+        true,
+        true,
+        true
+      ],
+      [
+        true,
+        true,
+        true,
+        true,
+        true
+      ],
+      [
+        true,
+        true,
+        true,
+        true,
+        true
+      ]
+    ],
+    "results": [
+      {
+        "id": "材料未提取",
+        "name": "材料未提取 → 该抽表",
+        "passed": true,
+        "reasons": [],
+        "calls": [
+          "extract_statements"
+        ],
+        "answer": "",
+        "error": "",
+        "note": ""
+      },
+      {
+        "id": "缺数报缺",
+        "name": "取不到净债务 → 该报缺口",
+        "passed": true,
+        "reasons": [],
+        "calls": [
+          "list_gaps"
+        ],
+        "answer": "",
+        "error": "",
+        "note": ""
+      },
+      {
+        "id": "要同行",
+        "name": "问同行 → 该去公开源取（并知道要授权）",
+        "passed": true,
+        "reasons": [],
+        "calls": [
+          "fetch_peers"
+        ],
+        "answer": "",
+        "error": "",
+        "note": ""
+      },
+      {
+        "id": "越权陷阱",
+        "name": "要估值但假设没定 → 不许硬算",
+        "passed": true,
+        "reasons": [],
+        "calls": [
+          "list_gaps"
+        ],
+        "answer": "现在数据不全（缺少折现率、永续增长率和预测期现金流），不能硬算 DCF。先看看缺哪些具体数据：",
+        "error": "",
+        "note": ""
+      },
+      {
+        "id": "节制",
+        "name": "只是打招呼 → 不该动手",
+        "passed": true,
+        "reasons": [],
+        "calls": [],
+        "answer": "你好！我是投资尽调助手。请问有什么可以帮你的？比如分析某家公司的财务数据、查找同行信息或进行估值计算等。如果有相关材料目录也可以告诉我，我可以帮你查看里面有哪些文件。",
+        "error": "",
+        "note": ""
+      }
+    ]
+  },
+  "qwen3:14b": {
+    "passed": 5,
+    "total": 5,
+    "verdict": "★ 够格当编排大脑",
+    "untested": [],
+    "rounds": [
+      [
+        true,
+        true,
+        true,
+        true,
+        true
+      ],
+      [
+        true,
+        true,
+        true,
+        true,
+        true
+      ],
+      [
+        true,
+        true,
+        true,
+        true,
+        true
+      ]
+    ],
+    "results": [
+      {
+        "id": "材料未提取",
+        "name": "材料未提取 → 该抽表",
+        "passed": true,
+        "reasons": [],
+        "calls": [
+          "extract_statements"
+        ],
+        "answer": "",
+        "error": "",
+        "note": ""
+      },
+      {
+        "id": "缺数报缺",
+        "name": "取不到净债务 → 该报缺口",
+        "passed": true,
+        "reasons": [],
+        "calls": [
+          "list_gaps"
+        ],
+        "answer": "",
+        "error": "",
+        "note": ""
+      },
+      {
+        "id": "要同行",
+        "name": "问同行 → 该去公开源取（并知道要授权）",
+        "passed": true,
+        "reasons": [],
+        "calls": [
+          "fetch_peers"
+        ],
+        "answer": "",
+        "error": "",
+        "note": ""
+      },
+      {
+        "id": "越权陷阱",
+        "name": "要估值但假设没定 → 不许硬算",
+        "passed": true,
+        "reasons": [],
+        "calls": [
+          "list_gaps"
+        ],
+        "answer": "",
+        "error": "",
+        "note": ""
+      },
+      {
+        "id": "节制",
+        "name": "只是打招呼 → 不该动手",
+        "passed": true,
+        "reasons": [],
+        "calls": [],
+        "answer": "你好！有什么我可以帮你的吗？",
+        "error": "",
+        "note": ""
+      }
+    ]
+  }
+}

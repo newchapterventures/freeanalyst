@@ -38,7 +38,29 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 BENCH = ROOT / "bench" / "model_quality.py"
 
-#: 门槛：**全过才算合格。** 不是「及格线」，是「这三类错一个都不能犯」。
+#: 两份门槛跑的**不是同一件事**，成绩不能互相取代：
+#:
+#:     quality   能不能把材料读对（抽数字、认主体、不编造）
+#:     choice    能不能把动作选对（选工具、懂节制、不越权）
+#:
+#: 实测反例：`qwen3.5:4b` 质量 5/5，但编排里「打招呼时乱伸工具」那一条不过。
+#: 所以**只按质量选型会选到一个不会编排的模型**。
+BENCH_CHOICE = ROOT / "bench" / "model_choice.py"
+
+#: 两位门槛的名字 → 脚本。`quality` 是默认（老行为不变）。
+KINDS: dict[str, Path] = {"quality": BENCH, "choice": BENCH_CHOICE}
+
+#: 两位门槛各自的「够格」措辞（脚本自己打印的，读 JSON 失败时靠它回落）
+_PASS_MARKS: tuple[str, ...] = ("★ 够格进生产", "★ 够格当编排大脑")
+
+#: 门槛名 → 给人看的短说明。报告里必须带上，否则「4/5」分不清是哪一位的。
+KIND_LABELS: dict[str, str] = {"quality": "读材料", "choice": "选动作"}
+
+#: 门槛名 → 够格时的措辞。两位门槛够格的含义不一样，话不能混用。
+KIND_PASS: dict[str, str] = {"quality": "★ 够格进生产",
+                             "choice": "★ 够格当编排大脑"}
+
+#: 门槛：**全过才算合格。** 不是「及格线」，是「这几类错一个都不能犯」。
 PASS_ALL = True
 
 
@@ -46,6 +68,9 @@ PASS_ALL = True
 class GateResult:
     model: str
     passed: bool
+    #: 哪一位门槛：`quality`（读材料）或 `choice`（选动作）。
+    #: **报告里必须显示** —— 不然「4/5」分不清是哪一位的，而这两位的含义完全不同。
+    kind: str = "quality"
     #: 例如 "5/5"
     score: str = ""
     #: 没过的话卡在哪一条
@@ -55,12 +80,16 @@ class GateResult:
     #: 跑不了的原因（模型没装、超时…）
     error: str = ""
 
+    @property
+    def kind_label(self) -> str:
+        return KIND_LABELS.get(self.kind, self.kind)
+
     def line(self) -> str:
         if self.error:
-            return f"{self.model}　✗ 测不了：{self.error}"
-        if self.passed:
-            return f"{self.model}　★ 够格进生产（{self.score}）"
-        return f"{self.model}　✗ 未达门槛（{self.score}）"
+            return f"{self.model}　✗ 测不了（{self.kind_label}）：{self.error}"
+        head = (KIND_PASS.get(self.kind, "★ 够格") if self.passed
+                else "✗ 未达门槛")
+        return f"{self.model}　{head}（{self.kind_label} {self.score}）"
 
 
 def detail_lines(r: GateResult) -> list[str]:
@@ -75,23 +104,33 @@ def detail_lines(r: GateResult) -> list[str]:
 
 
 def run_gate(model: str, *, timeout: int = 1800,
-             report_dir: Path | None = None) -> GateResult:
-    """跑一遍质量评测，给出裁决。
+             report_dir: Path | None = None, kind: str = "quality",
+             extra_args: tuple[str, ...] = ()) -> GateResult:
+    """跑一遍门槛，给出裁决。
 
-    **不自己判分** —— 判分逻辑只有一份，在 `bench/model_quality.py`。
+    **不自己判分** —— 判分逻辑只有一份，在 `bench/` 那两个脚本里。
     这里只是把它的结论搬过来，并加上「没过就说清卡在哪」。
+
+    `kind`：`quality`（默认，读材料）或 `choice`（选动作）。
     """
-    if not BENCH.exists():
+    bench = KINDS.get(kind)
+    if bench is None:
         return GateResult(model=model, passed=False,
-                          error=f"找不到评测脚本 {BENCH}")
+                          error=f"没有 {kind!r} 这种门槛（只有 {list(KINDS)}）")
+    if not bench.exists():
+        return GateResult(model=model, passed=False,
+                          error=f"找不到评测脚本 {bench}")
 
     report_dir = report_dir or (ROOT / "out")
     report_dir.mkdir(parents=True, exist_ok=True)
-    report = report_dir / f"gate-{_safe(model)}.json"
+    # 两位门槛的报告别互相覆盖 —— 文件名带上门槛名
+    prefix = "gate" if kind == "quality" else f"gate-{kind}"
+    report = report_dir / f"{prefix}-{_safe(model)}.json"
 
     try:
         proc = subprocess.run(
-            [sys.executable, str(BENCH), "--models", model, "--json", str(report)],
+            [sys.executable, str(bench), "--models", model, "--json", str(report),
+             *extra_args],
             cwd=str(ROOT), capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired:
         return GateResult(model=model, passed=False,
@@ -100,34 +139,45 @@ def run_gate(model: str, *, timeout: int = 1800,
         return GateResult(model=model, passed=False, error=str(exc))
 
     out = (proc.stdout or "") + (proc.stderr or "")
-    return _verdict(model, out, report)
+    return _verdict(model, out, report, kind)
 
 
-def _verdict(model: str, out: str, report: Path) -> GateResult:
+def run_both(model: str, *, timeout: int = 3600,
+             report_dir: Path | None = None) -> list[GateResult]:
+    """两位门槛都跑。**顺序固定**，显示的时候不会一会儿一个样。
+
+    注意：这是**两次独立评测**，慢的那个（choice）会明显更久 ——
+    因为它每一条都要真调一次模型。
+    """
+    return [run_gate(model, timeout=timeout, report_dir=report_dir, kind=k)
+            for k in ("quality", "choice")]
+
+
+def _verdict(model: str, out: str, report: Path, kind: str = "quality") -> GateResult:
     """从评测结果里读结论。**优先读 JSON，读不到才回落到抓 stdout。**
 
-    评测自己会写一份结构化报告（`bench/model_quality.py --json`），
+    评测自己会写一份结构化报告（`bench/*.py --json`），
     里面每条用例的 `passed` 和 `reasons` 都是现成的 ——
     抓 stdout 是在猜它的打印格式，改个措辞就失效。
     """
-    from_json = _from_json(model, report)
+    from_json = _from_json(model, report, kind)
     if from_json is not None:
         return from_json
 
-    # 回落：门槛脚本自己的措辞（bench/model_quality.py）
-    if "★ 够格进生产" in out:
-        return GateResult(model=model, passed=True,
+    # 回落：门槛脚本自己打印的措辞（两位门槛各有一套，见 `_PASS_MARKS`）
+    if any(m in out for m in _PASS_MARKS):
+        return GateResult(model=model, passed=True, kind=kind,
                           score=_score(out), report=str(report))
     if "未达门槛" in out:
-        return GateResult(model=model, passed=False,
+        return GateResult(model=model, passed=False, kind=kind,
                           score=_score(out), failed=_failed(out),
                           report=str(report))
     tail = out.strip().splitlines()[-3:] if out.strip() else ["（没有任何输出）"]
-    return GateResult(model=model, passed=False,
+    return GateResult(model=model, passed=False, kind=kind,
                       error="评测没给出结论： " + " / ".join(tail))
 
 
-def _from_json(model: str, report: Path) -> GateResult | None:
+def _from_json(model: str, report: Path, kind: str = "quality") -> GateResult | None:
     """读评测写出来的结构化报告。读不到/格式不对就返回 None（交给回落）。"""
     if not report.exists():
         return None
@@ -168,10 +218,11 @@ def _from_json(model: str, report: Path) -> GateResult | None:
             err = (f"{empty}/{len(answers)} 处回答为空 —— "
                    "很可能是思考占满了 token 预算（不是模型答错）")
     if err:
-        return GateResult(model=model, passed=False, score=f"{got}/{total}",
+        return GateResult(model=model, passed=False, kind=kind,
+                          score=f"{got}/{total}",
                           failed=failed[:6], report=str(report), error=err)
 
-    return GateResult(model=model, passed=(total > 0 and got == total),
+    return GateResult(model=model, passed=(total > 0 and got == total), kind=kind,
                       score=f"{got}/{total}", failed=failed[:6],
                       report=str(report))
 

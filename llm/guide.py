@@ -168,7 +168,76 @@ def recommend(ram_gb: float = 0.0) -> dict:
             "quality": q}
 
 
-# ─────────────── 质量门槛的实测成绩（不猜：没有文件就说没有） ───────────────
+# ─────────────── 门槛的实测成绩（不猜：没有文件就说没有） ───────────────
+#
+# 两份成绩**不是一回事，不能互相取代**：
+#
+#     gate-*.json      能不能把材料读对（抽数字、认主体、不编造）
+#     choice-*.json    能不能把动作选对（选工具、懂节制、不越权）
+#
+# 实测反例：`qwen3.5:4b` 质量 5/5，但「打招呼时乱伸工具」那一条不过。
+# **只按质量选型会选到一个不会编排的模型** —— 所以两列都要摆出来。
+CHOICE_FILES: tuple[Path, ...] = (ROOT / "bench" / "choice-local.json",)
+
+
+def choice_rows() -> list[dict]:
+    """读编排门槛的成绩。规则跟 `quality_rows()` 一致：**重测以后测的为准**、
+    **「测不了」不是「不合格」**。"""
+    rows: dict[str, dict] = {}
+    for f in CHOICE_FILES:
+        try:
+            d = json.loads(f.read_text(encoding="utf-8"))
+        except Exception:                                   # noqa: BLE001
+            continue
+        for model, r in (d or {}).items():
+            failed = [c.get("name") or c.get("id") or "?"
+                      for c in (r.get("results") or []) if not c.get("passed")]
+            err = str(r.get("error") or "")
+            if not err:
+                # 全是「调用失败」→ 这次没测成，不是不合格
+                rs = [(c.get("reasons") or []) for c in (r.get("results") or [])]
+                if rs and all(x and all("调用失败" in y for y in x) for x in rs):
+                    err = rs[0][0]
+            rows[model] = {"model": model,
+                           "passed": r.get("passed", 0), "total": r.get("total", 0),
+                           "score": f"{r.get('passed', 0)}/{r.get('total', 0)}",
+                           "verdict": r.get("verdict", ""),
+                           "error": err,
+                           "failed": [] if err else failed,
+                           "local": "/" not in model}
+    return sorted(rows.values(), key=lambda r: (-r["passed"], r["model"]))
+
+
+def choice_of(model: str) -> dict:
+    """某个模型的**编排**成绩（没有返回空 —— 页面照实说「没测过」）。"""
+    for r in choice_rows():
+        if r["model"] == model or r["model"].endswith("/" + model):
+            return r
+    return {}
+
+
+def has_tools(model: str) -> bool | None:
+    """这个模型支不支持工具调用（ollama 自报的 `capabilities`）。
+
+    **`None` = 不知道**（模型没装、命令跑不了），不是「不支持」。
+    这两个结论对选型的影响完全不同 —— 不知道就该去看，不支持才该换模型。
+
+    判据用**正面信号**（输出里有没有 `Capabilities` 段），不猜错误措辞 ——
+    实测模型名写错时 ollama 报的是 `Error: invalid model name`，
+    按「not found」去匹配会漏掉，于是把「不知道」误报成「不支持」。
+    """
+    import subprocess
+    try:
+        p = subprocess.run(["ollama", "show", model], capture_output=True,
+                           text=True, timeout=20)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    out = ((p.stdout or "") + (p.stderr or "")).lower()
+    if "capabilities" not in out:
+        return None                      # 没有能力段 = 没拿到信息，不是「没有工具」
+    return "tools" in out
+
+
 #: `bench/gate-*.json` —— 由 `bench/model_quality.py --json <路径>` 生成
 GATE_FILES: tuple[Path, ...] = (ROOT / "bench" / "gate-local-6.json",
                                 ROOT / "bench" / "gate-qwen35c.json",
@@ -265,6 +334,32 @@ def truth_lines() -> list[str]:
         names = "、".join(sorted(r["model"] for r in cloud if r["passed"] == total))
         out.append(f"闭源云端模型里有过的（{best_cloud}/{total}）：{names}。"
                    "代价是那一次的内容离开本机 —— 按次授权、进审计，机密材料自己拿捏。")
+
+    # ── 编排（另一件事，不能拿质量的成绩推）──────────────────────────
+    ch = choice_rows()
+    if not ch:
+        out.append("编排能力还没测过 —— 想开「一键」模式之前先跑 "
+                   "`bench/model_choice.py`。**过质量门槛推不出会编排。**")
+        return out
+    good = sorted(r["model"] for r in ch if r["total"] and r["passed"] == r["total"])
+    bad = sorted(r["model"] for r in ch
+                 if not r["error"] and r["total"] and r["passed"] < r["total"])
+    untested = sorted(r["model"] for r in ch if r["error"])
+    if good:
+        out.append(f"**能当编排大脑的（选动作 {ch[0]['total']} 项全过）："
+                   f"{'、'.join(good)}** —— 这几档可以开「一键」模式：你说要看哪家，"
+                   "它自己走完全程，最后把轨迹给你。")
+    if bad:
+        detail = "；".join(
+            f"{r['model']} 卡在「{'、'.join(r['failed'])}」"
+            for r in ch if r["model"] in bad)
+        out.append(f"编排**没过的**：{detail}。"
+                   "所以这几档默认走「每步确认」—— 由你点每一步，反而更可靠。")
+    if untested:
+        out.append(f"编排**测不了的**：{'、'.join(untested)} —— "
+                   "不是判断力不行，是**调用路径的问题**（思考内容漏进了回答，"
+                   "工具调用拿不到）。换调用参数或换模型再测。")
+    out.append("**编排和读材料是两种能力，成绩不能互相取代。**")
     return out
 
 
