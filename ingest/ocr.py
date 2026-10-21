@@ -463,8 +463,11 @@ def _label_columns_x(rows, centers) -> list[int]:
                   if tot >= 3 and num / tot >= 0.5)
 
 
-def split_two_sided(rows):
+def split_two_sided(rows, cut_x: float | None = None):
     """把「左右两栏」的表按列切开，返回若干块。
+
+    `cut_x` 传了就**用外部给的切点**（几何判据判不出时，由 `ingest/vlm.py`
+    问本机视觉模型给一个）；不传就按几何算 —— 行为跟以前完全一样。
 
     ## 为什么（实测：某上市公司 2022 审计报告）
 
@@ -481,13 +484,13 @@ def split_two_sided(rows):
     （Excel 那份小企业报表是同样的问题，见 `ingest/excel.py`。）
     """
     rows = _norm_cells(rows)
-    centers = cluster_columns([[(x, t) for x, _, t in r] for r in rows])
-    if not centers:
-        return [rows]
-
-    # **切点由 `_two_sided_cut` 给**（切在右栏标签前一点点），
-    # 不要用"第二个标签列的中心" —— 标签起点有抖动，那个位置可能还在同一栏里。
-    cut_x = _two_sided_cut(rows, centers)
+    if cut_x is None:
+        centers = cluster_columns([[(x, t) for x, _, t in r] for r in rows])
+        if not centers:
+            return [rows]
+        # **切点由 `_two_sided_cut` 给**（切在右栏标签前一点点），
+        # 不要用"第二个标签列的中心" —— 标签起点有抖动，那个位置可能还在同一栏里。
+        cut_x = _two_sided_cut(rows, centers)
     if cut_x is None:
         return [rows]
     left, right = [], []
@@ -598,11 +601,21 @@ def _is_value_like(text: str) -> bool:
     return status == "suspect" and is_amount_ish(text)
 
 
-def rows_to_table(rows: list[list[tuple[float, str]]]) -> list[list[str]]:
+def rows_to_table(rows, *, pdf=None, page=None) -> list[list[str]]:
     """把 OCR 的行还原成 `[标签, 附注?, 本期值, 上期值]`。
 
     和 `ingest/layout.py` 的输出结构对齐，这样上层取值不用区分材料是
     「有文字层的排版表」还是「扫描件 OCR」。
+
+    ## 切栏的三条路（按顺序）
+
+    ① **几何判据说不是两栏** → 不切（绝大多数页走这条，0 成本）
+    ② **几何判据说不是，但视觉模型说是** → 按模型给的切点切
+       （`pdf` + `page` 都传了才会问；见 `ingest/vlm.py` 的三道闸）
+    ③ 切完有一半**一个金额都没有** → 说明切错了，退回不切
+
+    第 ③ 条是给第 ② 条兜底的。切错比不切更坏：一刀下去会把合计行切走，
+    勾稽从「平」变成「数据不足」，而且不报错 —— 这条路上真被回退过一次。
 
     ## 标签列不是「第 0 列」，是「第一个数字列左边的一切」（实测踩到）
 
@@ -632,7 +645,33 @@ def rows_to_table(rows: list[list[tuple[float, str]]]) -> list[list[str]]:
         for block in split_two_sided(rows):
             out.extend(_one_block(_norm_cells(block)))
         return out
+
+    # ── 几何判不出，问一次视觉模型（只问「几栏、切在哪」，不问数字）──
+    if pdf is not None and page is not None:
+        from . import vlm
+
+        cut = vlm.propose_cut(rows, pdf, page)
+        if cut is not None:
+            blocks = split_two_sided(rows, cut_x=cut)
+            # **切完两半都得有金额** —— 一半空就是切错了，宁可退回不切。
+            if len(blocks) == 2 and all(_amount_count(b) >= 3 for b in blocks):
+                out = []
+                for block in blocks:
+                    out.extend(_one_block(_norm_cells(block)))
+                return out
+
     return _one_block(norm)
+
+
+def _amount_count(rows) -> int:
+    """这一块里有几个金额格 —— 用来判断切栏有没有把内容切到一边去。"""
+    n = 0
+    for row in rows:
+        for cell in row:
+            text = str(cell[-1] if isinstance(cell, (list, tuple)) else cell)
+            if is_amount_ish(text):
+                n += 1
+    return n
 
 
 def _one_block(rows: list[list[tuple[float, str]]]) -> list[list[str]]:

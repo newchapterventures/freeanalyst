@@ -476,7 +476,7 @@ def _fill_blank_pages_with_ocr(path: Path, pages: list[PdfPage],
             repaired += ocr.count_repairs(rows)
             page.text = ocr.rows_to_text(rows)
             page.raw_text = page.text
-            page.tables = [[list(r) for r in ocr.rows_to_table(rows)]]
+            page.tables = [[list(r) for r in ocr.rows_to_table(rows, pdf=path, page=n)]]
             page.ocr = True
             filled.append(n)
     return filled, repaired
