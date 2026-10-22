@@ -440,24 +440,52 @@ MAPPINGS: tuple[Mapping, ...] = (
             ("OtherNonoperatingExpense", "NonoperatingExpense")),
 
     # ================= 现金流量表 =================
+    #
+    # ⚠️ **「经营活动产生的现金流量」这条不带「净额」的写法，暂时**必须**留着。**
+    #
+    # 它是个**歪打正着的补偿**：实测某保险公司中报（601628）的现金流量表
+    # 被解析成 122 行、**每一行都出现两次**（表页范围重叠，同一张表拼了两遍），
+    # 值落到了段标题那一行：
+    #
+    #     一、经营活动产生的现金流量        965,054   ← 值在这
+    #     经营活动产生的现金流量净额         None      ← 真·净额行反而没值
+    #
+    # 2026-10-21 试着把它删掉（理由是「段标题不该匹配字段」），结果：
+    # **中国平安修好了，601628 反而丢了 CFO** —— 净零。
+    #
+    # 正确修法在更上一层：**字段要的是值，没有值的行不许占住字段**
+    # （`from_pdf.py` 已经有 `if f and v is not None` 的闸，但那个闸只挡住
+    # 「写入 fields」，挡不住「先到先得占住字段名」）。等行错位修好之后，
+    # 这条宽松写法才能删 —— **顺序不能反**。
+    #
+    # `使用` 那一组是纯增益：实测加进来之后中国平安的 CFO 修好了，没有回归。
     Mapping(Field.CFO, ("经营活动产生的现金流量净额", "经营活动现金流量净额",
+                        # ← 这条是补偿，见上，别急着删
                         "经营活动产生的现金流量",
                         # H 股 / IFRS 写法：`所用` 而不是 `产生的`。
                         # 净流出时英文写 "net cash used in operating activities"。
                         # **实测就是这一处差异让某 H 股公司的现金勾稽判不了。**
                         "经营活动所用现金净额", "经营活动所用的现金净额",
                         "经营活动现金流出净额",
+                        # 保险公司写法：`使用` 而不是 `所用`（实测踩到，纯增益）
+                        "经营活动使用的现金流量净额",
+                        "经营活动使用的现金净额",
                         "Net cash used in operating activities",
                         "Net cash generated from operating activities"),
             ("NetCashProvidedByUsedInOperatingActivities",)),
     Mapping(Field.CFI, ("投资活动产生的现金流量净额", "投资活动现金流量净额",
                         "投资活动产生的现金流量",
                         "投资活动所用的现金净额", "投资活动所用现金净额",
+                        "投资活动使用的现金流量净额",
+                        "投资活动使用的现金净额",
                         "Net cash used in investing activities"),
             ("NetCashProvidedByUsedInInvestingActivities",)),
     Mapping(Field.CFF, ("筹资活动产生的现金流量净额", "筹资活动现金流量净额",
                         "筹资活动产生的现金流量", "融资活动产生的现金流量净额",
+                        "筹资活动所用的现金净额", "筹资活动所用现金净额",
+                        "筹资活动使用的现金流量净额",
                         "融资活动所用的现金净额", "融资活动所用现金净额",
+                        "融资活动使用的现金流量净额",
                         "Net cash used in financing activities"),
             ("NetCashProvidedByUsedInFinancingActivities",)),
     Mapping(Field.CAPEX, ("购建固定资产、无形资产和其他长期资产支付的现金",
